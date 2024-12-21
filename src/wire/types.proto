@@ -1,0 +1,19 @@
+syntax = "proto3";
+package wire.pb;
+
+// Inner message types
+message Hash {
+  bytes hash = 1;
+}
+
+message Preference {
+  bool preferred = 1;
+}
+
+message Vertex {
+  uint32 version = 1;
+  uint64 height = 2;
+	repeated Hash parents = 3;
+	Hash namespace_id = 4;
+	Hash root = 5;
+}

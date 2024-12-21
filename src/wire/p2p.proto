@@ -1,0 +1,30 @@
+syntax = "proto3";
+import "types.proto";
+package wire.pb;
+
+// Broadcast message wrapper
+message Broadcast {
+	Vertex vertex = 1;
+}
+
+// Request message wrapper
+message Request {
+	oneof RequestData {
+		Hash get_vertex = 1;
+		Hash get_preference = 2;
+	}
+}
+
+// Response message wrapper
+message Response {
+	enum ErrorCode {
+		UNKNOWN = 0;
+		NOT_FOUND = 1;
+	}
+
+	oneof ResponseData {
+		ErrorCode error = 1;
+		Vertex vertex = 2;
+		Preference preference = 3;
+	}
+}

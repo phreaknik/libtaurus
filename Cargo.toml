@@ -1,0 +1,76 @@
+[package]
+name = "libtaurus"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "libtaurus"
+path = "src/lib.rs"
+
+[[bin]]
+name = "taurusd"
+path = "src/app/taurusd/mod.rs"
+
+[[bin]]
+name = "taurseq"
+path = "src/app/taurseq.rs"
+
+[dependencies]
+async-std = { version = "1.12", features = ["attributes"] }
+async-trait = "0.1"
+blake3 = "1.4"
+cached = "0.46"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4.2", features = ["cargo"] }
+crossbeam = "0.8"
+etcetera = "0.8"
+futures = "0.3"
+hex = "0.4"
+indexmap = "2.2"
+itertools = "0.11"
+jsonrpsee = { version = "0.23", features = ["server", "client", "ws-client"] }
+libp2p = { version = "0.53", features = [
+  "dns",
+  "kad",
+  "tokio",
+  "ping",
+  "macros",
+  "identify",
+  "request-response",
+  "async-std",
+  "serde",
+  "gossipsub",
+  "quic",
+  "upnp",
+  "tcp",
+  "yamux",
+  "noise",
+  "mdns",
+] }
+lru = "0.11"
+num = "0.4"
+prost = "0.12"
+rand = "0.8"
+rayon = "1.10"
+serde = { version = "1.0", features = ["rc"] }
+serde_derive = "1.0"
+serde_json = "1.0"
+strum = { version = "0.24", features = ["derive", "strum_macros"] }
+strum_macros = "0.24"
+thiserror = "1.0"
+time = { version = "0.3", features = ["macros"] }
+tokio = { version = "1.27", features = ["sync", "macros"] }
+tracing = "0.1"
+tracing-log = "0.1"
+tracing-mutex = "0.2"
+tracing-subscriber = { version = "0.3", features = [
+  "std",
+  "env-filter",
+  "time",
+] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[build-dependencies]
+prost-build = "0.12"
