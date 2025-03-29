@@ -43,10 +43,10 @@ fn list_peers_cmd(args: &ArgMatches) {
 
     // Open the peer database
     let peer_dir = parse_data_dir(args).join("p2p/peer_db/");
-    let db = PeerDB::open_read_only(peer_dir).expect("failed to open peer database");
+    let db = PeerDB::create_or_open(peer_dir).expect("failed to open peer database");
 
     // Print the peers
-    db.print_peers(args.get_one("max").map(|x| *x));
+    let _ = db.print_peers(args.get_one("max").map(|x| *x));
 }
 
 /// Parse CLI args
