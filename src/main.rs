@@ -75,12 +75,15 @@ fn parse_cli_args() -> ArgMatches {
 
 /// Set up logger
 fn setup_logger<'a>(args: &'a ArgMatches) {
-    let log_filter = match args.get_count("verbosity") {
-        1 => EnvFilter::from_default_env().add_directive("cordelia=debug".parse().unwrap()),
-        2 => EnvFilter::from_default_env().add_directive("cordelia=trace".parse().unwrap()),
-        _ => EnvFilter::from_default_env().add_directive("cordelia=info".parse().unwrap()),
-    };
-    tracing_subscriber::fmt().with_env_filter(log_filter).init();
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env().add_directive(
+            match args.get_count("verbosity") {
+                1 => "cordelia=debug".parse().unwrap(),
+                2 => "cordelia=trace".parse().unwrap(),
+                _ => "cordelia=info".parse().unwrap(),
+            },
+        ))
+        .init();
 }
 
 /// Determine system directories for the application to use
