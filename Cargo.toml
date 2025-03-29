@@ -1,0 +1,12 @@
+[package]
+name = "cordelia"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+cordelia-p2p = {path = "../cordelia-p2p" }
+libp2p = { version = "0.51", features = ["tcp", "dns", "async-std", "noise", "mplex", "yamux", "websocket", "ping", "macros", "identify", "request-response", "autonat", "ed25519"] }
+futures = "0.3"
+async-std = { version = "1.12", features = ["attributes"] }
