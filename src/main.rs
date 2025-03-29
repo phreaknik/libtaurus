@@ -1,8 +1,9 @@
-use std::path::PathBuf;
-
 use clap::{arg, command, ArgMatches};
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
+use std::path::PathBuf;
 use tokio;
+use tracing::{info, span, Level};
+use tracing_subscriber::EnvFilter;
 
 /// Application configuration details
 struct Config<'a> {
@@ -15,19 +16,34 @@ async fn main() {
     // Parse CLI arguments
     let args = parse_args();
 
+    // Set up a subscriber to capture logs
+    setup_logger(&args);
+
     // Build config from args
     let cfg = build_cfg(&args);
 
     // Start the P2P client
+    info!("Starting p2p...");
     cordelia_p2p::run(&cfg.p2p_cfg).await.unwrap();
 }
 
 /// Parse CLI args
 fn parse_args() -> ArgMatches {
     command!() // initialize CLI with details from cargo.toml
-        .arg(arg!(--data_dir <PATH>).required(false))
-        .arg(arg!(--static_peer <MULTIADDR>).required(false))
+        .arg(arg!(-v --verbosity ... "Increase verbosity level").required(false))
+        .arg(arg!(-d --data_dir <PATH> "Specify data directory").required(false))
+        .arg(arg!(--static_peer <MULTIADDR> "Specify static peer to connect to").required(false))
         .get_matches()
+}
+
+/// Set up logger
+fn setup_logger<'a>(args: &'a ArgMatches) {
+    let log_filter = match args.get_count("verbosity") {
+        1 => EnvFilter::from_default_env().add_directive("cordelia=debug".parse().unwrap()),
+        2 => EnvFilter::from_default_env().add_directive("cordelia=trace".parse().unwrap()),
+        _ => EnvFilter::from_default_env().add_directive("cordelia=info".parse().unwrap()),
+    };
+    tracing_subscriber::fmt().with_env_filter(log_filter).init();
 }
 
 /// Build application config from parsed CLI args
