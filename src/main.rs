@@ -3,7 +3,7 @@ use cordelia_p2p::peer_db::PeerDB;
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
 use std::path::PathBuf;
 use tokio;
-use tracing::info;
+use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
 /// Application configuration details
@@ -43,10 +43,14 @@ fn list_peers_cmd(args: &ArgMatches) {
 
     // Open the peer database
     let peer_dir = parse_data_dir(args).join("p2p/peer_db/");
-    let db = PeerDB::create_or_open(peer_dir).expect("failed to open peer database");
-
-    // Print the peers
-    let _ = db.print_peers(args.get_one("max").map(|x| *x));
+    match PeerDB::open(peer_dir.clone()) {
+        Ok(db) => {
+            let _ = db.print_peers(args.get_one("max").map(|x| *x));
+        }
+        Err(e) => {
+            error!("Failed to open peer database: {e}");
+        }
+    }
 }
 
 /// Parse CLI args
