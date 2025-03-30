@@ -1,6 +1,7 @@
 use clap::{arg, command, ArgMatches, Command};
 use cordelia_p2p::peer_db::PeerDB;
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
+use futures::join;
 use std::path::PathBuf;
 use tokio::{self, sync::mpsc};
 use tracing::{error, info};
@@ -10,6 +11,8 @@ use tracing_subscriber::EnvFilter;
 struct Config {
     /// P2P client configuration
     p2p_cfg: cordelia_p2p::Config,
+    /// Core configuration
+    core_cfg: cordelia_core::Config,
 }
 
 /// Main cordelia CLI application
@@ -32,13 +35,19 @@ async fn run_cmd(args: &ArgMatches) {
     let cfg = build_cfg(&args);
 
     // Set up communication channels
-    let (to_p2p, from_p2p) = mpsc::unbounded_channel();
+    let (send_to_core, recv_from_p2p) = mpsc::unbounded_channel();
+    let (send_to_p2p, recv_from_core) = mpsc::unbounded_channel();
 
     // Start the P2P client
     info!("Starting p2p...");
-    cordelia_p2p::run(&cfg.p2p_cfg, from_p2p, to_p2p)
-        .await
-        .unwrap();
+    let p2p = cordelia_p2p::run(&cfg.p2p_cfg, recv_from_core, send_to_p2p);
+
+    // Start core backend
+    info!("Starting core...");
+    let core = cordelia_core::run(&cfg.core_cfg, recv_from_p2p, send_to_core);
+
+    // Run all processes
+    let _ = join!(p2p, core);
 }
 
 /// Command to list peers
@@ -108,6 +117,7 @@ fn build_cfg(args: &ArgMatches) -> Config {
     let data_dir = parse_data_dir(args);
     Config {
         p2p_cfg: build_p2p_cfg(data_dir.join("p2p/"), args),
+        core_cfg: cordelia_core::Config {},
     }
 }
 
