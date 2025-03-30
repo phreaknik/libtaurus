@@ -124,12 +124,12 @@ fn build_cfg(args: &ArgMatches) -> Config {
 
 /// Build ['cordelia-p2p'] config from parsed CLI args
 fn build_p2p_cfg(p2p_data_dir: PathBuf, args: &ArgMatches) -> cordelia_p2p::Config {
-    let static_peers = match args.get_one::<String>("static_peer") {
+    let boot_nodes = match args.get_one::<String>("static_peer") {
         Some(v) => vec![v.parse().expect("failed to parse static_peer")],
         _ => Vec::new(),
     };
     cordelia_p2p::Config {
         data_dir: p2p_data_dir,
-        static_peers,
+        boot_nodes,
     }
 }
