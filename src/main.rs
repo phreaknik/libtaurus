@@ -1,7 +1,7 @@
 use clap::{arg, command, ArgMatches, Command};
 use cordelia_p2p::peer_db::PeerDB;
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
-use futures::join;
+use futures::{future::select, pin_mut};
 use std::path::PathBuf;
 use tokio::{self, sync::mpsc};
 use tracing::{error, info};
@@ -47,7 +47,8 @@ async fn run_cmd(args: &ArgMatches) {
     let core = cordelia_core::run(&cfg.core_cfg, recv_from_p2p, send_to_core);
 
     // Run all processes
-    let _ = join!(p2p, core);
+    pin_mut!(p2p, core);
+    let _ = select(p2p, core).await;
 }
 
 /// Command to list peers
