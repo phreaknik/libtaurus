@@ -1,15 +1,16 @@
 use clap::{arg, command, ArgMatches, Command};
 use cordelia_p2p::peer_db::PeerDB;
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
+use libp2p::Multiaddr;
 use std::path::PathBuf;
 use tokio;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
 /// Application configuration details
-struct Config<'a> {
+struct Config {
     /// P2P client configuration
-    p2p_cfg: cordelia_p2p::Config<'a>,
+    p2p_cfg: cordelia_p2p::Config,
 }
 
 /// Main cordelia CLI application
@@ -33,7 +34,9 @@ async fn run_cmd(args: &ArgMatches) {
 
     // Start the P2P client
     info!("Starting p2p...");
-    cordelia_p2p::run(&cfg.p2p_cfg).await.unwrap();
+    cordelia_p2p::run(&cfg.p2p_cfg, get_bootstrap_peers(args))
+        .await
+        .unwrap();
 }
 
 /// Command to list peers
@@ -43,7 +46,7 @@ fn list_peers_cmd(args: &ArgMatches) {
 
     // Open the peer database
     let peer_dir = parse_data_dir(args).join("p2p/peer_db/");
-    match PeerDB::open(peer_dir.clone()) {
+    match PeerDB::open(&peer_dir) {
         Ok(db) => {
             let _ = db.print_peers(args.get_one("max").map(|x| *x));
         }
@@ -98,8 +101,16 @@ fn parse_data_dir(args: &ArgMatches) -> PathBuf {
         .unwrap_or(app_dirs.data_dir().join("cordelia/"))
 }
 
+/// Get the list of bootstrap peers
+fn get_bootstrap_peers<'a>(args: &'a ArgMatches) -> Vec<Multiaddr> {
+    match args.get_one::<String>("static_peer") {
+        Some(v) => vec![v.parse().expect("failed to parse static_peer")],
+        _ => Vec::new(),
+    }
+}
+
 /// Build application config from parsed CLI args
-fn build_cfg<'a>(args: &'a ArgMatches) -> Config<'a> {
+fn build_cfg(args: &ArgMatches) -> Config {
     let data_dir = parse_data_dir(args);
     Config {
         p2p_cfg: build_p2p_cfg(data_dir.join("p2p/"), args),
@@ -107,9 +118,8 @@ fn build_cfg<'a>(args: &'a ArgMatches) -> Config<'a> {
 }
 
 /// Build ['cordelia-p2p'] config from parsed CLI args
-fn build_p2p_cfg<'a>(p2p_data_dir: PathBuf, args: &'a ArgMatches) -> cordelia_p2p::Config<'a> {
+fn build_p2p_cfg(p2p_data_dir: PathBuf, _args: &ArgMatches) -> cordelia_p2p::Config {
     cordelia_p2p::Config {
-        static_peer: args.get_one::<String>("static_peer").map(move |s| &s[..]),
         data_dir: p2p_data_dir,
     }
 }
