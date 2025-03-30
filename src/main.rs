@@ -1,9 +1,8 @@
 use clap::{arg, command, ArgMatches, Command};
 use cordelia_p2p::peer_db::PeerDB;
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
-use libp2p::Multiaddr;
 use std::path::PathBuf;
-use tokio;
+use tokio::{self, sync::mpsc};
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
@@ -32,9 +31,12 @@ async fn run_cmd(args: &ArgMatches) {
     // Build config from args
     let cfg = build_cfg(&args);
 
+    // Set up communication channels
+    let (to_p2p, from_p2p) = mpsc::unbounded_channel();
+
     // Start the P2P client
     info!("Starting p2p...");
-    cordelia_p2p::run(&cfg.p2p_cfg, get_bootstrap_peers(args))
+    cordelia_p2p::run(&cfg.p2p_cfg, from_p2p, to_p2p)
         .await
         .unwrap();
 }
@@ -101,14 +103,6 @@ fn parse_data_dir(args: &ArgMatches) -> PathBuf {
         .unwrap_or(app_dirs.data_dir().join("cordelia/"))
 }
 
-/// Get the list of bootstrap peers
-fn get_bootstrap_peers<'a>(args: &'a ArgMatches) -> Vec<Multiaddr> {
-    match args.get_one::<String>("static_peer") {
-        Some(v) => vec![v.parse().expect("failed to parse static_peer")],
-        _ => Vec::new(),
-    }
-}
-
 /// Build application config from parsed CLI args
 fn build_cfg(args: &ArgMatches) -> Config {
     let data_dir = parse_data_dir(args);
@@ -118,8 +112,13 @@ fn build_cfg(args: &ArgMatches) -> Config {
 }
 
 /// Build ['cordelia-p2p'] config from parsed CLI args
-fn build_p2p_cfg(p2p_data_dir: PathBuf, _args: &ArgMatches) -> cordelia_p2p::Config {
+fn build_p2p_cfg(p2p_data_dir: PathBuf, args: &ArgMatches) -> cordelia_p2p::Config {
+    let static_peers = match args.get_one::<String>("static_peer") {
+        Some(v) => vec![v.parse().expect("failed to parse static_peer")],
+        _ => Vec::new(),
+    };
     cordelia_p2p::Config {
         data_dir: p2p_data_dir,
+        static_peers,
     }
 }
