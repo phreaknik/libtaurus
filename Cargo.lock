@@ -746,29 +746,17 @@ name = "cordelia"
 version = "0.1.0"
 dependencies = [
  "async-std",
+ "async-trait",
  "clap",
- "cordelia-core",
  "cordelia-p2p",
  "etcetera",
  "futures",
  "libp2p",
+ "thiserror",
  "tokio",
  "tracing",
  "tracing-log",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "cordelia-core"
-version = "0.1.0"
-dependencies = [
- "async-std",
- "async-trait",
- "cordelia-p2p",
- "futures",
- "thiserror",
- "tokio",
- "tracing",
 ]
 
 [[package]]

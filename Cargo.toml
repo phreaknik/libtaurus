@@ -7,11 +7,12 @@ edition = "2021"
 
 [dependencies]
 cordelia-p2p = { path = "../cordelia-p2p" }
-cordelia-core = { path = "../cordelia-core" }
 libp2p = { version = "0.51", features = ["tcp", "dns", "async-std", "noise", "mplex", "yamux", "websocket", "ping", "macros", "identify", "request-response", "autonat", "ed25519"] }
 futures = "0.3"
 async-std = { version = "1.12", features = ["attributes"] }
-tokio = { version = "1.27.0", features = ["full"] }
+async-trait = "0.1.68"
+thiserror = "1.0.40"
+tokio = { version = "1.27.0", features = ["sync", "macros"] }
 clap = { version = "4.2.4", features = ["cargo"] }
 etcetera = "0.8.0"
 tracing = "0.1.37"

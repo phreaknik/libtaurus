@@ -1,3 +1,5 @@
+mod consensus;
+
 use clap::{arg, command, ArgMatches, Command};
 use cordelia_p2p::peer_db::PeerDB;
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
@@ -12,7 +14,7 @@ struct Config {
     /// P2P client configuration
     p2p_cfg: cordelia_p2p::Config,
     /// Core configuration
-    core_cfg: cordelia_core::Config,
+    core_cfg: consensus::Config,
 }
 
 /// Main cordelia CLI application
@@ -44,7 +46,7 @@ async fn cmd_run(args: &ArgMatches) {
 
     // Start core backend
     info!("Starting core...");
-    let core = cordelia_core::run(&cfg.core_cfg, recv_from_p2p, send_to_p2p);
+    let core = consensus::run(&cfg.core_cfg, recv_from_p2p, send_to_p2p);
 
     // Run all processes
     pin_mut!(p2p, core);
@@ -117,7 +119,7 @@ fn build_cfg(args: &ArgMatches) -> Config {
     let data_dir = parse_data_dir(args);
     Config {
         p2p_cfg: build_p2p_cfg(data_dir.join("p2p/"), args),
-        core_cfg: cordelia_core::Config {},
+        core_cfg: consensus::Config {},
     }
 }
 
