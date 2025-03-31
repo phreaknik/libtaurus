@@ -129,6 +129,11 @@ pub async fn run(
                         swarm.connected_peers().count()
                     );
                 }
+                SwarmEvent::OutgoingConnectionError { peer_id, .. } => {
+                    if let Some(peer_id) = peer_id {
+                        swarm.behaviour_mut().handle_unreachable_peer(&peer_id);
+                    }
+                }
                 SwarmEvent::Behaviour(Event::Pubsub(gossipsub::Event::Message {
                     message, ..
                 })) => {

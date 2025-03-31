@@ -115,8 +115,10 @@ impl Behaviour {
             .map_err(crate::p2p::Error::from)
     }
 
+    /// Add bootnodes to dial and bootstrap into the P2P network.
+    /// The list of bootnodes will include both explicitely provided bootnodes in the config, as
+    /// well as previously reachable peers saved in the peer database.
     pub fn add_boot_nodes(&mut self, config: &Config) {
-        let peer_db = PeerDB::create_or_open(&config.peer_db_path).unwrap();
         config
             .boot_nodes
             .clone()
@@ -128,11 +130,11 @@ impl Behaviour {
             })
             .chain(
                 // Chain the peer addresses of all saved peers
-                peer_db
+                self.peer_db
                     .list_peers()
                     .unwrap()
                     .into_iter()
-                    .map(|peer_id| (peer_id, peer_db.read_peer_info(&peer_id).ok()))
+                    .map(|peer_id| (peer_id, self.peer_db.read_peer_info(&peer_id).ok()))
                     .inspect(|(peer_id, info)| {
                         if info.is_none() {
                             warn!("Listed peer doesn't exist in database: {peer_id}");
@@ -150,6 +152,11 @@ impl Behaviour {
                     let _ = self.inner.borrow_mut().kademlia.add_address(&peer, address);
                 }
             });
+    }
+
+    /// Perform any handling logic for a peer which we tried, but failed to reach
+    pub fn handle_unreachable_peer(&mut self, peer_id: &PeerId) {
+        let _ = self.peer_db.delete_peer_info(peer_id);
     }
 }
 

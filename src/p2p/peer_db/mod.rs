@@ -105,6 +105,15 @@ impl PeerDB {
         }
     }
 
+    /// Deletes a peer entry from the database
+    pub fn delete_peer_info(&self, peer_id: &PeerId) -> Result<()> {
+        let env = self.manager.write().unwrap();
+        let mut writer = env.write()?;
+        self.store.delete(&mut writer, peer_id.to_bytes())?;
+        writer.commit()?;
+        Ok(())
+    }
+
     // List ['PeerId']s stored in the database
     pub fn list_peers(&self) -> Result<Vec<PeerId>> {
         let env = self.manager.read().unwrap();
