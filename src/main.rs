@@ -6,10 +6,10 @@ mod p2p;
 
 use clap::{arg, command, ArgMatches, Command};
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
-use futures::pin_mut;
+use futures::{future::select_all, FutureExt, TryFutureExt};
 use p2p::peer_db::PeerDB;
 use std::path::PathBuf;
-use tokio::{self, select, sync::mpsc};
+use tokio::{self, sync::mpsc};
 use tracing::error;
 use tracing_subscriber::EnvFilter;
 
@@ -32,6 +32,17 @@ async fn main() {
     }
 }
 
+/// Error type for cordelia-p2p errors
+#[derive(thiserror::Error, Debug)]
+enum Error {
+    #[error(transparent)]
+    P2pError(#[from] crate::p2p::Error),
+    #[error(transparent)]
+    ConsensusError(#[from] crate::consensus::Error),
+    #[error(transparent)]
+    HttpError(#[from] crate::http::Error),
+}
+
 /// Command to start node and connect to the network
 async fn cmd_run(args: &ArgMatches) {
     // Set up a subscriber to capture logs
@@ -44,28 +55,27 @@ async fn cmd_run(args: &ArgMatches) {
     let (send_to_core, recv_from_p2p) = mpsc::unbounded_channel();
     let (send_to_p2p, recv_from_core) = mpsc::unbounded_channel();
 
-    let p2p = p2p::run(&cfg.p2p_cfg, recv_from_core, send_to_core);
-    let consensus = consensus::run(&cfg.core_cfg, recv_from_p2p, send_to_p2p);
-    let http = http::run();
+    // Build a list of futures to be executed
+    let mut futures = Vec::new();
+    futures.push(
+        p2p::run(&cfg.p2p_cfg, recv_from_core, send_to_core)
+            .map_err(Error::from)
+            .boxed(),
+    );
+    futures.push(
+        consensus::run(&cfg.core_cfg, recv_from_p2p, send_to_p2p)
+            .map_err(Error::from)
+            .boxed(),
+    );
+    if !args.get_flag("nohttp") {
+        futures.push(http::run().map_err(Error::from).boxed());
+    }
 
     // Run all processes
-    pin_mut!(p2p, consensus, http);
-    select! {
-        ret = p2p=> {
-            if let Err(e) = ret {
-                error!("p2p error: {e}");
-            }
-        },
-        ret = consensus=> {
-            if let Err(e) = ret {
-                error!("consensus error: {e}");
-            }
-        },
-        ret = http=> {
-            if let Err(e) = ret {
-                error!("http error: {e}");
-            }
-        },
+    //pin_mut!(futures);
+    let (result, _, _) = select_all(futures.into_iter()).await;
+    if let Err(e) = result {
+        error!("exited with error: {e}");
     }
 }
 
@@ -92,11 +102,10 @@ fn parse_cli_args() -> ArgMatches {
         .subcommand(
             Command::new("run")
                 .about("Connect to the p2p network and join consensus")
-                .arg(arg!(-v --verbosity ... "Increase verbosity level").required(false))
+                .arg(arg!(--bootnode <MULTIADDR> "Specify boot node to connect to").required(false))
                 .arg(arg!(-d --data_dir <PATH> "Specify data directory").required(false))
-                .arg(
-                    arg!(--bootnode <MULTIADDR> "Specify boot node to connect to").required(false),
-                ),
+                .arg(arg!(--nohttp "Disable HTTP server").required(false))
+                .arg(arg!(-v --verbosity ... "Increase verbosity level").required(false)),
         )
         .subcommand(
             Command::new("list-peers")
