@@ -23,6 +23,8 @@ pub async fn run(
     mut msg_in: UnboundedReceiver<Message>,
     msg_out: UnboundedSender<Message>,
 ) -> Result<()> {
+    info!("Starting consensus subsystem...");
+
     let mut ticker = interval(Duration::from_secs(5));
     let start = Instant::now();
 

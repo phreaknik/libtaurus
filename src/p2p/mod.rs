@@ -79,6 +79,8 @@ pub async fn run(
     mut msg_in: UnboundedReceiver<Message>,
     msg_out: UnboundedSender<Message>,
 ) -> Result<()> {
+    info!("Starting p2p client...");
+
     let local_key = get_keypair(&config.data_dir);
     let local_peer_id = PeerId::from(local_key.public());
     info!("peer_id = {local_peer_id}");

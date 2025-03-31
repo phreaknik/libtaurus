@@ -1,15 +1,16 @@
 #![feature(iterator_try_collect)]
 
 mod consensus;
+mod http;
 mod p2p;
 
 use clap::{arg, command, ArgMatches, Command};
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
-use futures::{future::select, pin_mut};
+use futures::pin_mut;
 use p2p::peer_db::PeerDB;
 use std::path::PathBuf;
-use tokio::{self, sync::mpsc};
-use tracing::{error, info};
+use tokio::{self, select, sync::mpsc};
+use tracing::error;
 use tracing_subscriber::EnvFilter;
 
 /// Application configuration details
@@ -43,17 +44,29 @@ async fn cmd_run(args: &ArgMatches) {
     let (send_to_core, recv_from_p2p) = mpsc::unbounded_channel();
     let (send_to_p2p, recv_from_core) = mpsc::unbounded_channel();
 
-    // Start the P2P client
-    info!("Starting p2p...");
     let p2p = p2p::run(&cfg.p2p_cfg, recv_from_core, send_to_core);
-
-    // Start core backend
-    info!("Starting core...");
-    let core = consensus::run(&cfg.core_cfg, recv_from_p2p, send_to_p2p);
+    let consensus = consensus::run(&cfg.core_cfg, recv_from_p2p, send_to_p2p);
+    let http = http::run();
 
     // Run all processes
-    pin_mut!(p2p, core);
-    let _ = select(p2p, core).await;
+    pin_mut!(p2p, consensus, http);
+    select! {
+        ret = p2p=> {
+            if let Err(e) = ret {
+                error!("p2p error: {e}");
+            }
+        },
+        ret = consensus=> {
+            if let Err(e) = ret {
+                error!("consensus error: {e}");
+            }
+        },
+        ret = http=> {
+            if let Err(e) = ret {
+                error!("http error: {e}");
+            }
+        },
+    }
 }
 
 /// Command to list peers
