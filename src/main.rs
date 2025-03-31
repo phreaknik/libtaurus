@@ -20,14 +20,14 @@ struct Config {
 async fn main() {
     // Parse CLI arguments
     match parse_cli_args().subcommand() {
-        Some(("run", sub_args)) => run_cmd(sub_args).await,
-        Some(("list-peers", sub_args)) => list_peers_cmd(sub_args),
+        Some(("run", sub_args)) => cmd_run(sub_args).await,
+        Some(("list-peers", sub_args)) => cmd_list_peers(sub_args),
         _ => unreachable!("Exausted list of subcommands and subcommand_requred prevents 'None'"),
     }
 }
 
 /// Command to start node and connect to the network
-async fn run_cmd(args: &ArgMatches) {
+async fn cmd_run(args: &ArgMatches) {
     // Set up a subscriber to capture logs
     setup_logger(&args);
 
@@ -52,7 +52,7 @@ async fn run_cmd(args: &ArgMatches) {
 }
 
 /// Command to list peers
-fn list_peers_cmd(args: &ArgMatches) {
+fn cmd_list_peers(args: &ArgMatches) {
     // Set up a subscriber to capture logs
     setup_logger(&args);
 
