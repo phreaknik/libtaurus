@@ -92,9 +92,7 @@ impl Behaviour {
                 agent_version: info.agent_version,
                 addresses: info.listen_addrs.clone(),
             }) {
-                Ok(_) => {
-                    info!("Added new peer {peer_id}");
-                }
+                Ok(_) => {}
                 Err(e) => {
                     warn!("Failed to add new peer: {e}");
                 }
