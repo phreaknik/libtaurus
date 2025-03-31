@@ -40,11 +40,11 @@ async fn run_cmd(args: &ArgMatches) {
 
     // Start the P2P client
     info!("Starting p2p...");
-    let p2p = cordelia_p2p::run(&cfg.p2p_cfg, recv_from_core, send_to_p2p);
+    let p2p = cordelia_p2p::run(&cfg.p2p_cfg, recv_from_core, send_to_core);
 
     // Start core backend
     info!("Starting core...");
-    let core = cordelia_core::run(&cfg.core_cfg, recv_from_p2p, send_to_core);
+    let core = cordelia_core::run(&cfg.core_cfg, recv_from_p2p, send_to_p2p);
 
     // Run all processes
     pin_mut!(p2p, core);
@@ -77,8 +77,7 @@ fn parse_cli_args() -> ArgMatches {
                 .arg(arg!(-v --verbosity ... "Increase verbosity level").required(false))
                 .arg(arg!(-d --data_dir <PATH> "Specify data directory").required(false))
                 .arg(
-                    arg!(--static_peer <MULTIADDR> "Specify static peer to connect to")
-                        .required(false),
+                    arg!(--bootnode <MULTIADDR> "Specify boot node to connect to").required(false),
                 ),
         )
         .subcommand(
@@ -124,8 +123,8 @@ fn build_cfg(args: &ArgMatches) -> Config {
 
 /// Build ['cordelia-p2p'] config from parsed CLI args
 fn build_p2p_cfg(p2p_data_dir: PathBuf, args: &ArgMatches) -> cordelia_p2p::Config {
-    let boot_nodes = match args.get_one::<String>("static_peer") {
-        Some(v) => vec![v.parse().expect("failed to parse static_peer")],
+    let boot_nodes = match args.get_one::<String>("bootnode") {
+        Some(v) => vec![v.parse().expect("failed to parse bootnode address")],
         _ => Vec::new(),
     };
     cordelia_p2p::Config {
