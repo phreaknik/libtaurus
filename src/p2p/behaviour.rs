@@ -86,17 +86,24 @@ impl Behaviour {
         // Save the peer to PeerDB
         match self.peer_db.read_peer_info(&peer_id) {
             Ok(_) => {}
-            Err(peer_db::Error::EntryNotFound) => match self.peer_db.write_peer_info(&PeerInfo {
-                peer_id,
-                protocol_version: info.protocol_version,
-                agent_version: info.agent_version,
-                addresses: info.listen_addrs.clone(),
-            }) {
-                Ok(_) => {}
-                Err(e) => {
-                    warn!("Failed to add new peer: {e}");
+            Err(peer_db::Error::EntryNotFound) => {
+                error!("received addresses: {:?}", info.listen_addrs);
+                let mut addresses = info.listen_addrs.clone();
+                addresses.sort();
+                addresses.dedup();
+                let info = PeerInfo {
+                    peer_id,
+                    protocol_version: info.protocol_version,
+                    agent_version: info.agent_version,
+                    addresses,
+                };
+                match self.peer_db.write_peer_info(&info) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        warn!("Failed to add new peer: {e}");
+                    }
                 }
-            },
+            }
             Err(e) => {
                 error!("Error accessing peer_db: {e}");
             }
