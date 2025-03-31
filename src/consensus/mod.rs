@@ -1,4 +1,4 @@
-use cordelia_p2p::message::Message;
+use crate::p2p::message::Message;
 use std::result;
 use std::time::{Duration, Instant};
 use tokio::select;

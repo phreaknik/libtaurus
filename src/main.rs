@@ -1,9 +1,12 @@
+#![feature(iterator_try_collect)]
+
 mod consensus;
+mod p2p;
 
 use clap::{arg, command, ArgMatches, Command};
-use cordelia_p2p::peer_db::PeerDB;
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
 use futures::{future::select, pin_mut};
+use p2p::peer_db::PeerDB;
 use std::path::PathBuf;
 use tokio::{self, sync::mpsc};
 use tracing::{error, info};
@@ -12,7 +15,7 @@ use tracing_subscriber::EnvFilter;
 /// Application configuration details
 struct Config {
     /// P2P client configuration
-    p2p_cfg: cordelia_p2p::Config,
+    p2p_cfg: p2p::Config,
     /// Core configuration
     core_cfg: consensus::Config,
 }
@@ -42,7 +45,7 @@ async fn cmd_run(args: &ArgMatches) {
 
     // Start the P2P client
     info!("Starting p2p...");
-    let p2p = cordelia_p2p::run(&cfg.p2p_cfg, recv_from_core, send_to_core);
+    let p2p = p2p::run(&cfg.p2p_cfg, recv_from_core, send_to_core);
 
     // Start core backend
     info!("Starting core...");
@@ -124,12 +127,12 @@ fn build_cfg(args: &ArgMatches) -> Config {
 }
 
 /// Build ['cordelia-p2p'] config from parsed CLI args
-fn build_p2p_cfg(p2p_data_dir: PathBuf, args: &ArgMatches) -> cordelia_p2p::Config {
+fn build_p2p_cfg(p2p_data_dir: PathBuf, args: &ArgMatches) -> p2p::Config {
     let boot_nodes = match args.get_one::<String>("bootnode") {
         Some(v) => vec![v.parse().expect("failed to parse bootnode address")],
         _ => Vec::new(),
     };
-    cordelia_p2p::Config {
+    p2p::Config {
         data_dir: p2p_data_dir,
         boot_nodes,
     }
