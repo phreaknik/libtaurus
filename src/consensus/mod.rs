@@ -21,7 +21,7 @@ pub enum Action {}
 #[derive(thiserror::Error, Debug)]
 pub enum Error {}
 
-/// Configuration details for ['cordelia-core'].
+/// Configuration details for the consensus process.
 #[derive(Debug, Clone)]
 pub struct Config {}
 

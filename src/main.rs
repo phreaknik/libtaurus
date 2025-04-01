@@ -8,8 +8,8 @@ use clap::{arg, command, ArgMatches, Command};
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
 use p2p::peer_db::PeerDB;
 use std::path::PathBuf;
-use tokio::{self};
-use tracing::error;
+use tokio::{self, select};
+use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
 /// Application configuration details
@@ -51,14 +51,26 @@ async fn cmd_run(args: &ArgMatches) {
     let cfg = build_cfg(&args);
 
     // Build a list of futures to be executed
-    let (p2p_action_ch, p2p_event_ch) = p2p::start(cfg.p2p_cfg);
-    let (consensus_action_ch, _consensus_event_ch) = consensus::start(
+    let (p2p_action_ch, p2p_event_sender) = p2p::start(cfg.p2p_cfg);
+    let (consensus_action_ch, consensus_event_sender) = consensus::start(
         cfg.core_cfg,
         p2p_action_ch.clone(),
-        p2p_event_ch.subscribe(),
+        p2p_event_sender.subscribe(),
     );
     if !args.get_flag("nohttp") {
         http::start(p2p_action_ch, consensus_action_ch);
+    }
+    let mut p2p_event_ch = p2p_event_sender.subscribe();
+    let mut consensus_event_ch = consensus_event_sender.subscribe();
+    loop {
+        select! {
+            event = p2p_event_ch.recv() => {
+                info!("p2p event: {event:?}");
+            }
+            event = consensus_event_ch.recv() => {
+                info!("consensus event: {event:?}");
+            }
+        }
     }
 }
 
