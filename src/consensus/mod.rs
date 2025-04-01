@@ -2,6 +2,7 @@ pub mod block;
 pub mod hash;
 
 use crate::p2p::{self, Message};
+use std::result;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::time::interval;
@@ -22,7 +23,15 @@ pub enum Action {}
 
 /// Error type for consensus errors
 #[derive(thiserror::Error, Debug)]
-pub enum Error {}
+pub enum Error {
+    #[error("invalid difficulty")]
+    InvalidDifficulty,
+    #[error("invalid proof-of-work")]
+    InvalidPoW,
+}
+
+/// Result type for consensus errors
+pub type Result<T> = result::Result<T, Error>;
 
 /// Configuration details for the consensus process.
 #[derive(Debug, Clone)]
