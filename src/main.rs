@@ -51,13 +51,15 @@ async fn cmd_run(args: &ArgMatches) {
     let cfg = build_cfg(&args);
 
     // Build a list of futures to be executed
-    let mut tasks = JoinSet::new();
-    let p2p_api = p2p::run(cfg.p2p_cfg, &mut tasks);
-    tasks.spawn(consensus::run(cfg.core_cfg, p2p_api));
+    let (p2p_action_ch, p2p_event_ch) = p2p::start(cfg.p2p_cfg);
+    let (consensus_action_ch, _consensus_event_ch) = consensus::start(
+        cfg.core_cfg,
+        p2p_action_ch.clone(),
+        p2p_event_ch.subscribe(),
+    );
     if !args.get_flag("nohttp") {
-        tasks.spawn(http::run());
+        http::start(p2p_action_ch, consensus_action_ch);
     }
-    while tasks.join_next().await.is_some() {}
 }
 
 /// Command to list peers

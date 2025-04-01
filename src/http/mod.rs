@@ -2,7 +2,11 @@ use hyper;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
 use std::sync::{Arc, Mutex};
+use tokio::sync::broadcast;
+use tokio::sync::mpsc::UnboundedSender;
 use tracing::{error, info};
+
+use crate::{consensus, p2p};
 
 /// Error type for cordelia-p2p errors
 #[derive(thiserror::Error, Debug)]
@@ -41,8 +45,19 @@ async fn handle(
     }
 }
 
-/// HTTP server main loop
-pub async fn run() {
+/// Run the http server, spawning the task as a new thread.
+pub fn start(
+    p2p_action_ch: UnboundedSender<p2p::Action>,
+    consensus_action_ch: UnboundedSender<consensus::Action>,
+) {
+    tokio::spawn(task_fn(p2p_action_ch, consensus_action_ch));
+}
+
+/// The task function which runs the consensus process.
+pub async fn task_fn(
+    _p2p_action_ch: UnboundedSender<p2p::Action>,
+    _consensus_action_ch: UnboundedSender<consensus::Action>,
+) {
     info!("Starting http service...");
 
     let state = Arc::new(Mutex::new(ServerState {}));
