@@ -1,3 +1,6 @@
+pub mod block;
+pub mod hash;
+
 use crate::p2p::{self, Message};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
