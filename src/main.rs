@@ -6,10 +6,9 @@ mod p2p;
 
 use clap::{arg, command, ArgMatches, Command};
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
-use futures::{future::select_all, FutureExt, TryFutureExt};
 use p2p::peer_db::PeerDB;
 use std::path::PathBuf;
-use tokio::{self, sync::mpsc};
+use tokio::{self, sync::mpsc, task::JoinSet};
 use tracing::error;
 use tracing_subscriber::EnvFilter;
 
@@ -56,27 +55,13 @@ async fn cmd_run(args: &ArgMatches) {
     let (send_to_p2p, recv_from_core) = mpsc::unbounded_channel();
 
     // Build a list of futures to be executed
-    let mut futures = Vec::new();
-    futures.push(
-        p2p::run(&cfg.p2p_cfg, recv_from_core, send_to_core)
-            .map_err(Error::from)
-            .boxed(),
-    );
-    futures.push(
-        consensus::run(&cfg.core_cfg, recv_from_p2p, send_to_p2p)
-            .map_err(Error::from)
-            .boxed(),
-    );
+    let mut tasks = JoinSet::new();
+    tasks.spawn(p2p::run(cfg.p2p_cfg, recv_from_core, send_to_core));
+    tasks.spawn(consensus::run(cfg.core_cfg, recv_from_p2p, send_to_p2p));
     if !args.get_flag("nohttp") {
-        futures.push(http::run().map_err(Error::from).boxed());
+        tasks.spawn(http::run());
     }
-
-    // Run all processes
-    //pin_mut!(futures);
-    let (result, _, _) = select_all(futures.into_iter()).await;
-    if let Err(e) = result {
-        error!("exited with error: {e}");
-    }
+    while tasks.join_next().await.is_some() {}
 }
 
 /// Command to list peers

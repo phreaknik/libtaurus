@@ -1,10 +1,9 @@
 use hyper;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
-use std::result;
 use std::sync::{Arc, Mutex};
 use tracing::{error, info};
-///
+
 /// Error type for cordelia-p2p errors
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -12,12 +11,11 @@ pub enum Error {
     Hyper(#[from] hyper::Error),
 }
 
-/// Result type for cordelia-p2p
-pub type HttpResult<T> = result::Result<T, Error>;
-
+/// Internal state of the HTTP server
 #[derive(Debug, Clone)]
 struct ServerState {}
 
+/// HTTP request handler
 async fn handle(
     mut req: Request<Body>,
     _state: Arc<Mutex<ServerState>>,
@@ -43,7 +41,8 @@ async fn handle(
     }
 }
 
-pub async fn run() -> HttpResult<()> {
+/// HTTP server main loop
+pub async fn run() {
     info!("Starting http service...");
 
     let state = Arc::new(Mutex::new(ServerState {}));
@@ -54,5 +53,8 @@ pub async fn run() -> HttpResult<()> {
     let server = Server::bind(&([127, 0, 0, 1], 12021).into()).serve(make_service);
 
     // And run forever...
-    server.await.map_err(Error::from)
+    server
+        .await
+        .map_err(Error::from)
+        .expect("http server exited unexpectedly");
 }

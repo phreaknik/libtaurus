@@ -1,5 +1,4 @@
 use crate::p2p::message::Message;
-use std::result;
 use std::time::{Duration, Instant};
 use tokio::select;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -10,19 +9,16 @@ use tracing::{error, info};
 #[derive(thiserror::Error, Debug)]
 pub enum Error {}
 
-/// Result type for cordelia-core
-pub type Result<T> = result::Result<T, Error>;
-
 /// Configuration details for ['cordelia-core'].
 #[derive(Debug, Clone)]
 pub struct Config {}
 
 /// Run the cordelia-core backend to handle consensus.
 pub async fn run(
-    _config: &Config,
+    _config: Config,
     mut msg_in: UnboundedReceiver<Message>,
     msg_out: UnboundedSender<Message>,
-) -> Result<()> {
+) {
     info!("Starting consensus subsystem...");
 
     let mut ticker = interval(Duration::from_secs(5));

@@ -49,8 +49,6 @@ pub enum Error {
     Subscription(#[from] gossipsub::SubscriptionError),
     #[error(transparent)]
     NoKnownPeers(#[from] kad::NoKnownPeers),
-    #[error("out channel closed")]
-    OutChClosed,
 }
 
 /// Result type for cordelia-p2p
@@ -75,10 +73,10 @@ impl Config {
 /// messages sent to the msg_in will be published to the gossipsub network
 /// messages received from the gossipsub network will be forwarded to the msg_out
 pub async fn run(
-    config: &Config,
+    config: Config,
     mut msg_in: UnboundedReceiver<Message>,
     msg_out: UnboundedSender<Message>,
-) -> Result<()> {
+) {
     info!("Starting p2p client...");
 
     let local_key = get_keypair(&config.data_dir);
@@ -89,12 +87,13 @@ pub async fn run(
     // TODO: pick a different transport. development_transport() has features we likely don't want,
     // e.g. noise encryption
     let mut swarm = SwarmBuilder::with_tokio_executor(
-        libp2p::tokio_development_transport(local_key.clone())?,
+        libp2p::tokio_development_transport(local_key.clone()).unwrap(),
         Behaviour::new(behaviour::Config::new(
             local_key,
             config.peer_db_path(),
             config.boot_nodes.clone(),
-        ))?,
+        ))
+        .unwrap(),
         local_peer_id,
     )
     .build();
@@ -103,7 +102,9 @@ pub async fn run(
     let local_addr = Multiaddr::empty()
         .with(Protocol::Ip4(Ipv4Addr::UNSPECIFIED))
         .with(Protocol::Tcp(0));
-    swarm.listen_on(local_addr.clone())?;
+    swarm
+        .listen_on(local_addr.clone())
+        .expect("cannot start listener on {local_addr}");
 
     // Main event loop
     loop {
@@ -137,10 +138,9 @@ pub async fn run(
                 SwarmEvent::Behaviour(Event::Pubsub(gossipsub::Event::Message {
                     message, ..
                 })) => {
-                    if msg_out.send(Message::from_gossipsub(message)).is_err() {
-                        error!("Message backend is no longer available!");
-                        return Err(Error::OutChClosed);
-                    }
+                    msg_out
+                        .send(Message::from_gossipsub(message))
+                        .expect("channel closed");
                 }
                 _e @ _ => {} // Ignore other events
             },
