@@ -8,7 +8,7 @@ use clap::{arg, command, ArgMatches, Command};
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
 use p2p::peer_db::PeerDB;
 use std::path::PathBuf;
-use tokio::{self, task::JoinSet};
+use tokio::{self};
 use tracing::error;
 use tracing_subscriber::EnvFilter;
 

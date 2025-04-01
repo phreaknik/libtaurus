@@ -15,10 +15,9 @@ pub enum Event {}
 
 /// Actions that can be performed by the consensus process
 #[derive(Clone, Debug)]
-pub enum Action {
-    Broadcast(Message),
-}
-/// Error type for cordelia-core errors
+pub enum Action {}
+
+/// Error type for consensus errors
 #[derive(thiserror::Error, Debug)]
 pub enum Error {}
 
