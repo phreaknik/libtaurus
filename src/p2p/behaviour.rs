@@ -5,7 +5,7 @@ use libp2p::core::Endpoint;
 use libp2p::gossipsub::{self, MessageAuthenticity, MessageId};
 use libp2p::identity::Keypair;
 use libp2p::kad::store::MemoryStore;
-use libp2p::kad::{Kademlia, KademliaConfig, NoKnownPeers};
+use libp2p::kad::{self, Kademlia, KademliaConfig, NoKnownPeers};
 use libp2p::swarm::{
     ConnectionDenied, ConnectionId, FromSwarm, NetworkBehaviour, PollParameters, THandler,
     THandlerInEvent, THandlerOutEvent, ToSwarm,
@@ -15,11 +15,17 @@ use std::borrow::BorrowMut;
 use std::path::PathBuf;
 use std::str;
 use std::task::{Context, Poll};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use strum::IntoEnumIterator;
 use tracing::{error, info, trace, warn};
 
 pub const PROTOCOL_NAME: &[u8; 15] = b"/cordelia/0.1.0";
+
+/// Period to retry bootstrapping
+const BOOTSTRAP_PERIOD_SECS: u64 = 3600;
+
+/// The number of kademlia buckets a full routing table will hold
+const KADEMLIA_MAX_NUM_BUCKETS: usize = 256;
 
 /// Kademlia query timeout in seconds
 const DEFAULT_KAD_QUERY_TIMOUT: Duration = Duration::from_secs(60);
@@ -62,6 +68,8 @@ pub struct Behaviour {
     inner: InnerBehaviour,
     /// Peer database
     peer_db: PeerDB,
+    /// Time of last bootstrap
+    last_bootstrap: Option<Instant>,
 }
 
 impl Behaviour {
@@ -70,48 +78,11 @@ impl Behaviour {
         let mut b = Behaviour {
             peer_db: PeerDB::create_or_open(&config.peer_db_path)?,
             inner: InnerBehaviour::new(config.clone())?,
+            last_bootstrap: None,
         };
         b.add_boot_nodes(&config);
-        match b.inner.kademlia.bootstrap() {
-            Err(NoKnownPeers {}) => {
-                warn!("No peers. Unable go join P2P network.");
-                Ok(b)
-            }
-            Ok(_) => Ok(b),
-        }
-    }
-
-    /// Handle peer identification events
-    pub fn handle_identify_event(&mut self, peer_id: PeerId, info: identify::Info) {
-        // Save the peer to PeerDB
-        match self.peer_db.read_peer_info(&peer_id) {
-            Ok(_) => {}
-            Err(peer_db::Error::EntryNotFound) => {
-                error!("received addresses: {:?}", info.listen_addrs);
-                let mut addresses = info.listen_addrs.clone();
-                addresses.sort();
-                addresses.dedup();
-                let info = PeerInfo {
-                    peer_id,
-                    protocol_version: info.protocol_version,
-                    agent_version: info.agent_version,
-                    addresses,
-                };
-                match self.peer_db.write_peer_info(&info) {
-                    Ok(_) => {}
-                    Err(e) => {
-                        warn!("Failed to add new peer: {e}");
-                    }
-                }
-            }
-            Err(e) => {
-                error!("Error accessing peer_db: {e}");
-            }
-        }
-        // Add the peer to the kademlia routing table
-        for address in info.listen_addrs {
-            self.inner.kademlia.add_address(&peer_id, address);
-        }
+        b.do_bootstrap();
+        Ok(b)
     }
 
     /// Publish message to gossipsub network
@@ -163,7 +134,73 @@ impl Behaviour {
 
     /// Perform any handling logic for a peer which we tried, but failed to reach
     pub fn handle_unreachable_peer(&mut self, peer_id: &PeerId) {
-        let _ = self.peer_db.delete_peer_info(peer_id);
+        match self.peer_db.read_peer_info(peer_id) {
+            Ok(info) => {
+                for address in info.addresses {
+                    self.inner.kademlia.remove_address(peer_id, &address);
+                }
+                let _ = self.peer_db.delete_peer_info(peer_id);
+            }
+            Err(_) => {}
+        };
+    }
+
+    /// Handle peer identification events
+    fn handle_identify_event(&mut self, peer_id: PeerId, info: identify::Info) {
+        // Save the peer to PeerDB
+        match self.peer_db.read_peer_info(&peer_id) {
+            Ok(_) => {}
+            Err(peer_db::Error::EntryNotFound) => {
+                let mut addresses = info.listen_addrs.clone();
+                addresses.sort();
+                addresses.dedup();
+                let info = PeerInfo {
+                    peer_id,
+                    protocol_version: info.protocol_version,
+                    agent_version: info.agent_version,
+                    addresses,
+                };
+                match self.peer_db.write_peer_info(&info) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        warn!("Failed to add new peer: {e}");
+                    }
+                }
+            }
+            Err(e) => {
+                error!("Error accessing peer_db: {e}");
+            }
+        }
+        // Add the peer to the kademlia routing table
+        for address in info.listen_addrs {
+            self.inner.kademlia.add_address(&peer_id, address);
+        }
+    }
+
+    /// Check if we need more peers, and re-bootstrap if so
+    fn do_bootstrap(&mut self) {
+        let t_now = Instant::now();
+        if self.last_bootstrap.is_none()
+            || t_now - self.last_bootstrap.unwrap() > Duration::from_secs(BOOTSTRAP_PERIOD_SECS)
+        {
+            // only re-bootstrap if we have any buckets that need more peers
+            if self.inner.kademlia.kbuckets().count() < KADEMLIA_MAX_NUM_BUCKETS
+                || self
+                    .inner
+                    .kademlia
+                    .kbuckets()
+                    .inspect(|b| println!("BUCKET HAS {} ENTRIES!", b.num_entries()))
+                    .any(|b| b.num_entries() < kad::K_VALUE.into())
+            {
+                self.last_bootstrap = Some(t_now);
+                match self.inner.kademlia.bootstrap() {
+                    Err(NoKnownPeers {}) => {
+                        warn!("No peers. Unable go join P2P network.");
+                    }
+                    Ok(_) => {}
+                }
+            }
+        }
     }
 }
 
@@ -176,6 +213,9 @@ impl NetworkBehaviour for Behaviour {
         cx: &mut Context<'_>,
         params: &mut impl PollParameters,
     ) -> Poll<SwarmAction> {
+        // Periodically check if we need to re-bootstrap
+        self.do_bootstrap();
+
         // Handle any events from the subprotocols
         match self.inner.poll(cx, params) {
             Poll::Ready(ToSwarm::GenerateEvent(InnerBehaviourEvent::Identify(
