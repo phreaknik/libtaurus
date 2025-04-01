@@ -1,7 +1,6 @@
-use crate::p2p::message::Message;
+use crate::p2p::{self, Message};
 use std::time::{Duration, Instant};
 use tokio::select;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::time::interval;
 use tracing::{error, info};
 
@@ -14,27 +13,23 @@ pub enum Error {}
 pub struct Config {}
 
 /// Run the cordelia-core backend to handle consensus.
-pub async fn run(
-    _config: Config,
-    mut msg_in: UnboundedReceiver<Message>,
-    msg_out: UnboundedSender<Message>,
-) {
+pub async fn run(_config: Config, mut p2p_api: p2p::Api) {
     info!("Starting consensus subsystem...");
 
     let mut ticker = interval(Duration::from_secs(5));
     let start = Instant::now();
 
+    let mut p2p_events = p2p_api.subscribe();
+
     loop {
         select! {
-            msg = msg_in.recv() => {
-                if let Some(message) = msg {
-                    info!("received message {message:?}");
-                }
+            event = p2p_events.recv() => {
+                    info!("received p2p event {event:?}");
             },
             _ = ticker.tick() => {
-                match msg_out.send(Message::Hello(format!("I'm online for {:?}", start.elapsed()).into())) {
-                    Err(e) => {error!("Failed to publish message: {e}");},
-                    Ok(_) => {info!("Published message!");},
+                match p2p_api.broadcast(Message::Hello(format!("I'm online for {:?}", start.elapsed()).into())) {
+                    Ok(_) => info!("message sent!"),
+                    Err(e) => error!("error sending message: {e}"),
                 }
             },
         }

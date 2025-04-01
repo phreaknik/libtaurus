@@ -1,7 +1,10 @@
+mod api;
 mod behaviour;
 pub mod message;
 pub mod peer_db;
 
+pub use api::Api;
+pub use behaviour::Behaviour;
 use core::result;
 use futures::future::{select, Either};
 use futures::{pin_mut, StreamExt};
@@ -11,28 +14,33 @@ use libp2p::kad;
 use libp2p::multiaddr::Protocol;
 use libp2p::swarm::{SwarmBuilder, SwarmEvent};
 use libp2p::{Multiaddr, PeerId};
-use message::Message;
+pub use message::Message;
 use std::fs;
 use std::io;
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use thiserror;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::{broadcast, mpsc};
+use tokio::task::JoinSet;
 use tracing::{error, info};
 
-pub use self::behaviour::Behaviour;
+/// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
+/// [`tokio::sync::broadcast`] for more information.
+const EVENT_CHAN_CAPACITY: usize = 32;
 
 /// Event produced by [`Behaviour`].
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Event {
-    Pubsub(gossipsub::Event),
+    Pubsub(gossipsub::Message),
 }
 
 /// Error type for cordelia-p2p errors
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error(transparent)]
-    DialError(#[from] libp2p::swarm::DialError),
+    Api(#[from] api::Error),
+    #[error(transparent)]
+    Dial(#[from] libp2p::swarm::DialError),
     #[error(transparent)]
     Multiaddr(#[from] libp2p::multiaddr::Error),
     #[error(transparent)]
@@ -69,14 +77,9 @@ impl Config {
     }
 }
 
-/// Run the cordelia p2p networking client
-/// messages sent to the msg_in will be published to the gossipsub network
-/// messages received from the gossipsub network will be forwarded to the msg_out
-pub async fn run(
-    config: Config,
-    mut msg_in: UnboundedReceiver<Message>,
-    msg_out: UnboundedSender<Message>,
-) {
+/// Run the cordelia p2p networking client, spawning the client as a new thread in the provided
+/// [`JoinSet`]. Returns an API handle that can be used to interface with the running task.
+pub fn run(config: Config, joinset: &mut JoinSet<()>) -> api::Api {
     info!("Starting p2p client...");
 
     let local_key = get_keypair(&config.data_dir);
@@ -106,53 +109,69 @@ pub async fn run(
         .listen_on(local_addr.clone())
         .expect("cannot start listener on {local_addr}");
 
-    // Main event loop
-    loop {
-        let swarm_fut = swarm.select_next_some();
-        let msg_in_fut = msg_in.recv();
-        pin_mut!(swarm_fut, msg_in_fut);
-        match select(swarm_fut, msg_in_fut).await {
-            // Handle swarm events
-            Either::Left((swarm_event, _)) => match swarm_event {
-                SwarmEvent::NewListenAddr { mut address, .. } => {
-                    address.push(Protocol::P2p(local_peer_id.into()));
-                    info!("Listening on {address}")
-                }
-                SwarmEvent::ConnectionEstablished { peer_id, .. } => {
-                    info!(
-                        "Connected to {peer_id}. Now have {} peers.",
-                        swarm.connected_peers().count()
-                    );
-                }
-                SwarmEvent::ConnectionClosed { peer_id, .. } => {
-                    info!(
-                        "Disconnected from {peer_id}. Now have {} peers.",
-                        swarm.connected_peers().count()
-                    );
-                }
-                SwarmEvent::OutgoingConnectionError { peer_id, .. } => {
-                    if let Some(peer_id) = peer_id {
-                        swarm.behaviour_mut().handle_unreachable_peer(&peer_id);
-                    }
-                }
-                SwarmEvent::Behaviour(Event::Pubsub(gossipsub::Event::Message {
-                    message, ..
-                })) => {
-                    msg_out
-                        .send(Message::from_gossipsub(message))
-                        .expect("channel closed");
-                }
-                _e @ _ => {} // Ignore other events
-            },
+    // Set up channls to service the API
+    let (request_ch, mut inbound_request) = mpsc::unbounded_channel();
+    let (event_emitter, _) = broadcast::channel(EVENT_CHAN_CAPACITY);
 
-            // Publish any pending messages to network
-            Either::Right((msg_to_publish, _)) => {
-                if let Err(e) = swarm.behaviour_mut().publish(msg_to_publish.unwrap()) {
-                    error!("Failed to publish p2p message: {e}");
-                }
+    // Create an API instance to interact with the P2P client task
+    let api_handle = api::Api::new(request_ch, event_emitter.clone());
+
+    // Spawn a task to run the event loop
+    joinset.spawn(async move {
+        // Main event loop
+        loop {
+            let swarm_out = swarm.select_next_some();
+            let request_in = inbound_request.recv();
+            pin_mut!(swarm_out, request_in);
+            match select(swarm_out, request_in).await {
+                // Handle swarm events
+                Either::Left((swarm_event, _)) => match swarm_event {
+                    SwarmEvent::NewListenAddr { mut address, .. } => {
+                        address.push(Protocol::P2p(local_peer_id.into()));
+                        info!("Listening on {address}")
+                    }
+                    SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+                        info!(
+                            "Connected to {peer_id}. Now have {} peers.",
+                            swarm.connected_peers().count()
+                        );
+                    }
+                    SwarmEvent::ConnectionClosed { peer_id, .. } => {
+                        info!(
+                            "Disconnected from {peer_id}. Now have {} peers.",
+                            swarm.connected_peers().count()
+                        );
+                    }
+                    SwarmEvent::OutgoingConnectionError { peer_id, .. } => {
+                        if let Some(peer_id) = peer_id {
+                            swarm.behaviour_mut().handle_unreachable_peer(&peer_id);
+                        }
+                    }
+                    SwarmEvent::Behaviour(event) => {
+                        // emit behaviour event to any subscribers
+                        event_emitter.send(event).expect("channel closed");
+                    }
+                    _e @ _ => {} // Ignore other events
+                },
+
+                // Handle API requests
+                Either::Right((request, _)) => match request {
+                    Some(api::Request::Broadcast(message)) => {
+                        if let Err(e) = swarm.behaviour_mut().publish(message) {
+                            error!("Failed to publish p2p message: {e}");
+                        }
+                    }
+                    None => {
+                        // If we do not receive requests from the consensus module, we cannot
+                        // participate in the P2P network. Shut down the client.
+                        error!("request channel closed");
+                        break;
+                    }
+                },
             }
         }
-    }
+    });
+    api_handle
 }
 
 fn get_keypair(data_dir: &PathBuf) -> Keypair {

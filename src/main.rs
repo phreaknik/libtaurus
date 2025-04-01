@@ -8,7 +8,7 @@ use clap::{arg, command, ArgMatches, Command};
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
 use p2p::peer_db::PeerDB;
 use std::path::PathBuf;
-use tokio::{self, sync::mpsc, task::JoinSet};
+use tokio::{self, task::JoinSet};
 use tracing::error;
 use tracing_subscriber::EnvFilter;
 
@@ -50,14 +50,10 @@ async fn cmd_run(args: &ArgMatches) {
     // Build config from args
     let cfg = build_cfg(&args);
 
-    // Set up communication channels
-    let (send_to_core, recv_from_p2p) = mpsc::unbounded_channel();
-    let (send_to_p2p, recv_from_core) = mpsc::unbounded_channel();
-
     // Build a list of futures to be executed
     let mut tasks = JoinSet::new();
-    tasks.spawn(p2p::run(cfg.p2p_cfg, recv_from_core, send_to_core));
-    tasks.spawn(consensus::run(cfg.core_cfg, recv_from_p2p, send_to_p2p));
+    let p2p_api = p2p::run(cfg.p2p_cfg, &mut tasks);
+    tasks.spawn(consensus::run(cfg.core_cfg, p2p_api));
     if !args.get_flag("nohttp") {
         tasks.spawn(http::run());
     }

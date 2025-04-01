@@ -226,7 +226,7 @@ impl NetworkBehaviour for Behaviour {
             }
             // Forward pubsub events out
             Poll::Ready(ToSwarm::GenerateEvent(InnerBehaviourEvent::Gossipsub(
-                message @ gossipsub::Event::Message { .. },
+                gossipsub::Event::Message { message, .. },
             ))) => Poll::Ready(ToSwarm::GenerateEvent(Event::Pubsub(message))),
             Poll::Ready(ToSwarm::GenerateEvent(event)) => {
                 trace!("internal event: {event:?}");
