@@ -1,5 +1,7 @@
 use super::Result;
 use super::{hash::Hash, Error};
+use crate::params;
+use crate::randomx::RandomXVMInstance;
 use chrono::{DateTime, Utc};
 use num::{BigUint, FromPrimitive};
 use serde::{Deserialize, Serialize};
@@ -98,7 +100,7 @@ impl SlimFrontier {
 
     /// Compute the mining target from the given difficulty
     pub fn mining_target(&self) -> Result<BigUint> {
-        if self.difficulty == 0 {
+        if self.difficulty < params::MIN_DIFFICULTY {
             Err(Error::InvalidDifficulty)
         } else {
             Ok(
@@ -109,8 +111,10 @@ impl SlimFrontier {
     }
 
     /// Check if the block has valid proof-of-work
-    pub fn verify_pow(&self) -> Result<()> {
-        if BigUint::from_bytes_be(self.hash().as_bytes()) < self.mining_target()? {
+    pub fn verify_pow(&self, randomx: &RandomXVMInstance) -> Result<()> {
+        if BigUint::from_bytes_be(&randomx.calculate_hash(&serde_cbor::to_vec(self)?)?)
+            < self.mining_target()?
+        {
             Ok(())
         } else {
             Err(Error::InvalidPoW)

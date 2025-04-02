@@ -5,6 +5,7 @@ mod http;
 mod miner;
 mod p2p;
 mod params;
+mod randomx;
 mod util;
 
 use clap::{arg, command, ArgMatches, Command};

@@ -1,5 +1,8 @@
+use crate::randomx::{self, RandomXVMInstance};
 use crate::{consensus, util, Frontier, SlimFrontier};
 use num::{BigUint, FromPrimitive};
+use randomx_rs::RandomXFlag;
+use std::cmp;
 use std::result;
 use std::time::Duration;
 use tokio::select;
@@ -15,7 +18,7 @@ use tracing_log::log::warn;
 const MINER_EVENT_CHAN_CAPACITY: usize = 32;
 
 /// Local difficulty for reporting mining shares
-pub const MINING_SHARE_DIFFICULTY: u64 = 1000_000;
+pub const MINING_SHARE_DIFFICULTY: u64 = 100;
 
 /// Period to print miner stats
 const STATS_PERIOD_SECOND: Duration = Duration::from_secs(60);
@@ -35,6 +38,8 @@ pub enum Error {
     Dial(#[from] consensus::Error),
     #[error(transparent)]
     MinerChanClosed(#[from] mpsc::error::SendError<SlimFrontier>),
+    #[error(transparent)]
+    RandomX(#[from] randomx::Error),
 }
 
 /// Result type for mining errors
@@ -77,6 +82,8 @@ async fn task_fn(
     info!("Starting miner...");
     let (_, mut results_receiver) = mpsc::unbounded_channel();
     let sols_count_sender = start_stats();
+    let randomx_vm =
+        RandomXVMInstance::new(b"cordelia-randomx", RandomXFlag::get_recommended_flags()).unwrap();
     loop {
         select! {
             // Handle consensus events
@@ -88,7 +95,7 @@ async fn task_fn(
                             // Restart mining threads to mine on new frontier
                             consensus::Event::NewFrontier(frontier) => {
                                 results_receiver.close(); // Kill previous mining threads
-                                results_receiver = match spawn_mining_threads(config.num_threads.unwrap_or(0), frontier, sols_count_sender.clone()) {
+                                results_receiver = match spawn_mining_threads(config.num_threads.unwrap_or(0), randomx_vm.clone(), frontier, sols_count_sender.clone()) {
                                     Ok(ch) => ch,
                                     Err(e) => {
                                         error!("failed to start miners: {e}");
@@ -103,7 +110,7 @@ async fn task_fn(
 
             // Handle results from the mining threads
             Some(result) = results_receiver.recv() => {
-                if result.verify_pow().is_ok() {
+                if result.verify_pow(&randomx_vm).is_ok() {
                     info!("found proof-of-work: {}", result.hash());
                     if consensus_action_ch.send(consensus::Action::SubmitMinedFrontier(result)).is_err() {
                         error!("stopping...");
@@ -119,6 +126,7 @@ async fn task_fn(
 /// Spawn mining threads for the given work
 fn spawn_mining_threads(
     num_threads: usize,
+    randomx_vm: RandomXVMInstance,
     frontier: Frontier,
     sols_count_ch: UnboundedSender<usize>,
 ) -> Result<UnboundedReceiver<SlimFrontier>> {
@@ -128,42 +136,44 @@ fn spawn_mining_threads(
     let (results_sender, results_receiver) = mpsc::unbounded_channel();
     let slim: SlimFrontier = frontier.try_into()?;
     let target = BigUint::from_u64(2).unwrap().pow(256)
-        / BigUint::from_u64(MINING_SHARE_DIFFICULTY).unwrap();
+        / BigUint::from_u64(cmp::min(MINING_SHARE_DIFFICULTY, slim.difficulty)).unwrap();
     for _ in 0..num_threads {
         let slim = slim.clone();
         let target = target.clone();
         let results_sender = results_sender.clone();
         let sols_count_ch = sols_count_ch.clone();
-        spawn_blocking(|| match mine(slim, target, results_sender, sols_count_ch) {
-            Ok(_) | Err(Error::MinerChanClosed(_)) => {}
-            Err(e) => {
-                warn!("mining thread stopped with error: {e}");
-            }
-        });
+        let rx = randomx_vm.clone();
+        spawn_blocking(
+            || match mine(rx, slim, target, results_sender, sols_count_ch) {
+                Ok(_) | Err(Error::MinerChanClosed(_)) => {}
+                Err(e) => {
+                    warn!("mining thread stopped with error: {e}");
+                }
+            },
+        );
     }
     Ok(results_receiver)
 }
 
 /// Find a nonce which satisfies the difficulty target
 fn mine(
+    randomx_vm: RandomXVMInstance,
     mut frontier: SlimFrontier,
     target: BigUint,
     results_ch: UnboundedSender<SlimFrontier>,
     sols_count_ch: UnboundedSender<usize>,
 ) -> Result<()> {
-    let mut hasher = blake3::Hasher::new();
     frontier.nonce = rand::random();
     loop {
-        let loop_count = 1_000_000_000;
+        let loop_count = 1_000;
         for i in 0..loop_count {
-            hasher.update(&serde_cbor::to_vec(&frontier).unwrap());
-            if BigUint::from_bytes_be(hasher.finalize().as_bytes()) < target {
+            let hash = randomx_vm.calculate_hash(&serde_cbor::to_vec(&frontier).unwrap())?;
+            if BigUint::from_bytes_be(&hash) < target {
                 results_ch.send(frontier.clone())?;
                 sols_count_ch.send(i).unwrap();
             } else if results_ch.is_closed() {
                 return Ok(());
             }
-            hasher.reset();
             frontier.nonce += 1;
         }
         sols_count_ch.send(loop_count).unwrap();

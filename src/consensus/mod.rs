@@ -1,9 +1,11 @@
 pub mod block;
 pub mod hash;
 
-use crate::p2p;
+use crate::randomx::RandomXVMInstance;
+use crate::{p2p, randomx};
 use crate::{Block, Frontier, Header, SlimFrontier};
 use chrono::{DateTime, Utc};
+use randomx_rs::RandomXFlag;
 use std::result;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::{select, sync::broadcast};
@@ -29,6 +31,10 @@ pub enum Action {
 /// Error type for consensus errors
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    #[error(transparent)]
+    RandomX(#[from] randomx::Error),
+    #[error(transparent)]
+    Cbor(#[from] serde_cbor::error::Error),
     #[error("frontier object is empty")]
     EmptyFrontier,
     #[error("invalid frontier")]
@@ -103,14 +109,19 @@ async fn task_fn(
     // TODO: This just initializes a frontier on genesis... obviously we don't always want to do
     // this. We usually want to load state from a db or something.
     let genesis = config.genesis.to_block();
-    if let Err(e) = events_out.send(Event::NewFrontier(Frontier {
+    let frontier = Frontier {
         heads: vec![genesis.header],
         nonce: 0,
-    })) {
-        error!("failed to send consensus event: {e}");
-        return;
     };
+    while let Err(e) = events_out.send(Event::NewFrontier(frontier.clone())) {
+        error!("failed to send consensus event: {e}");
+    }
 
+    // Create a randomx VM instance for verifying proofs of work
+    let randomx_vm =
+        RandomXVMInstance::new(b"cordelia-randomx", RandomXFlag::get_recommended_flags()).unwrap();
+
+    // Handle consensus events
     loop {
         select! {
             event = p2p_event_ch.recv() => {
@@ -119,7 +130,7 @@ async fn task_fn(
             Some(action) = actions_in.recv() => {
                 match action {
                     Action::SubmitMinedFrontier(result) => {
-                        if result.verify_pow().is_ok() {
+                        if result.verify_pow(&randomx_vm).is_ok() {
                             if p2p_action_ch.send(p2p::Action::Broadcast(p2p::Message::Frontier(result))).is_err() {
                                 error!("stopping...");
                                 return;
