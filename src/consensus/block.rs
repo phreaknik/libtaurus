@@ -2,22 +2,94 @@ use super::Result;
 use super::{hash::Hash, Error};
 use chrono::{DateTime, Utc};
 use num::{BigUint, FromPrimitive};
-use rand;
 use serde::{Deserialize, Serialize};
 use serde_cbor;
+use std::convert::TryFrom;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Header {
-    version: u32,
-    height: u64,
-    parents: Vec<Hash>,
-    difficulty: u64,
-    nonce: u64,
-    time: DateTime<Utc>,
+    pub version: u32,
+    pub height: u64,
+    pub parents: Vec<Hash>,
+    pub difficulty: u64,
+    pub nonce: u64,
+    pub time: DateTime<Utc>,
 }
 
 impl Header {
     /// Compute the block hash
+    pub fn hash(&self) -> Hash {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&serde_cbor::to_vec(self).unwrap());
+        hasher.finalize().into()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Block {
+    pub header: Header,
+}
+
+impl Block {
+    /// Wraps ['Header::hash']
+    pub fn hash(&self) -> Hash {
+        self.header.hash()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Frontier {
+    pub heads: Vec<Header>,
+    pub nonce: u64,
+}
+
+impl Frontier {
+    /// Compute the frontier hash
+    pub fn hash(&self) -> Hash {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&serde_cbor::to_vec(self).unwrap());
+        hasher.finalize().into()
+    }
+
+    /// Return the DAG height of the frontier
+    pub fn height(&self) -> Result<u64> {
+        if self.heads.len() <= 0 {
+            // Make sure the frontier isn't empty
+            Err(Error::EmptyFrontier)
+        } else if !self
+            // Make sure each head is for the same height
+            .heads
+            .iter()
+            .map(|h| h.height)
+            .all(|height| height == self.heads[0].height)
+        {
+            Err(Error::InvalidFrontier)
+        } else {
+            // Return the head height
+            Ok(self.heads[0].height)
+        }
+    }
+
+    /// Compute the difficulty of the frontier, as a function of all its heads
+    pub fn difficulty(&self) -> Result<u64> {
+        if self.heads.len() <= 0 {
+            Err(Error::EmptyFrontier)
+        } else {
+            Ok(self.heads.iter().map(|h| h.difficulty).max().unwrap())
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SlimFrontier {
+    pub heads: Vec<Hash>,
+    pub height: u64,
+    pub difficulty: u64,
+    pub nonce: u64,
+}
+
+impl SlimFrontier {
+    /// Compute the frontier hash
     pub fn hash(&self) -> Hash {
         let mut hasher = blake3::Hasher::new();
         hasher.update(&serde_cbor::to_vec(self).unwrap());
@@ -44,30 +116,16 @@ impl Header {
             Err(Error::InvalidPoW)
         }
     }
-
-    /// Find a nonce which satisfies the difficulty target
-    pub fn mine(mut self) -> Result<Header> {
-        let target = self.mining_target()?;
-        let mut hasher = blake3::Hasher::new();
-        self.nonce = rand::random();
-        loop {
-            hasher.update(&serde_cbor::to_vec(&self).unwrap());
-            if BigUint::from_bytes_be(hasher.finalize().as_bytes()) < target {
-                return Ok(self);
-            }
-            self.nonce += 1;
-        }
-    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Block {
-    header: Header,
-}
-
-impl Block {
-    /// Wraps ['Header::hash']
-    pub fn hash(&self) -> Hash {
-        self.header.hash()
+impl TryFrom<Frontier> for SlimFrontier {
+    type Error = Error;
+    fn try_from(value: Frontier) -> std::result::Result<Self, Self::Error> {
+        Ok(SlimFrontier {
+            heads: value.heads.iter().map(|h| h.hash()).collect(),
+            height: value.height()?,
+            difficulty: value.difficulty()?,
+            nonce: value.nonce,
+        })
     }
 }

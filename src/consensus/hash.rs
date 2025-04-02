@@ -1,3 +1,5 @@
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -12,5 +14,14 @@ impl Hash {
 impl From<blake3::Hash> for Hash {
     fn from(value: blake3::Hash) -> Self {
         Hash(*value.as_bytes())
+    }
+}
+
+impl fmt::Display for Hash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for byte in self.0 {
+            write!(f, "{:x}", byte)?;
+        }
+        Ok(())
     }
 }

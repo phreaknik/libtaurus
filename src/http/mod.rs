@@ -15,6 +15,10 @@ pub enum Error {
     Hyper(#[from] hyper::Error),
 }
 
+/// Configuration details for the http server.
+#[derive(Debug, Clone)]
+pub struct Config {}
+
 /// Internal state of the HTTP server
 #[derive(Debug, Clone)]
 struct ServerState {}
@@ -47,14 +51,16 @@ async fn handle(
 
 /// Run the http server, spawning the task as a new thread.
 pub fn start(
+    config: Config,
     p2p_action_ch: UnboundedSender<p2p::Action>,
     consensus_action_ch: UnboundedSender<consensus::Action>,
 ) {
-    tokio::spawn(task_fn(p2p_action_ch, consensus_action_ch));
+    tokio::spawn(task_fn(config, p2p_action_ch, consensus_action_ch));
 }
 
 /// The task function which runs the consensus process.
 pub async fn task_fn(
+    _config: Config,
     _p2p_action_ch: UnboundedSender<p2p::Action>,
     _consensus_action_ch: UnboundedSender<consensus::Action>,
 ) {

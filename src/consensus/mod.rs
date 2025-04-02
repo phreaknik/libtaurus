@@ -2,6 +2,7 @@ pub mod block;
 pub mod hash;
 
 use crate::p2p::{self, Message};
+use crate::Frontier;
 use std::result;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
@@ -15,7 +16,10 @@ const CONSENSUS_EVENT_CHAN_CAPACITY: usize = 32;
 
 /// Event produced by the consensus process
 #[derive(Debug, Clone)]
-pub enum Event {}
+pub enum Event {
+    /// The DAG has a new ['Frontier']
+    NewFrontier(Frontier),
+}
 
 /// Actions that can be performed by the consensus process
 #[derive(Clone, Debug)]
@@ -24,6 +28,10 @@ pub enum Action {}
 /// Error type for consensus errors
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    #[error("frontier object is empty")]
+    EmptyFrontier,
+    #[error("invalid frontier")]
+    InvalidFrontier,
     #[error("invalid difficulty")]
     InvalidDifficulty,
     #[error("invalid proof-of-work")]

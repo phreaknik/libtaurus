@@ -2,7 +2,10 @@
 
 mod consensus;
 mod http;
+mod miner;
 mod p2p;
+
+pub use consensus::block::{Block, Frontier, Header, SlimFrontier};
 
 use clap::{arg, command, ArgMatches, Command};
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
@@ -15,9 +18,13 @@ use tracing_subscriber::EnvFilter;
 /// Application configuration details
 struct Config {
     /// P2P client configuration
-    p2p_cfg: p2p::Config,
-    /// Core configuration
-    core_cfg: consensus::Config,
+    p2p: p2p::Config,
+    /// Consensus configuration
+    consensus: consensus::Config,
+    /// Http server configuration
+    http: http::Config,
+    /// Miner configuration
+    miner: miner::Config,
 }
 
 /// Main cordelia CLI application
@@ -51,15 +58,20 @@ async fn cmd_run(args: &ArgMatches) {
     let cfg = build_cfg(&args);
 
     // Build a list of futures to be executed
-    let (p2p_action_ch, p2p_event_sender) = p2p::start(cfg.p2p_cfg);
+    let (p2p_action_ch, p2p_event_sender) = p2p::start(cfg.p2p);
     let (consensus_action_ch, consensus_event_sender) = consensus::start(
-        cfg.core_cfg,
+        cfg.consensus,
         p2p_action_ch.clone(),
         p2p_event_sender.subscribe(),
     );
     if !args.get_flag("nohttp") {
-        http::start(p2p_action_ch, consensus_action_ch);
+        http::start(cfg.http, p2p_action_ch, consensus_action_ch.clone());
     }
+    miner::start(
+        cfg.miner,
+        consensus_action_ch,
+        consensus_event_sender.subscribe(),
+    );
     let mut p2p_event_ch = p2p_event_sender.subscribe();
     let mut consensus_event_ch = consensus_event_sender.subscribe();
     loop {
@@ -98,6 +110,7 @@ fn parse_cli_args() -> ArgMatches {
             Command::new("run")
                 .about("Connect to the p2p network and join consensus")
                 .arg(arg!(--bootnode <MULTIADDR> "Specify boot node to connect to").required(false))
+                .arg(arg!(--num-threads <NUMBER> "Specify number of miner threads").required(false))
                 .arg(arg!(-d --data_dir <PATH> "Specify data directory").required(false))
                 .arg(arg!(--nohttp "Disable HTTP server").required(false))
                 .arg(arg!(-v --verbosity ... "Increase verbosity level").required(false)),
@@ -138,12 +151,14 @@ fn parse_data_dir(args: &ArgMatches) -> PathBuf {
 fn build_cfg(args: &ArgMatches) -> Config {
     let data_dir = parse_data_dir(args);
     Config {
-        p2p_cfg: build_p2p_cfg(data_dir.join("p2p/"), args),
-        core_cfg: consensus::Config {},
+        p2p: build_p2p_cfg(data_dir.join("p2p/"), args),
+        consensus: consensus::Config {},
+        http: http::Config {},
+        miner: build_miner_cfg(args),
     }
 }
 
-/// Build ['cordelia-p2p'] config from parsed CLI args
+/// Build P2P ['p2p::Config'] from parsed CLI args
 fn build_p2p_cfg(p2p_data_dir: PathBuf, args: &ArgMatches) -> p2p::Config {
     let boot_nodes = match args.get_one::<String>("bootnode") {
         Some(v) => vec![v.parse().expect("failed to parse bootnode address")],
@@ -152,5 +167,14 @@ fn build_p2p_cfg(p2p_data_dir: PathBuf, args: &ArgMatches) -> p2p::Config {
     p2p::Config {
         data_dir: p2p_data_dir,
         boot_nodes,
+    }
+}
+
+/// Build miner ['miner::Config'] from parsed CLI args
+fn build_miner_cfg(args: &ArgMatches) -> miner::Config {
+    miner::Config {
+        num_threads: args
+            .get_one::<String>("num-threads")
+            .map(|v| v.parse().expect("failed to parse miner num-threads")),
     }
 }
