@@ -1,5 +1,5 @@
 use crate::{consensus, Frontier, SlimFrontier};
-use num::BigUint;
+use num::{BigUint, FromPrimitive};
 use std::result;
 use tokio::select;
 use tokio::sync::broadcast;
@@ -11,6 +11,9 @@ use tracing_log::log::warn;
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
 /// [`tokio::sync::broadcast`] for more information.
 const MINER_EVENT_CHAN_CAPACITY: usize = 32;
+
+/// Local difficulty for reporting mining shares
+pub const MINING_SHARE_DIFFICULTY: u64 = 1000_000;
 
 /// Event produced by the miner
 #[derive(Debug, Clone)]
@@ -110,7 +113,8 @@ fn spawn_mining_threads(
     // create a new channel for the new mining threads.
     let (results_sender, results_receiver) = mpsc::unbounded_channel();
     let slim: SlimFrontier = frontier.try_into()?;
-    let target = slim.mining_target()?;
+    let target = BigUint::from_u64(2).unwrap().pow(256)
+        / BigUint::from_u64(MINING_SHARE_DIFFICULTY).unwrap();
     for _ in 0..num_threads {
         let results_ch = results_sender.clone();
         let slim = slim.clone();

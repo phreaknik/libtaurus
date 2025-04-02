@@ -4,6 +4,7 @@ mod consensus;
 mod http;
 mod miner;
 mod p2p;
+mod params;
 
 use chrono::Utc;
 pub use consensus::block::{Block, Frontier, Header, SlimFrontier};
