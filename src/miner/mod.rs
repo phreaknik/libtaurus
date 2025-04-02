@@ -1,10 +1,12 @@
-use crate::{consensus, Frontier, SlimFrontier};
+use crate::{consensus, util, Frontier, SlimFrontier};
 use num::{BigUint, FromPrimitive};
 use std::result;
+use std::time::Duration;
 use tokio::select;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::task::spawn_blocking;
+use tokio::time::interval;
 use tracing::{debug, error, info};
 use tracing_log::log::warn;
 
@@ -14,6 +16,9 @@ const MINER_EVENT_CHAN_CAPACITY: usize = 32;
 
 /// Local difficulty for reporting mining shares
 pub const MINING_SHARE_DIFFICULTY: u64 = 1000_000;
+
+/// Period to print miner stats
+const STATS_PERIOD_SECOND: Duration = Duration::from_secs(60);
 
 /// Event produced by the miner
 #[derive(Debug, Clone)]
@@ -71,6 +76,7 @@ async fn task_fn(
 ) {
     info!("Starting miner...");
     let (_, mut results_receiver) = mpsc::unbounded_channel();
+    let sols_count_sender = start_stats();
     loop {
         select! {
             // Handle consensus events
@@ -82,7 +88,7 @@ async fn task_fn(
                             // Restart mining threads to mine on new frontier
                             consensus::Event::NewFrontier(frontier) => {
                                 results_receiver.close(); // Kill previous mining threads
-                                results_receiver = match spawn_mining_threads(config.num_threads.unwrap_or(0), frontier) {
+                                results_receiver = match spawn_mining_threads(config.num_threads.unwrap_or(0), frontier, sols_count_sender.clone()) {
                                     Ok(ch) => ch,
                                     Err(e) => {
                                         error!("failed to start miners: {e}");
@@ -114,6 +120,7 @@ async fn task_fn(
 fn spawn_mining_threads(
     num_threads: usize,
     frontier: Frontier,
+    sols_count_ch: UnboundedSender<usize>,
 ) -> Result<UnboundedReceiver<SlimFrontier>> {
     info!("mining on new frontier: {}", frontier.hash());
     // Close the old channel to kill the old mining threads, and
@@ -123,10 +130,11 @@ fn spawn_mining_threads(
     let target = BigUint::from_u64(2).unwrap().pow(256)
         / BigUint::from_u64(MINING_SHARE_DIFFICULTY).unwrap();
     for _ in 0..num_threads {
-        let results_ch = results_sender.clone();
         let slim = slim.clone();
         let target = target.clone();
-        spawn_blocking(|| match mine(slim, target, results_ch) {
+        let results_sender = results_sender.clone();
+        let sols_count_ch = sols_count_ch.clone();
+        spawn_blocking(|| match mine(slim, target, results_sender, sols_count_ch) {
             Ok(_) | Err(Error::MinerChanClosed(_)) => {}
             Err(e) => {
                 warn!("mining thread stopped with error: {e}");
@@ -141,17 +149,54 @@ fn mine(
     mut frontier: SlimFrontier,
     target: BigUint,
     results_ch: UnboundedSender<SlimFrontier>,
+    sols_count_ch: UnboundedSender<usize>,
 ) -> Result<()> {
     let mut hasher = blake3::Hasher::new();
     frontier.nonce = rand::random();
     loop {
-        hasher.update(&serde_cbor::to_vec(&frontier).unwrap());
-        if BigUint::from_bytes_be(hasher.finalize().as_bytes()) < target {
-            results_ch.send(frontier.clone())?;
-        } else if results_ch.is_closed() {
-            return Ok(());
+        let loop_count = 1_000_000_000;
+        for i in 0..loop_count {
+            hasher.update(&serde_cbor::to_vec(&frontier).unwrap());
+            if BigUint::from_bytes_be(hasher.finalize().as_bytes()) < target {
+                results_ch.send(frontier.clone())?;
+                sols_count_ch.send(i).unwrap();
+            } else if results_ch.is_closed() {
+                return Ok(());
+            }
+            hasher.reset();
+            frontier.nonce += 1;
         }
-        hasher.reset();
-        frontier.nonce += 1;
+        sols_count_ch.send(loop_count).unwrap();
+    }
+}
+
+/// Start the mining stats thread
+pub fn start_stats() -> UnboundedSender<usize> {
+    let (solutions_sender, solutions_receiver) = mpsc::unbounded_channel();
+    tokio::spawn(stats_fn(solutions_receiver));
+    solutions_sender
+}
+
+/// The task function which runs the mining process.
+async fn stats_fn(mut solutions_receiver: UnboundedReceiver<usize>) {
+    let mut count = 0u64;
+    let mut ticker = interval(STATS_PERIOD_SECOND);
+    loop {
+        select! {
+            // accumulate solutions
+            event = solutions_receiver.recv() => {
+                match event {
+                    Some(sols_count) => count += sols_count as u64,
+                    None => return, // channel closed. exit now.
+                }
+            }
+
+            // print stats
+            _ = ticker.tick() => {
+                let rate = count/ STATS_PERIOD_SECOND.as_secs();
+                count = 0;
+                info!("current hashrate: {}", util::human_readable(rate, "h/s"));
+            }
+        }
     }
 }

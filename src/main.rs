@@ -5,6 +5,7 @@ mod http;
 mod miner;
 mod p2p;
 mod params;
+mod util;
 
 use clap::{arg, command, ArgMatches, Command};
 pub use consensus::block::{Block, Frontier, Header, SlimFrontier};
