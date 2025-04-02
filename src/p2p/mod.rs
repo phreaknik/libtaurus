@@ -4,8 +4,7 @@ pub mod peer_db;
 
 pub use behaviour::Behaviour;
 use core::result;
-use futures::future::{select, Either};
-use futures::{pin_mut, StreamExt};
+use futures::StreamExt;
 use libp2p::gossipsub;
 use libp2p::identity::Keypair;
 use libp2p::kad;
@@ -18,6 +17,7 @@ use std::io;
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use thiserror;
+use tokio::select;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tracing::{error, info};
@@ -128,12 +128,9 @@ async fn task_fn(
 
     // Main event loop
     loop {
-        let swarm_event = swarm.select_next_some();
-        let action = actions_in.recv();
-        pin_mut!(swarm_event, action);
-        match select(swarm_event, action).await {
+        select! {
             // Handle swarm events
-            Either::Left((event, _)) => match event {
+            event = swarm.select_next_some() => match event {
                 SwarmEvent::NewListenAddr { mut address, .. } => {
                     address.push(Protocol::P2p(local_peer_id.into()));
                     info!("Listening on {address}")
@@ -163,7 +160,7 @@ async fn task_fn(
             },
 
             // Handle API requests
-            Either::Right((request, _)) => match request {
+            action = actions_in.recv() => match action {
                 Some(Action::Broadcast(message)) => {
                     if let Err(e) = swarm.behaviour_mut().publish(message) {
                         error!("Failed to publish p2p message: {e}");
