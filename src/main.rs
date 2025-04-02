@@ -6,11 +6,9 @@ mod miner;
 mod p2p;
 mod params;
 
-use chrono::Utc;
+use clap::{arg, command, ArgMatches, Command};
 pub use consensus::block::{Block, Frontier, Header, SlimFrontier};
 use consensus::GenesisConfig;
-
-use clap::{arg, command, ArgMatches, Command};
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
 use p2p::peer_db::PeerDB;
 use std::path::PathBuf;
@@ -177,8 +175,8 @@ fn build_p2p_cfg(p2p_data_dir: PathBuf, args: &ArgMatches) -> p2p::Config {
 fn build_consensus_cfg(_args: &ArgMatches) -> consensus::Config {
     consensus::Config {
         genesis: GenesisConfig {
-            difficulty: 1000000,
-            time: Utc::now(),
+            difficulty: params::GENESIS_DIFFICULTY,
+            time: params::GENESIS_TIMESTAMP,
         },
     }
 }
