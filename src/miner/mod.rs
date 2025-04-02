@@ -5,7 +5,7 @@ use tokio::select;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::task::spawn_blocking;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 use tracing_log::log::warn;
 
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
@@ -66,7 +66,7 @@ async fn task_fn(
     config: Config,
     mut _actions_in: UnboundedReceiver<Action>,
     mut _events_out: broadcast::Sender<Event>,
-    _consensus_action_ch: UnboundedSender<consensus::Action>,
+    consensus_action_ch: UnboundedSender<consensus::Action>,
     mut consensus_event_ch: broadcast::Receiver<consensus::Event>,
 ) {
     info!("Starting miner...");
@@ -97,7 +97,14 @@ async fn task_fn(
 
             // Handle results from the mining threads
             Some(result) = results_receiver.recv() => {
-                warn!("found mining result {result:?}");
+                if result.verify_pow().is_ok() {
+                    info!("found proof-of-work: {}", result.hash());
+                    if consensus_action_ch.send(consensus::Action::SubmitMinedFrontier(result)).is_err() {
+                        error!("stopping...");
+                    }
+                } else {
+                    debug!("found mining share");
+                }
             }
         }
     }

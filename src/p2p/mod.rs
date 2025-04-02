@@ -44,6 +44,8 @@ pub enum Error {
     #[error(transparent)]
     Dial(#[from] libp2p::swarm::DialError),
     #[error(transparent)]
+    Cbor(#[from] serde_cbor::Error),
+    #[error(transparent)]
     Multiaddr(#[from] libp2p::multiaddr::Error),
     #[error(transparent)]
     Io(#[from] io::Error),

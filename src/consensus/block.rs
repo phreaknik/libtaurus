@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_cbor;
 use std::convert::TryFrom;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Header {
     pub version: u32,
     pub height: u64,
@@ -25,7 +25,7 @@ impl Header {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Block {
     pub header: Header,
 }
@@ -37,7 +37,7 @@ impl Block {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Frontier {
     pub heads: Vec<Header>,
     pub nonce: u64,
@@ -80,7 +80,7 @@ impl Frontier {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SlimFrontier {
     pub heads: Vec<Hash>,
     pub height: u64,

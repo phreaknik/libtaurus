@@ -1,13 +1,11 @@
 pub mod block;
 pub mod hash;
 
-use crate::p2p::{self, Message};
-use crate::{Block, Frontier, Header};
+use crate::p2p;
+use crate::{Block, Frontier, Header, SlimFrontier};
 use chrono::{DateTime, Utc};
 use std::result;
-use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
-use tokio::time::interval;
 use tokio::{select, sync::broadcast};
 use tracing::{error, info};
 
@@ -24,7 +22,9 @@ pub enum Event {
 
 /// Actions that can be performed by the consensus process
 #[derive(Clone, Debug)]
-pub enum Action {}
+pub enum Action {
+    SubmitMinedFrontier(SlimFrontier),
+}
 
 /// Error type for consensus errors
 #[derive(thiserror::Error, Debug)]
@@ -93,15 +93,12 @@ pub fn start(
 /// The task function which runs the consensus process.
 async fn task_fn(
     config: Config,
-    mut _actions_in: UnboundedReceiver<Action>,
+    mut actions_in: UnboundedReceiver<Action>,
     events_out: broadcast::Sender<Event>,
     p2p_action_ch: UnboundedSender<p2p::Action>,
     mut p2p_event_ch: broadcast::Receiver<p2p::Event>,
 ) {
     info!("Starting consensus...");
-
-    let mut ticker = interval(Duration::from_secs(5));
-    let start = Instant::now();
 
     // TODO: This just initializes a frontier on genesis... obviously we don't always want to do
     // this. We usually want to load state from a db or something.
@@ -119,10 +116,16 @@ async fn task_fn(
             event = p2p_event_ch.recv() => {
                     info!("received p2p event {event:?}");
             },
-            _ = ticker.tick() => {
-                match p2p_action_ch.send(p2p::Action::Broadcast(Message::Hello(format!("I'm online for {:?}", start.elapsed()).into()))) {
-                    Ok(_) => info!("message sent!"),
-                    Err(e) => error!("error sending message: {e}"),
+            Some(action) = actions_in.recv() => {
+                match action {
+                    Action::SubmitMinedFrontier(result) => {
+                        if result.verify_pow().is_ok() {
+                            if p2p_action_ch.send(p2p::Action::Broadcast(p2p::Message::Frontier(result))).is_err() {
+                                error!("stopping...");
+                                return;
+                            }
+                        }
+                    }
                 }
             },
         }

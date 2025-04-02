@@ -2,7 +2,7 @@ use crate::p2p::message::Message;
 use crate::p2p::peer_db::{self, PeerDB, PeerInfo};
 use crate::p2p::Event;
 use libp2p::core::Endpoint;
-use libp2p::gossipsub::{self, MessageAuthenticity, MessageId};
+use libp2p::gossipsub::{self, MessageAuthenticity, MessageId, Sha256Topic};
 use libp2p::identity::Keypair;
 use libp2p::kad::store::MemoryStore;
 use libp2p::kad::{self, Kademlia, KademliaConfig, NoKnownPeers};
@@ -46,9 +46,10 @@ impl InnerBehaviour {
             config.gossipsub_cfg,
         )
         .unwrap();
-        for t in Message::iter() {
-            info!("subscribed to topic {}", t.topic().hash());
-            gossipsub.subscribe(&t.topic())?;
+        for m in Message::iter() {
+            let topic = Sha256Topic::from(&m);
+            info!("subscribed to topic {}", topic.hash());
+            gossipsub.subscribe(&topic)?;
         }
         Ok(InnerBehaviour {
             identify: identify::Behaviour::new(config.identify_cfg),
@@ -89,7 +90,7 @@ impl Behaviour {
     pub fn publish(&mut self, message: Message) -> crate::p2p::Result<MessageId> {
         self.inner
             .gossipsub
-            .publish(message.topic(), message.data())
+            .publish(Sha256Topic::from(&message), serde_cbor::to_vec(&message)?)
             .map_err(crate::p2p::Error::from)
     }
 

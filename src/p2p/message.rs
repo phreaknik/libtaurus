@@ -1,29 +1,14 @@
+use crate::{Block, Header, SlimFrontier};
 use libp2p::gossipsub::{self, Sha256Topic, TopicHash};
+use serde::{Deserialize, Serialize};
 use strum_macros::{AsRefStr, EnumIter};
 
-/// List of topics to subscribe to
-#[derive(Clone, Debug, EnumIter, AsRefStr)]
+/// List of gossip messages
+#[derive(Clone, Debug, Serialize, Deserialize, EnumIter, AsRefStr)]
 pub enum Message {
-    Hello(Vec<u8>),
-}
-
-impl Message {
-    /// Convert from ['gossipsub::Message']
-    pub fn from_gossipsub(m: gossipsub::Message) -> Message {
-        Message::Hello(m.data)
-    }
-
-    /// Get the associated ['gossipsub::Topic'] for this message
-    pub fn topic(&self) -> Sha256Topic {
-        self.into()
-    }
-
-    /// Get the message data
-    pub fn data(&self) -> &[u8] {
-        match self {
-            Message::Hello(s) => s,
-        }
-    }
+    Block(Block),
+    Header(Header),
+    Frontier(SlimFrontier),
 }
 
 impl<H: gossipsub::Hasher> From<&Message> for gossipsub::Topic<H> {
@@ -34,6 +19,6 @@ impl<H: gossipsub::Hasher> From<&Message> for gossipsub::Topic<H> {
 
 impl From<Message> for TopicHash {
     fn from(m: Message) -> Self {
-        m.topic().hash()
+        Sha256Topic::from(&m).hash()
     }
 }
