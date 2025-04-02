@@ -5,7 +5,9 @@ mod http;
 mod miner;
 mod p2p;
 
+use chrono::Utc;
 pub use consensus::block::{Block, Frontier, Header, SlimFrontier};
+use consensus::GenesisConfig;
 
 use clap::{arg, command, ArgMatches, Command};
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
@@ -110,7 +112,7 @@ fn parse_cli_args() -> ArgMatches {
             Command::new("run")
                 .about("Connect to the p2p network and join consensus")
                 .arg(arg!(--bootnode <MULTIADDR> "Specify boot node to connect to").required(false))
-                .arg(arg!(--num-threads <NUMBER> "Specify number of miner threads").required(false))
+                .arg(arg!(--mining_threads <NUMBER> "Number of threads for mining").required(false))
                 .arg(arg!(-d --data_dir <PATH> "Specify data directory").required(false))
                 .arg(arg!(--nohttp "Disable HTTP server").required(false))
                 .arg(arg!(-v --verbosity ... "Increase verbosity level").required(false)),
@@ -152,7 +154,7 @@ fn build_cfg(args: &ArgMatches) -> Config {
     let data_dir = parse_data_dir(args);
     Config {
         p2p: build_p2p_cfg(data_dir.join("p2p/"), args),
-        consensus: consensus::Config {},
+        consensus: build_consensus_cfg(args),
         http: http::Config {},
         miner: build_miner_cfg(args),
     }
@@ -170,11 +172,21 @@ fn build_p2p_cfg(p2p_data_dir: PathBuf, args: &ArgMatches) -> p2p::Config {
     }
 }
 
+/// Build P2P ['p2p::Config'] from parsed CLI args
+fn build_consensus_cfg(_args: &ArgMatches) -> consensus::Config {
+    consensus::Config {
+        genesis: GenesisConfig {
+            difficulty: 1000000,
+            time: Utc::now(),
+        },
+    }
+}
+
 /// Build miner ['miner::Config'] from parsed CLI args
 fn build_miner_cfg(args: &ArgMatches) -> miner::Config {
     miner::Config {
         num_threads: args
-            .get_one::<String>("num-threads")
+            .get_one::<String>("mining_threads")
             .map(|v| v.parse().expect("failed to parse miner num-threads")),
     }
 }

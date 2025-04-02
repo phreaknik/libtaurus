@@ -2,7 +2,8 @@ pub mod block;
 pub mod hash;
 
 use crate::p2p::{self, Message};
-use crate::Frontier;
+use crate::{Block, Frontier, Header};
+use chrono::{DateTime, Utc};
 use std::result;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
@@ -43,7 +44,32 @@ pub type Result<T> = result::Result<T, Error>;
 
 /// Configuration details for the consensus process.
 #[derive(Debug, Clone)]
-pub struct Config {}
+pub struct Config {
+    pub genesis: GenesisConfig,
+}
+
+/// Genesis configuration
+#[derive(Debug, Clone)]
+pub struct GenesisConfig {
+    pub difficulty: u64,
+    pub time: DateTime<Utc>,
+}
+
+impl GenesisConfig {
+    /// Create a genesis block
+    pub fn to_block(&self) -> Block {
+        Block {
+            header: Header {
+                version: 0,
+                height: 0,
+                parents: Vec::new(),
+                difficulty: self.difficulty,
+                nonce: 0,
+                time: self.time,
+            },
+        }
+    }
+}
 
 /// Run the consensus process, spawning the task as a new thread. Returns an ['broadcast::Sender'],
 /// which can be subscribed to, to receive consensus events from the task.
@@ -66,9 +92,9 @@ pub fn start(
 
 /// The task function which runs the consensus process.
 async fn task_fn(
-    _config: Config,
+    config: Config,
     mut _actions_in: UnboundedReceiver<Action>,
-    mut _events_out: broadcast::Sender<Event>,
+    events_out: broadcast::Sender<Event>,
     p2p_action_ch: UnboundedSender<p2p::Action>,
     mut p2p_event_ch: broadcast::Receiver<p2p::Event>,
 ) {
@@ -76,6 +102,17 @@ async fn task_fn(
 
     let mut ticker = interval(Duration::from_secs(5));
     let start = Instant::now();
+
+    // TODO: This just initializes a frontier on genesis... obviously we don't always want to do
+    // this. We usually want to load state from a db or something.
+    let genesis = config.genesis.to_block();
+    if let Err(e) = events_out.send(Event::NewFrontier(Frontier {
+        heads: vec![genesis.header],
+        nonce: 0,
+    })) {
+        error!("failed to send consensus event: {e}");
+        return;
+    };
 
     loop {
         select! {
