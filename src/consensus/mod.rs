@@ -11,7 +11,7 @@ use randomx_rs::RandomXFlag;
 use std::path::PathBuf;
 use std::result;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
 use tokio::{select, sync::broadcast};
 use tracing::{error, info, warn};
 pub use validators::{ValidatorSet, ValidatorTicket};
@@ -122,7 +122,7 @@ pub struct Runtime {
     config: Config,
     peer_id: Option<PeerId>,
     ticket_ch: UnboundedSender<ValidatorTicket>,
-    _validators_ch: broadcast::Receiver<ValidatorSet>,
+    _validators_ch: watch::Receiver<ValidatorSet>,
     randomx_vm: RandomXVMInstance,
     actions_in: UnboundedReceiver<Action>,
     events_out: broadcast::Sender<Event>,

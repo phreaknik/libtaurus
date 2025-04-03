@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use super::database::ValidatorDatabase;
 use crate::consensus::{hash::Hash, Config, Error, Result};
 use crate::randomx::RandomXVMInstance;
@@ -8,17 +6,14 @@ use libp2p::PeerId;
 use num::{BigUint, FromPrimitive};
 use serde::{Deserialize, Serialize};
 use serde_cbor;
+use std::path::PathBuf;
 use tokio::select;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{mpsc, watch};
 use tracing::{error, info};
 
 /// Path to the consensus database, from within the consensus data directory
 pub const DATABASE_DIR: &str = "validators_db/";
-
-/// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
-/// [`tokio::sync::broadcast`] for more information.
-pub const VALIDATOR_RAFFLE_CHAN_CAPACITY: usize = 32;
 
 /// Starts a raffle task, which periodically selects a new random set of validators from the set of
 /// raffle tickets which have been entered.
@@ -26,16 +21,15 @@ pub fn start(
     config: &Config,
 ) -> (
     UnboundedSender<ValidatorTicket>,
-    broadcast::Receiver<ValidatorSet>,
+    watch::Receiver<ValidatorSet>,
 ) {
     // Spawn the task
     let (ticket_sender, ticket_receiver) = mpsc::unbounded_channel();
-    let (validator_set_sender, validator_set_receiver) =
-        broadcast::channel(VALIDATOR_RAFFLE_CHAN_CAPACITY);
+    let (validator_set_sender, validator_set_receiver) = watch::channel(ValidatorSet(Vec::new()));
     tokio::spawn(task_fn(
         config.data_dir.join(DATABASE_DIR),
         ticket_receiver,
-        validator_set_sender.clone(),
+        validator_set_sender,
     ));
 
     // Return the communication channels
@@ -46,7 +40,7 @@ pub fn start(
 async fn task_fn(
     db_path: PathBuf,
     mut tickets_in: UnboundedReceiver<ValidatorTicket>,
-    _validator_set_ch: broadcast::Sender<ValidatorSet>,
+    _validator_set_ch: watch::Sender<ValidatorSet>,
 ) {
     // Open the validator database
     let _database =
