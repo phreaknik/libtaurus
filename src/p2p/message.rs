@@ -25,8 +25,18 @@ impl Message {
         }
     }
 
-    /// Generate an validation report to reject this message and cease propagation.
-    /// Note: this will penalize the peer, eventually leading to a ban.
+    /// Generate an validation report to ignore this message and cease propagation, without
+    /// penalty to the peer that sent it.
+    pub fn ignore(&self) -> MessageValidationReport {
+        MessageValidationReport {
+            msg_id: self.msg_id.clone(),
+            msg_source: self.msg_source,
+            acceptance: MessageAcceptance::Ignore,
+        }
+    }
+
+    /// Generate an validation report to reject this message, cease propagation, and penalize the
+    /// peer who sent it. Repeated penalization will eventually leading to that peer being banned.
     pub fn reject(&self) -> MessageValidationReport {
         MessageValidationReport {
             msg_id: self.msg_id.clone(),

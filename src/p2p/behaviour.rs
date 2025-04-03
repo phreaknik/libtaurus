@@ -14,7 +14,7 @@ use std::str;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 use strum::IntoEnumIterator;
-use tracing::{error, info, trace, warn};
+use tracing::{debug, error, trace, warn};
 
 pub const PROTOCOL_NAME: &[u8; 15] = b"/cordelia/0.1.0";
 
@@ -45,7 +45,7 @@ impl InnerBehaviour {
         .unwrap();
         for m in MessageData::iter() {
             let topic = Sha256Topic::from(&m);
-            info!("Subscribed to {topic}");
+            debug!("Subscribed to {topic} topic");
             gossipsub.subscribe(&topic)?;
         }
         Ok(InnerBehaviour {

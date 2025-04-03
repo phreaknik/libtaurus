@@ -1,18 +1,18 @@
-use super::Result;
+use crate::consensus::Result;
 use heed::{BytesDecode, BytesEncode, Database, Env, EnvOpenOptions};
 use serde_derive::{Deserialize, Serialize};
 use std::{fs, path::PathBuf};
 
 /// Database of peer info, using the ['heed'] LMDB database wrapper.
 #[derive(Clone)]
-pub struct ConsensusDatabase {
+pub struct ValidatorDatabase {
     pub env: Env,
-    pub db: Database<ConsensusDbKey, ConsensusData>,
+    pub db: Database<ValidatorDbKey, ValidatorDbEntry>,
 }
 
-impl ConsensusDatabase {
+impl ValidatorDatabase {
     /// Open the database at the given path, or optionally create it if nonexistent
-    pub fn open(path: &PathBuf, create: bool) -> Result<ConsensusDatabase> {
+    pub fn open(path: &PathBuf, create: bool) -> Result<ValidatorDatabase> {
         if create {
             fs::create_dir_all(path.as_path())?;
         }
@@ -22,16 +22,16 @@ impl ConsensusDatabase {
         } else {
             env.open_database(None)?.unwrap()
         };
-        Ok(ConsensusDatabase { env, db })
+        Ok(ValidatorDatabase { env, db })
     }
 }
 
 /// Key by which consensus data is stored in the database
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConsensusDbKey {}
+pub struct ValidatorDbKey {}
 
-impl<'a> BytesEncode<'a> for ConsensusDbKey {
-    type EItem = ConsensusDbKey;
+impl<'a> BytesEncode<'a> for ValidatorDbKey {
+    type EItem = ValidatorDbKey;
 
     fn bytes_encode(
         item: &'a Self::EItem,
@@ -40,8 +40,8 @@ impl<'a> BytesEncode<'a> for ConsensusDbKey {
     }
 }
 
-impl<'a> BytesDecode<'a> for ConsensusDbKey {
-    type DItem = ConsensusDbKey;
+impl<'a> BytesDecode<'a> for ValidatorDbKey {
+    type DItem = ValidatorDbKey;
 
     fn bytes_decode(
         bytes: &'a [u8],
@@ -52,10 +52,10 @@ impl<'a> BytesDecode<'a> for ConsensusDbKey {
 
 /// Consensus data types which may be stored in the database
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ConsensusData {}
+pub enum ValidatorDbEntry {}
 
-impl<'a> BytesEncode<'a> for ConsensusData {
-    type EItem = ConsensusData;
+impl<'a> BytesEncode<'a> for ValidatorDbEntry {
+    type EItem = ValidatorDbEntry;
 
     fn bytes_encode(
         item: &'a Self::EItem,
@@ -64,8 +64,8 @@ impl<'a> BytesEncode<'a> for ConsensusData {
     }
 }
 
-impl<'a> BytesDecode<'a> for ConsensusData {
-    type DItem = ConsensusData;
+impl<'a> BytesDecode<'a> for ValidatorDbEntry {
+    type DItem = ValidatorDbEntry;
 
     fn bytes_decode(
         bytes: &'a [u8],
