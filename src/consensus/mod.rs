@@ -1,18 +1,21 @@
 pub mod block;
 pub mod database;
 pub mod hash;
+pub mod validator_set;
 
 use self::database::ConsensusDatabase;
 use crate::randomx::RandomXVMInstance;
 use crate::{p2p, randomx};
-use crate::{Block, Frontier, Header, SlimFrontier};
+pub use block::{Block, Header};
 use chrono::{DateTime, Utc};
 use randomx_rs::RandomXFlag;
 use std::path::PathBuf;
 use std::result;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use tokio::sync::oneshot;
 use tokio::{select, sync::broadcast};
 use tracing::{error, info};
+pub use validator_set::ValidatorTicket;
 
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
 /// [`tokio::sync::broadcast`] for more information.
@@ -21,17 +24,17 @@ pub const CONSENSUS_EVENT_CHAN_CAPACITY: usize = 32;
 /// Path to the consensus database, from within the consensus data directory
 pub const DATABASE_DIR: &str = "consensus_db/";
 
-/// Event produced by the consensus process
+/// Events produced by the consensus process
 #[derive(Debug, Clone)]
 pub enum Event {
-    /// The DAG has a new ['Frontier']
-    NewFrontier(Frontier),
+    /// New ValidatorTicket to be sent to miners
+    NewMiningJob(ValidatorTicket),
 }
 
 /// Actions that can be performed by the consensus process
 #[derive(Clone, Debug)]
 pub enum Action {
-    SubmitMinedFrontier(SlimFrontier),
+    SubmitMinedTicket(ValidatorTicket),
 }
 
 /// Error type for consensus errors
@@ -45,6 +48,8 @@ pub enum Error {
     Heed(#[from] heed::Error),
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    #[error("collection is empty")]
+    EmptyCollection,
     #[error("frontier object is empty")]
     EmptyFrontier,
     #[error("invalid frontier")]
@@ -128,14 +133,19 @@ async fn task_fn(
 ) {
     info!("Starting consensus...");
 
+    // Get peer id from p2p client
+    let (resp_sender, resp_ch) = oneshot::channel();
+    p2p_action_ch
+        .send(p2p::Action::GetLocalPeerId(resp_sender))
+        .unwrap();
+    let peer_id = resp_ch.await.unwrap();
+
     // TODO: This just initializes a frontier on genesis... obviously we don't always want to do
     // this. We usually want to load state from a db or something.
     let genesis = config.genesis.to_block();
-    let frontier = Frontier {
-        heads: vec![genesis.header],
-        nonce: 0,
-    };
-    while let Err(e) = events_out.send(Event::NewFrontier(frontier.clone())) {
+    let ticket = ValidatorTicket::new(peer_id, vec![genesis.into()])
+        .expect("Failed to create initial ValidatorTicket");
+    while let Err(e) = events_out.send(Event::NewMiningJob(ticket.clone())) {
         error!("failed to send consensus event: {e}");
     }
 
@@ -151,9 +161,9 @@ async fn task_fn(
             },
             Some(action) = actions_in.recv() => {
                 match action {
-                    Action::SubmitMinedFrontier(result) => {
-                        if result.verify_pow(&randomx_vm).is_ok() {
-                            if p2p_action_ch.send(p2p::Action::Broadcast(p2p::Message::Frontier(result))).is_err() {
+                    Action::SubmitMinedTicket(ticket) => {
+                        if ticket.verify_pow(&randomx_vm).is_ok() {
+                            if p2p_action_ch.send(p2p::Action::Broadcast(p2p::Message::Ticket(ticket))).is_err() {
                                 error!("stopping...");
                                 return;
                             }

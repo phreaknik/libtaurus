@@ -46,7 +46,7 @@ impl InnerBehaviour {
         .unwrap();
         for m in Message::iter() {
             let topic = Sha256Topic::from(&m);
-            info!("subscribed to topic {}", topic.hash());
+            info!("Subscribed to topic {}", topic.hash());
             gossipsub.subscribe(&topic)?;
         }
         Ok(InnerBehaviour {

@@ -1,4 +1,4 @@
-use crate::{Block, Header, SlimFrontier};
+use crate::{Block, Header, ValidatorTicket};
 use libp2p::gossipsub::{self, Sha256Topic, TopicHash};
 use serde::{Deserialize, Serialize};
 use strum_macros::{AsRefStr, EnumIter};
@@ -8,7 +8,7 @@ use strum_macros::{AsRefStr, EnumIter};
 pub enum Message {
     Block(Block),
     Header(Header),
-    Frontier(SlimFrontier),
+    Ticket(ValidatorTicket),
 }
 
 impl<H: gossipsub::Hasher> From<&Message> for gossipsub::Topic<H> {

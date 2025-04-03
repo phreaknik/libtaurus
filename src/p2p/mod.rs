@@ -19,9 +19,9 @@ use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use thiserror;
 use tokio::select;
-use tokio::sync::broadcast;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
-use tracing::{error, info};
+use tokio::sync::{broadcast, oneshot};
+use tracing::{debug, error, info};
 
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
 /// [`tokio::sync::broadcast`] for more information.
@@ -37,9 +37,10 @@ pub enum Event {
 }
 
 /// Actions that can be performed by the p2p client
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum Action {
     Broadcast(Message),
+    GetLocalPeerId(oneshot::Sender<PeerId>),
 }
 
 /// Error type for cordelia-p2p errors
@@ -83,7 +84,7 @@ pub struct Config {
 pub fn start(config: Config) -> (UnboundedSender<Action>, broadcast::Sender<Event>) {
     // Open the peer database
     let peer_db = PeerDatabase::open(&config.data_dir.join(DATABASE_DIR), true)
-        .expect("failed to open peer database");
+        .expect("Failed to open peer database");
 
     // Spawn the task
     let (action_sender, action_receiver) = mpsc::unbounded_channel();
@@ -110,7 +111,7 @@ async fn task_fn(
 
     let local_key = get_keypair(&config.data_dir);
     let local_peer_id = PeerId::from(local_key.public());
-    info!("peer_id = {local_peer_id}");
+    debug!("peer_id = {local_peer_id}");
 
     // Build the swarm
     // TODO: pick a different transport. development_transport() has features we likely don't want,
@@ -132,7 +133,7 @@ async fn task_fn(
         .with(Protocol::Tcp(0));
     swarm
         .listen_on(local_addr.clone())
-        .expect("cannot start listener on {local_addr}");
+        .expect("Cannot start listener on {local_addr}");
 
     // Main event loop
     loop {
@@ -162,7 +163,7 @@ async fn task_fn(
                 }
                 SwarmEvent::Behaviour(event) => {
                     // emit behaviour event to any subscribers
-                    events_out.send(event).expect("channel closed");
+                    events_out.send(event).expect("Channel closed");
                 }
                 _e @ _ => {} // Ignore other events
             },
@@ -174,10 +175,11 @@ async fn task_fn(
                         error!("Failed to publish p2p message: {e}");
                     }
                 }
+                Some(Action::GetLocalPeerId(resp_ch)) => resp_ch.send(local_peer_id).unwrap(),
                 None => {
                     // If we do not receive requests from the consensus module, we cannot
                     // participate in the P2P network. Shut down the client.
-                    error!("request channel closed");
+                    error!("Request channel closed");
                     break;
                 }
             },

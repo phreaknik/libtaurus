@@ -1,5 +1,5 @@
 use crate::randomx::{self, RandomXVMInstance};
-use crate::{consensus, util, Frontier, SlimFrontier};
+use crate::{consensus, util, ValidatorTicket};
 use num::{BigUint, FromPrimitive};
 use randomx_rs::RandomXFlag;
 use std::cmp;
@@ -37,7 +37,7 @@ pub enum Error {
     #[error(transparent)]
     Dial(#[from] consensus::Error),
     #[error(transparent)]
-    MinerChanClosed(#[from] mpsc::error::SendError<SlimFrontier>),
+    MinerChanClosed(#[from] mpsc::error::SendError<ValidatorTicket>),
     #[error(transparent)]
     RandomX(#[from] randomx::Error),
 }
@@ -89,16 +89,16 @@ async fn task_fn(
             // Handle consensus events
             event = consensus_event_ch.recv() => {
                 match event {
-                    Err(channel_error) => error!("consensus_event_ch error: {channel_error}"),
+                    Err(channel_error) => error!("Consensus_event_ch error: {channel_error}"),
                     Ok(event) => {
                         match event {
                             // Restart mining threads to mine on new frontier
-                            consensus::Event::NewFrontier(frontier) => {
+                            consensus::Event::NewMiningJob(ticket) => {
                                 results_receiver.close(); // Kill previous mining threads
-                                results_receiver = match spawn_mining_threads(config.num_threads.unwrap_or(0), randomx_vm.clone(), frontier, sols_count_sender.clone()) {
+                                results_receiver = match spawn_mining_threads(config.num_threads.unwrap_or(0), randomx_vm.clone(), ticket, sols_count_sender.clone()) {
                                     Ok(ch) => ch,
                                     Err(e) => {
-                                        error!("failed to start miners: {e}");
+                                        error!("Failed to start miners: {e}");
                                         continue;
                                     },
                                 }
@@ -109,14 +109,14 @@ async fn task_fn(
             }
 
             // Handle results from the mining threads
-            Some(result) = results_receiver.recv() => {
-                if result.verify_pow(&randomx_vm).is_ok() {
-                    info!("found proof-of-work: {}", result.hash());
-                    if consensus_action_ch.send(consensus::Action::SubmitMinedFrontier(result)).is_err() {
-                        error!("stopping...");
+            Some(ticket) = results_receiver.recv() => {
+                if ticket.verify_pow(&randomx_vm).is_ok() {
+                    info!("Mined a new validator ticket: {}", ticket.hash());
+                    if consensus_action_ch.send(consensus::Action::SubmitMinedTicket(ticket)).is_err() {
+                        error!("Stopping...");
                     }
                 } else {
-                    debug!("found mining share");
+                    debug!("Found mining share");
                 }
             }
         }
@@ -127,27 +127,26 @@ async fn task_fn(
 fn spawn_mining_threads(
     num_threads: usize,
     randomx_vm: RandomXVMInstance,
-    frontier: Frontier,
+    ticket: ValidatorTicket,
     sols_count_ch: UnboundedSender<usize>,
-) -> Result<UnboundedReceiver<SlimFrontier>> {
-    info!("mining on new frontier: {}", frontier.hash());
+) -> Result<UnboundedReceiver<ValidatorTicket>> {
+    info!("Mining new validator ticket: {}", ticket.hash());
     // Close the old channel to kill the old mining threads, and
     // create a new channel for the new mining threads.
     let (results_sender, results_receiver) = mpsc::unbounded_channel();
-    let slim: SlimFrontier = frontier.try_into()?;
     let target = BigUint::from_u64(2).unwrap().pow(256)
-        / BigUint::from_u64(cmp::min(MINING_SHARE_DIFFICULTY, slim.difficulty)).unwrap();
+        / BigUint::from_u64(cmp::min(MINING_SHARE_DIFFICULTY, ticket.difficulty)).unwrap();
     for _ in 0..num_threads {
-        let slim = slim.clone();
+        let ticket = ticket.clone();
         let target = target.clone();
         let results_sender = results_sender.clone();
         let sols_count_ch = sols_count_ch.clone();
         let rx = randomx_vm.clone();
         spawn_blocking(
-            || match mine(rx, slim, target, results_sender, sols_count_ch) {
+            || match mine(rx, ticket, target, results_sender, sols_count_ch) {
                 Ok(_) | Err(Error::MinerChanClosed(_)) => {}
                 Err(e) => {
-                    warn!("mining thread stopped with error: {e}");
+                    warn!("Mining thread stopped with error: {e}");
                 }
             },
         );
@@ -158,23 +157,23 @@ fn spawn_mining_threads(
 /// Find a nonce which satisfies the difficulty target
 fn mine(
     randomx_vm: RandomXVMInstance,
-    mut frontier: SlimFrontier,
+    mut ticket: ValidatorTicket,
     target: BigUint,
-    results_ch: UnboundedSender<SlimFrontier>,
+    results_ch: UnboundedSender<ValidatorTicket>,
     sols_count_ch: UnboundedSender<usize>,
 ) -> Result<()> {
-    frontier.nonce = rand::random();
+    ticket.nonce = rand::random();
     loop {
         let loop_count = 1_000;
         for i in 0..loop_count {
-            let hash = randomx_vm.calculate_hash(&serde_cbor::to_vec(&frontier).unwrap())?;
+            let hash = randomx_vm.calculate_hash(&serde_cbor::to_vec(&ticket).unwrap())?;
             if BigUint::from_bytes_be(&hash) < target {
-                results_ch.send(frontier.clone())?;
+                results_ch.send(ticket.clone())?;
                 sols_count_ch.send(i).unwrap();
             } else if results_ch.is_closed() {
                 return Ok(());
             }
-            frontier.nonce += 1;
+            ticket.nonce += 1;
         }
         sols_count_ch.send(loop_count).unwrap();
     }
@@ -205,7 +204,7 @@ async fn stats_fn(mut solutions_receiver: UnboundedReceiver<usize>) {
             _ = ticker.tick() => {
                 let rate = count/ STATS_PERIOD_SECOND.as_secs();
                 count = 0;
-                info!("current hashrate: {}", util::human_readable(rate, "h/s"));
+                info!("Current hashrate: {}", util::human_readable(rate, "h/s"));
             }
         }
     }

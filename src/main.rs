@@ -9,8 +9,8 @@ mod randomx;
 mod util;
 
 use clap::{arg, command, ArgMatches, Command};
-pub use consensus::block::{Block, Frontier, Header, SlimFrontier};
 use consensus::GenesisConfig;
+pub use consensus::{Block, Header, ValidatorTicket};
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
 use p2p::PeerDatabase;
 use std::path::PathBuf;
