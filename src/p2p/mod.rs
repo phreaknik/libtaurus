@@ -82,19 +82,10 @@ pub struct Config {
 /// ['UnboundedSender'], which can be used to send actions to the running task. Also returns a
 /// ['broadcast::Sender'], which can be subscribed to, to receive P2P events from the task.
 pub fn start(config: Config) -> (UnboundedSender<Action>, broadcast::Sender<Event>) {
-    // Open the peer database
-    let peer_db = PeerDatabase::open(&config.data_dir.join(DATABASE_DIR), true)
-        .expect("Failed to open peer database");
-
     // Spawn the task
     let (action_sender, action_receiver) = mpsc::unbounded_channel();
     let (event_sender, _) = broadcast::channel(P2P_EVENT_CHAN_CAPACITY);
-    tokio::spawn(task_fn(
-        config,
-        peer_db,
-        action_receiver,
-        event_sender.clone(),
-    ));
+    tokio::spawn(task_fn(config, action_receiver, event_sender.clone()));
 
     // Return the communication channels
     (action_sender, event_sender)
@@ -103,12 +94,15 @@ pub fn start(config: Config) -> (UnboundedSender<Action>, broadcast::Sender<Even
 /// The task function which runs the p2p networking client.
 async fn task_fn(
     config: Config,
-    peer_db: PeerDatabase,
     mut actions_in: UnboundedReceiver<Action>,
     events_out: broadcast::Sender<Event>,
 ) {
     info!("Starting p2p client...");
+    // Open the peer database
+    let peer_db = PeerDatabase::open(&config.data_dir.join(DATABASE_DIR), true)
+        .expect("Failed to open peer database");
 
+    // Load the peer identity key
     let local_key = get_keypair(&config.data_dir);
     let local_peer_id = PeerId::from(local_key.public());
     debug!("peer_id = {local_peer_id}");
