@@ -12,7 +12,7 @@ use libp2p::kad;
 use libp2p::multiaddr::Protocol;
 use libp2p::swarm::{SwarmBuilder, SwarmEvent};
 use libp2p::{Multiaddr, PeerId};
-pub use message::Message;
+pub use message::{Message, MessageData, MessageValidationReport};
 use std::fs;
 use std::io;
 use std::net::Ipv4Addr;
@@ -33,14 +33,15 @@ pub const DATABASE_DIR: &str = "peer_db/";
 /// Event produced by [`Behaviour`].
 #[derive(Debug, Clone)]
 pub enum Event {
-    Pubsub(gossipsub::Message),
+    Pubsub(Message),
 }
 
 /// Actions that can be performed by the p2p client
 #[derive(Debug)]
 pub enum Action {
-    Broadcast(Message),
+    Broadcast(MessageData),
     GetLocalPeerId(oneshot::Sender<PeerId>),
+    ReportMessageValidity(MessageValidationReport),
 }
 
 /// Error type for cordelia-p2p errors
@@ -64,6 +65,8 @@ pub enum Error {
     Subscription(#[from] gossipsub::SubscriptionError),
     #[error(transparent)]
     NoKnownPeers(#[from] kad::NoKnownPeers),
+    #[error("data is not a message")]
+    NotAMessage,
 }
 
 /// Result type for cordelia-p2p
@@ -162,7 +165,7 @@ async fn task_fn(
                 _e @ _ => {} // Ignore other events
             },
 
-            // Handle API requests
+            // Handle requested actions
             action = actions_in.recv() => match action {
                 Some(Action::Broadcast(message)) => {
                     if let Err(e) = swarm.behaviour_mut().publish(message) {
@@ -170,6 +173,11 @@ async fn task_fn(
                     }
                 }
                 Some(Action::GetLocalPeerId(resp_ch)) => resp_ch.send(local_peer_id).unwrap(),
+                Some(Action::ReportMessageValidity(MessageValidationReport{
+                    msg_id, msg_source, acceptance,
+                })) => {
+                    swarm.behaviour_mut().report_message_validation_result(&msg_id, &msg_source, acceptance)
+                },
                 None => {
                     // If we do not receive requests from the consensus module, we cannot
                     // participate in the P2P network. Shut down the client.

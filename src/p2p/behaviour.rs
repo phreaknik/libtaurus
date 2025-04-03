@@ -1,7 +1,6 @@
-use crate::p2p::message::Message;
-use crate::p2p::{Event, PeerDatabase, PeerInfo};
+use super::{Event, MessageData, PeerDatabase, PeerInfo};
 use libp2p::core::Endpoint;
-use libp2p::gossipsub::{self, MessageAuthenticity, MessageId, Sha256Topic};
+use libp2p::gossipsub::{self, MessageAcceptance, MessageAuthenticity, MessageId, Sha256Topic};
 use libp2p::identity::Keypair;
 use libp2p::kad::store::MemoryStore;
 use libp2p::kad::{self, Kademlia, KademliaConfig, NoKnownPeers};
@@ -44,9 +43,9 @@ impl InnerBehaviour {
             config.gossipsub_cfg,
         )
         .unwrap();
-        for m in Message::iter() {
+        for m in MessageData::iter() {
             let topic = Sha256Topic::from(&m);
-            info!("Subscribed to topic {}", topic.hash());
+            info!("Subscribed to {topic}");
             gossipsub.subscribe(&topic)?;
         }
         Ok(InnerBehaviour {
@@ -85,11 +84,26 @@ impl Behaviour {
     }
 
     /// Publish message to gossipsub network
-    pub fn publish(&mut self, message: Message) -> crate::p2p::Result<MessageId> {
+    pub fn publish(&mut self, message: MessageData) -> crate::p2p::Result<MessageId> {
         self.inner
             .gossipsub
             .publish(Sha256Topic::from(&message), serde_cbor::to_vec(&message)?)
             .map_err(crate::p2p::Error::from)
+    }
+
+    pub fn report_message_validation_result(
+        &mut self,
+        msg_id: &MessageId,
+        propagation_source: &PeerId,
+        acceptance: MessageAcceptance,
+    ) {
+        if let Err(e) = self.inner.gossipsub.report_message_validation_result(
+            msg_id,
+            propagation_source,
+            acceptance,
+        ) {
+            warn!("Error updating gossipsub message status: {e}");
+        }
     }
 
     /// Add bootnodes to dial and bootstrap into the P2P network.
@@ -205,8 +219,10 @@ impl NetworkBehaviour for Behaviour {
             }
             // Forward pubsub events out
             Poll::Ready(ToSwarm::GenerateEvent(InnerBehaviourEvent::Gossipsub(
-                gossipsub::Event::Message { message, .. },
-            ))) => Poll::Ready(ToSwarm::GenerateEvent(Event::Pubsub(message))),
+                message @ gossipsub::Event::Message { .. },
+            ))) => Poll::Ready(ToSwarm::GenerateEvent(Event::Pubsub(
+                message.try_into().unwrap(),
+            ))),
             Poll::Ready(ToSwarm::GenerateEvent(event)) => {
                 trace!("internal event: {event:?}");
                 Poll::Pending
@@ -304,6 +320,10 @@ impl Config {
         let mut kad_cfg = KademliaConfig::default();
         kad_cfg.set_query_timeout(DEFAULT_KAD_QUERY_TIMOUT);
         let pubkey = keys.public();
+        let gossipsub_cfg = gossipsub::ConfigBuilder::default()
+            .validate_messages() // We mus accept every message before its allowed to propagate
+            .build()
+            .expect("Failed to build gossipsub config");
         Config {
             keys,
             identify_cfg: identify::Config::new(
@@ -311,7 +331,7 @@ impl Config {
                 pubkey,
             ),
             kad_cfg,
-            gossipsub_cfg: gossipsub::Config::default(),
+            gossipsub_cfg,
             boot_nodes,
         }
     }

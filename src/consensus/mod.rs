@@ -155,20 +155,51 @@ async fn task_fn(
     loop {
         select! {
             event = p2p_event_ch.recv() => {
-                    info!("received p2p event {event:?}");
+                match event {
+                    Err(e) => {
+                            error!("Stopping due to p2p_action channel error: {e}");
+                            return;
+                },
+                    Ok(p2p::Event::Pubsub(msg)) => {
+                        let validation = handle_p2p_message(&msg, &randomx_vm);
+                        if let Err(e) = p2p_action_ch.send(p2p::Action::ReportMessageValidity(validation)) {
+                            error!("Stopping due to p2p_action channel error: {e}");
+                            return;
+                        }
+                    },
+                }
             },
             Some(action) = actions_in.recv() => {
                 match action {
                     Action::SubmitMinedTicket(ticket) => {
                         if ticket.verify_pow(&randomx_vm).is_ok() {
-                            if p2p_action_ch.send(p2p::Action::Broadcast(p2p::Message::Ticket(ticket))).is_err() {
-                                error!("stopping...");
-                                return;
+                            if let Err(e) = p2p_action_ch.send(p2p::Action::Broadcast(p2p::MessageData::Ticket(ticket))) {
+                            error!("Stopping due to p2p_action channel error: {e}");
+                            return;
                             }
                         }
                     }
                 }
             },
         }
+    }
+}
+
+/// Handle a message from the peer to peer network, and generate a validation report back to the
+/// p2p client.
+fn handle_p2p_message(
+    msg: &p2p::Message,
+    randomx: &RandomXVMInstance,
+) -> p2p::MessageValidationReport {
+    match &msg.data {
+        p2p::MessageData::Ticket(ticket) => {
+            if ticket.verify_pow(randomx).is_ok() {
+                info!("Received ticket from {}", ticket.peer);
+                msg.accept()
+            } else {
+                msg.reject()
+            }
+        }
+        _ => msg.accept(), // Accept all other messages without validation
     }
 }

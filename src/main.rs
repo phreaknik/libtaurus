@@ -15,7 +15,7 @@ use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
 use p2p::PeerDatabase;
 use std::path::PathBuf;
 use tokio::{self, select};
-use tracing::{error, info};
+use tracing::{error, trace};
 use tracing_subscriber::EnvFilter;
 
 /// Application configuration details
@@ -80,10 +80,10 @@ async fn cmd_run(args: &ArgMatches) {
     loop {
         select! {
             event = p2p_event_ch.recv() => {
-                info!("p2p event: {event:?}");
+                trace!("p2p event: {event:?}");
             }
             event = consensus_event_ch.recv() => {
-                info!("consensus event: {event:?}");
+                trace!("consensus event: {event:?}");
             }
         }
     }
