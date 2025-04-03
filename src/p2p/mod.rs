@@ -1,9 +1,10 @@
 mod behaviour;
+mod database;
 pub mod message;
-pub mod peer_db;
 
 pub use behaviour::Behaviour;
 use core::result;
+pub use database::{PeerDatabase, PeerInfo};
 use futures::StreamExt;
 use libp2p::gossipsub;
 use libp2p::identity::Keypair;
@@ -24,7 +25,10 @@ use tracing::{error, info};
 
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
 /// [`tokio::sync::broadcast`] for more information.
-const P2P_EVENT_CHAN_CAPACITY: usize = 32;
+pub const P2P_EVENT_CHAN_CAPACITY: usize = 32;
+
+/// Path to the peer database, from within the peer data directory
+pub const PEER_DATABASE_DIR: &str = "peer_db/";
 
 /// Event produced by [`Behaviour`].
 #[derive(Debug, Clone)]
@@ -46,15 +50,13 @@ pub enum Error {
     #[error(transparent)]
     Cbor(#[from] serde_cbor::Error),
     #[error(transparent)]
+    Heed(#[from] heed::Error),
+    #[error(transparent)]
     Multiaddr(#[from] libp2p::multiaddr::Error),
     #[error(transparent)]
     Io(#[from] io::Error),
     #[error(transparent)]
     Transport(#[from] libp2p::TransportError<io::Error>),
-    #[error(transparent)]
-    RkvStore(#[from] rkv::StoreError),
-    #[error(transparent)]
-    PeerDB(#[from] peer_db::Error),
     #[error(transparent)]
     Publish(#[from] gossipsub::PublishError),
     #[error(transparent)]
@@ -67,7 +69,7 @@ pub enum Error {
 pub type Result<T> = result::Result<T, Error>;
 
 /// Configuration details for ['cordelia-p2p'].
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Config {
     /// Path to directory containing the peer database
     pub data_dir: PathBuf,
@@ -75,25 +77,32 @@ pub struct Config {
     pub boot_nodes: Vec<Multiaddr>,
 }
 
-impl Config {
-    fn peer_db_path(&self) -> PathBuf {
-        self.data_dir.join("peer_db/")
-    }
-}
-
 /// Run the p2p networking client, spawning the client task as a new thread. Returns an
 /// ['UnboundedSender'], which can be used to send actions to the running task. Also returns a
 /// ['broadcast::Sender'], which can be subscribed to, to receive P2P events from the task.
 pub fn start(config: Config) -> (UnboundedSender<Action>, broadcast::Sender<Event>) {
+    // Open the peer database
+    let peer_db = PeerDatabase::open(&config.data_dir.join(PEER_DATABASE_DIR), true)
+        .expect("failed to open peer database");
+
+    // Spawn the task
     let (action_sender, action_receiver) = mpsc::unbounded_channel();
     let (event_sender, _) = broadcast::channel(P2P_EVENT_CHAN_CAPACITY);
-    tokio::spawn(task_fn(config, action_receiver, event_sender.clone()));
+    tokio::spawn(task_fn(
+        config,
+        peer_db,
+        action_receiver,
+        event_sender.clone(),
+    ));
+
+    // Return the communication channels
     (action_sender, event_sender)
 }
 
 /// The task function which runs the p2p networking client.
 async fn task_fn(
     config: Config,
+    peer_db: PeerDatabase,
     mut actions_in: UnboundedReceiver<Action>,
     events_out: broadcast::Sender<Event>,
 ) {
@@ -108,11 +117,10 @@ async fn task_fn(
     // e.g. noise encryption
     let mut swarm = SwarmBuilder::with_tokio_executor(
         libp2p::tokio_development_transport(local_key.clone()).unwrap(),
-        Behaviour::new(behaviour::Config::new(
-            local_key,
-            config.peer_db_path(),
-            config.boot_nodes.clone(),
-        ))
+        Behaviour::new(
+            behaviour::Config::new(local_key, config.boot_nodes.clone()),
+            peer_db,
+        )
         .unwrap(),
         local_peer_id,
     )

@@ -12,7 +12,7 @@ use clap::{arg, command, ArgMatches, Command};
 pub use consensus::block::{Block, Frontier, Header, SlimFrontier};
 use consensus::GenesisConfig;
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
-use p2p::peer_db::PeerDB;
+use p2p::PeerDatabase;
 use std::path::PathBuf;
 use tokio::{self, select};
 use tracing::{error, info};
@@ -21,13 +21,13 @@ use tracing_subscriber::EnvFilter;
 /// Application configuration details
 struct Config {
     /// P2P client configuration
-    p2p: p2p::Config,
+    pub p2p: p2p::Config,
     /// Consensus configuration
-    consensus: consensus::Config,
+    pub consensus: consensus::Config,
     /// Http server configuration
-    http: http::Config,
+    pub http: http::Config,
     /// Miner configuration
-    miner: miner::Config,
+    pub miner: miner::Config,
 }
 
 /// Main cordelia CLI application
@@ -94,14 +94,24 @@ fn cmd_list_peers(args: &ArgMatches) {
     // Set up a subscriber to capture logs
     setup_logger(&args);
 
+    // Build config from args
+    let cfg = build_cfg(&args);
+
     // Open the peer database
-    let peer_dir = parse_data_dir(args).join("p2p/peer_db/");
-    match PeerDB::open(&peer_dir) {
-        Ok(db) => {
-            let _ = db.print_peers(args.get_one("max").map(|x| *x));
-        }
+    let peer_db = match PeerDatabase::open(&cfg.p2p.data_dir.join(p2p::PEER_DATABASE_DIR), false) {
+        Ok(db) => db,
         Err(e) => {
-            error!("Failed to open peer database: {e}");
+            error!("Unable to open peer database: {e}");
+            return;
+        }
+    };
+
+    // Iterate the entries and print them out
+    let rtxn = peer_db.env.read_txn().unwrap();
+    for entry in peer_db.db.iter(&rtxn).unwrap() {
+        match entry {
+            Ok((peer, info)) => println!("{}:{info}", peer.as_peerid()),
+            Err(e) => error!("error getting peer info: {e}"),
         }
     }
 }
@@ -152,9 +162,8 @@ fn parse_data_dir(args: &ArgMatches) -> PathBuf {
 
 /// Build application config from parsed CLI args
 fn build_cfg(args: &ArgMatches) -> Config {
-    let data_dir = parse_data_dir(args);
     Config {
-        p2p: build_p2p_cfg(data_dir.join("p2p/"), args),
+        p2p: build_p2p_cfg(args),
         consensus: build_consensus_cfg(args),
         http: http::Config {},
         miner: build_miner_cfg(args),
@@ -162,13 +171,14 @@ fn build_cfg(args: &ArgMatches) -> Config {
 }
 
 /// Build P2P ['p2p::Config'] from parsed CLI args
-fn build_p2p_cfg(p2p_data_dir: PathBuf, args: &ArgMatches) -> p2p::Config {
-    let boot_nodes = match args.get_one::<String>("bootnode") {
-        Some(v) => vec![v.parse().expect("failed to parse bootnode address")],
+fn build_p2p_cfg(args: &ArgMatches) -> p2p::Config {
+    let data_dir = parse_data_dir(args).join("p2p/");
+    let boot_nodes = match args.try_get_one::<String>("bootnode") {
+        Ok(Some(v)) => vec![v.parse().expect("failed to parse bootnode address")],
         _ => Vec::new(),
     };
     p2p::Config {
-        data_dir: p2p_data_dir,
+        data_dir,
         boot_nodes,
     }
 }
@@ -187,7 +197,8 @@ fn build_consensus_cfg(_args: &ArgMatches) -> consensus::Config {
 fn build_miner_cfg(args: &ArgMatches) -> miner::Config {
     miner::Config {
         num_threads: args
-            .get_one::<String>("mining_threads")
+            .try_get_one::<String>("mining_threads")
+            .unwrap_or(Some(&"0".to_string()))
             .map(|v| v.parse().expect("failed to parse miner num-threads")),
     }
 }

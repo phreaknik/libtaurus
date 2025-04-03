@@ -1,6 +1,5 @@
 use crate::p2p::message::Message;
-use crate::p2p::peer_db::{self, PeerDB, PeerInfo};
-use crate::p2p::Event;
+use crate::p2p::{Event, PeerDatabase, PeerInfo};
 use libp2p::core::Endpoint;
 use libp2p::gossipsub::{self, MessageAuthenticity, MessageId, Sha256Topic};
 use libp2p::identity::Keypair;
@@ -12,7 +11,6 @@ use libp2p::swarm::{
 };
 use libp2p::{identify, Multiaddr, PeerId};
 use std::borrow::BorrowMut;
-use std::path::PathBuf;
 use std::str;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
@@ -68,16 +66,16 @@ pub struct Behaviour {
     /// Sub protocols of cordelia-p2p
     inner: InnerBehaviour,
     /// Peer database
-    peer_db: PeerDB,
+    peer_db: PeerDatabase,
     /// Time of last bootstrap
     last_bootstrap: Option<Instant>,
 }
 
 impl Behaviour {
     /// Create a new instance of the cordelia-p2p ['Behaviour'].
-    pub fn new(config: Config) -> crate::p2p::Result<Self> {
+    pub fn new(config: Config, peer_db: PeerDatabase) -> crate::p2p::Result<Self> {
         let mut b = Behaviour {
-            peer_db: PeerDB::create_or_open(&config.peer_db_path)?,
+            peer_db,
             inner: InnerBehaviour::new(config.clone())?,
             last_bootstrap: None,
         };
@@ -98,6 +96,7 @@ impl Behaviour {
     /// The list of bootnodes will include both explicitely provided bootnodes in the config, as
     /// well as previously reachable peers saved in the peer database.
     pub fn add_boot_nodes(&mut self, config: &Config) {
+        let rtxn = self.peer_db.env.read_txn().unwrap();
         config
             .boot_nodes
             .clone()
@@ -110,21 +109,16 @@ impl Behaviour {
             .chain(
                 // Chain the peer addresses of all saved peers
                 self.peer_db
-                    .list_peers()
-                    .unwrap()
-                    .into_iter()
-                    .map(|peer_id| (peer_id, self.peer_db.read_peer_info(&peer_id).ok()))
-                    .inspect(|(peer_id, info)| {
-                        if info.is_none() {
-                            warn!("Listed peer doesn't exist in database: {peer_id}");
+                    .db
+                    .iter(&rtxn)
+                    .expect("Failed to access peer database")
+                    .filter_map(|entry| match entry {
+                        Ok((peer_db_key, info)) => Some((peer_db_key.as_peerid(), info.addresses)),
+                        Err(e) => {
+                            error!("Error reading peer entry at boot: {e}");
+                            None
                         }
-                    })
-                    .filter_map(|(peer, info)| match info {
-                        // Skip any peers we couldn't read from the db
-                        Some(info) => Some((peer, info)),
-                        None => None,
-                    })
-                    .map(|(peer, info)| (peer, info.addresses)),
+                    }),
             )
             .for_each(|(peer, addrs)| {
                 for address in addrs {
@@ -135,47 +129,31 @@ impl Behaviour {
 
     /// Perform any handling logic for a peer which we tried, but failed to reach
     pub fn handle_unreachable_peer(&mut self, peer_id: &PeerId) {
-        match self.peer_db.read_peer_info(peer_id) {
-            Ok(info) => {
-                for address in info.addresses {
-                    self.inner.kademlia.remove_address(peer_id, &address);
-                }
-                let _ = self.peer_db.delete_peer_info(peer_id);
+        let mut wtxn = self.peer_db.env.write_txn().unwrap();
+        if let Ok(Some(info)) = self.peer_db.db.get(&wtxn, &peer_id.into()) {
+            for address in info.addresses {
+                self.inner.kademlia.remove_address(peer_id, &address);
             }
-            Err(_) => {}
-        };
+            if let Err(e) = self.peer_db.db.delete(&mut wtxn, &peer_id.into()) {
+                warn!("Failed to delete unreachable peer {peer_id}: {e}");
+            }
+        }
+        wtxn.commit().unwrap();
     }
 
     /// Handle peer identification events
     fn handle_identify_event(&mut self, peer_id: PeerId, info: identify::Info) {
-        // Save the peer to PeerDB
-        match self.peer_db.read_peer_info(&peer_id) {
-            Ok(_) => {}
-            Err(peer_db::Error::EntryNotFound) => {
-                let mut addresses = info.listen_addrs.clone();
-                addresses.sort();
-                addresses.dedup();
-                let info = PeerInfo {
-                    peer_id,
-                    protocol_version: info.protocol_version,
-                    agent_version: info.agent_version,
-                    addresses,
-                };
-                match self.peer_db.write_peer_info(&info) {
-                    Ok(_) => {}
-                    Err(e) => {
-                        warn!("Failed to add new peer: {e}");
-                    }
-                }
-            }
-            Err(e) => {
-                error!("Error accessing peer_db: {e}");
-            }
-        }
         // Add the peer to the kademlia routing table
-        for address in info.listen_addrs {
+        for address in info.listen_addrs.clone() {
             self.inner.kademlia.add_address(&peer_id, address);
         }
+        let mut wtxn = self.peer_db.env.write_txn().unwrap();
+        // Save the peer info to the peer database
+        self.peer_db
+            .db
+            .put(&mut wtxn, &peer_id.into(), &PeerInfo::from(info))
+            .expect("Failed to write to peer database");
+        wtxn.commit().unwrap();
     }
 
     /// Check if we need more peers, and re-bootstrap if so
@@ -317,14 +295,12 @@ pub struct Config {
     kad_cfg: KademliaConfig,
     /// Gossipsub protocol configuration
     gossipsub_cfg: gossipsub::Config,
-    /// Path to the peer database
-    peer_db_path: PathBuf,
     /// Bootstrap nodes to join the P2P network
     boot_nodes: Vec<Multiaddr>,
 }
 
 impl Config {
-    pub fn new(keys: Keypair, peer_db_path: PathBuf, boot_nodes: Vec<Multiaddr>) -> Self {
+    pub fn new(keys: Keypair, boot_nodes: Vec<Multiaddr>) -> Self {
         let mut kad_cfg = KademliaConfig::default();
         kad_cfg.set_query_timeout(DEFAULT_KAD_QUERY_TIMOUT);
         let pubkey = keys.public();
@@ -336,7 +312,6 @@ impl Config {
             ),
             kad_cfg,
             gossipsub_cfg: gossipsub::Config::default(),
-            peer_db_path,
             boot_nodes,
         }
     }
