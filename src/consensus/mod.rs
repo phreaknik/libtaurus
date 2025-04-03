@@ -1,11 +1,14 @@
 pub mod block;
+pub mod database;
 pub mod hash;
 
+use self::database::ConsensusDatabase;
 use crate::randomx::RandomXVMInstance;
 use crate::{p2p, randomx};
 use crate::{Block, Frontier, Header, SlimFrontier};
 use chrono::{DateTime, Utc};
 use randomx_rs::RandomXFlag;
+use std::path::PathBuf;
 use std::result;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::{select, sync::broadcast};
@@ -13,7 +16,10 @@ use tracing::{error, info};
 
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
 /// [`tokio::sync::broadcast`] for more information.
-const CONSENSUS_EVENT_CHAN_CAPACITY: usize = 32;
+pub const CONSENSUS_EVENT_CHAN_CAPACITY: usize = 32;
+
+/// Path to the consensus database, from within the consensus data directory
+pub const DATABASE_DIR: &str = "consensus_db/";
 
 /// Event produced by the consensus process
 #[derive(Debug, Clone)]
@@ -35,6 +41,10 @@ pub enum Error {
     RandomX(#[from] randomx::Error),
     #[error(transparent)]
     Cbor(#[from] serde_cbor::error::Error),
+    #[error(transparent)]
+    Heed(#[from] heed::Error),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
     #[error("frontier object is empty")]
     EmptyFrontier,
     #[error("invalid frontier")]
@@ -51,7 +61,10 @@ pub type Result<T> = result::Result<T, Error>;
 /// Configuration details for the consensus process.
 #[derive(Debug, Clone)]
 pub struct Config {
+    /// Genesis block details
     pub genesis: GenesisConfig,
+    /// Path to the consensus data directory
+    pub data_dir: PathBuf,
 }
 
 /// Genesis configuration
@@ -84,21 +97,30 @@ pub fn start(
     p2p_action_ch: UnboundedSender<p2p::Action>,
     p2p_event_ch: broadcast::Receiver<p2p::Event>,
 ) -> (UnboundedSender<Action>, broadcast::Sender<Event>) {
+    // Open the peer database
+    let consensus_db = ConsensusDatabase::open(&config.data_dir.join(DATABASE_DIR), true)
+        .expect("failed to open peer database");
+
+    // Spawn the task
     let (action_sender, action_receiver) = mpsc::unbounded_channel();
     let (event_sender, _) = broadcast::channel(CONSENSUS_EVENT_CHAN_CAPACITY);
     tokio::spawn(task_fn(
         config,
+        consensus_db,
         action_receiver,
         event_sender.clone(),
         p2p_action_ch,
         p2p_event_ch,
     ));
+
+    // Return the communication channels
     (action_sender, event_sender)
 }
 
 /// The task function which runs the consensus process.
 async fn task_fn(
     config: Config,
+    _consensus_db: ConsensusDatabase,
     mut actions_in: UnboundedReceiver<Action>,
     events_out: broadcast::Sender<Event>,
     p2p_action_ch: UnboundedSender<p2p::Action>,

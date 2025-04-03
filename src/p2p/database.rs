@@ -13,7 +13,7 @@ pub struct PeerDatabase {
 }
 
 impl PeerDatabase {
-    /// Open the peer database at the given path, or optionally create it if nonexistent
+    /// Open the database at the given path, or optionally create it if nonexistent
     pub fn open(path: &PathBuf, create: bool) -> Result<PeerDatabase> {
         if create {
             fs::create_dir_all(path.as_path())?;

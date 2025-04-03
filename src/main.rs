@@ -98,7 +98,7 @@ fn cmd_list_peers(args: &ArgMatches) {
     let cfg = build_cfg(&args);
 
     // Open the peer database
-    let peer_db = match PeerDatabase::open(&cfg.p2p.data_dir.join(p2p::PEER_DATABASE_DIR), false) {
+    let peer_db = match PeerDatabase::open(&cfg.p2p.data_dir.join(p2p::DATABASE_DIR), false) {
         Ok(db) => db,
         Err(e) => {
             error!("Unable to open peer database: {e}");
@@ -184,8 +184,10 @@ fn build_p2p_cfg(args: &ArgMatches) -> p2p::Config {
 }
 
 /// Build P2P ['p2p::Config'] from parsed CLI args
-fn build_consensus_cfg(_args: &ArgMatches) -> consensus::Config {
+fn build_consensus_cfg(args: &ArgMatches) -> consensus::Config {
+    let data_dir = parse_data_dir(args).join("consensus/");
     consensus::Config {
+        data_dir,
         genesis: GenesisConfig {
             difficulty: params::GENESIS_DIFFICULTY,
             time: params::GENESIS_TIMESTAMP,

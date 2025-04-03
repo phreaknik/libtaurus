@@ -28,7 +28,7 @@ use tracing::{error, info};
 pub const P2P_EVENT_CHAN_CAPACITY: usize = 32;
 
 /// Path to the peer database, from within the peer data directory
-pub const PEER_DATABASE_DIR: &str = "peer_db/";
+pub const DATABASE_DIR: &str = "peer_db/";
 
 /// Event produced by [`Behaviour`].
 #[derive(Debug, Clone)]
@@ -71,7 +71,7 @@ pub type Result<T> = result::Result<T, Error>;
 /// Configuration details for ['cordelia-p2p'].
 #[derive(Clone)]
 pub struct Config {
-    /// Path to directory containing the peer database
+    /// Path to the p2p data directory
     pub data_dir: PathBuf,
     /// Bootstrap nodes to join P2P network
     pub boot_nodes: Vec<Multiaddr>,
@@ -82,7 +82,7 @@ pub struct Config {
 /// ['broadcast::Sender'], which can be subscribed to, to receive P2P events from the task.
 pub fn start(config: Config) -> (UnboundedSender<Action>, broadcast::Sender<Event>) {
     // Open the peer database
-    let peer_db = PeerDatabase::open(&config.data_dir.join(PEER_DATABASE_DIR), true)
+    let peer_db = PeerDatabase::open(&config.data_dir.join(DATABASE_DIR), true)
         .expect("failed to open peer database");
 
     // Spawn the task
