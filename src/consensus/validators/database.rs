@@ -1,4 +1,7 @@
-use crate::consensus::Result;
+use crate::{
+    consensus::{hash::Hash, Result},
+    ValidatorTicket,
+};
 use heed::{BytesDecode, BytesEncode, Database, Env, EnvOpenOptions};
 use serde_derive::{Deserialize, Serialize};
 use std::{fs, path::PathBuf};
@@ -7,7 +10,7 @@ use std::{fs, path::PathBuf};
 #[derive(Clone)]
 pub struct ValidatorDatabase {
     pub env: Env,
-    pub db: Database<ValidatorDbKey, ValidatorDbEntry>,
+    pub db: Database<ValidatorDbKey, ValidatorTicket>,
 }
 
 impl ValidatorDatabase {
@@ -28,7 +31,13 @@ impl ValidatorDatabase {
 
 /// Key by which consensus data is stored in the database
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ValidatorDbKey {}
+pub struct ValidatorDbKey(Hash);
+
+impl From<&ValidatorTicket> for ValidatorDbKey {
+    fn from(ticket: &ValidatorTicket) -> Self {
+        ValidatorDbKey(ticket.hash())
+    }
+}
 
 impl<'a> BytesEncode<'a> for ValidatorDbKey {
     type EItem = ValidatorDbKey;
@@ -42,30 +51,6 @@ impl<'a> BytesEncode<'a> for ValidatorDbKey {
 
 impl<'a> BytesDecode<'a> for ValidatorDbKey {
     type DItem = ValidatorDbKey;
-
-    fn bytes_decode(
-        bytes: &'a [u8],
-    ) -> std::result::Result<Self::DItem, Box<dyn std::error::Error>> {
-        Ok(serde_cbor::from_slice(bytes)?)
-    }
-}
-
-/// Consensus data types which may be stored in the database
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ValidatorDbEntry {}
-
-impl<'a> BytesEncode<'a> for ValidatorDbEntry {
-    type EItem = ValidatorDbEntry;
-
-    fn bytes_encode(
-        item: &'a Self::EItem,
-    ) -> std::result::Result<std::borrow::Cow<'a, [u8]>, Box<dyn std::error::Error>> {
-        Ok(serde_cbor::to_vec(item)?.into())
-    }
-}
-
-impl<'a> BytesDecode<'a> for ValidatorDbEntry {
-    type DItem = ValidatorDbEntry;
 
     fn bytes_decode(
         bytes: &'a [u8],

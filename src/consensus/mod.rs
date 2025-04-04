@@ -14,7 +14,7 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::{oneshot, watch};
 use tokio::{select, sync::broadcast};
 use tracing::{error, info, warn};
-pub use validators::{ValidatorSet, ValidatorTicket};
+pub use validators::{ValidatorQuorum, ValidatorTicket};
 
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
 /// [`tokio::sync::broadcast`] for more information.
@@ -122,7 +122,7 @@ pub struct Runtime {
     config: Config,
     peer_id: Option<PeerId>,
     ticket_ch: UnboundedSender<ValidatorTicket>,
-    _validators_ch: watch::Receiver<ValidatorSet>,
+    _quorum_ch: watch::Receiver<ValidatorQuorum>,
     randomx_vm: RandomXVMInstance,
     actions_in: UnboundedReceiver<Action>,
     events_out: broadcast::Sender<Event>,
@@ -141,7 +141,7 @@ impl Runtime {
         info!("Starting consensus...");
 
         // Start the validator raffle
-        let (ticket_ch, validators_ch) = validators::raffle::start(&config);
+        let (ticket_ch, quorum_ch) = validators::raffle::start(&config);
 
         // Create a randomx VM instance for verifying proofs of work
         let randomx_vm =
@@ -152,7 +152,7 @@ impl Runtime {
             config,
             peer_id: None,
             ticket_ch,
-            _validators_ch: validators_ch,
+            _quorum_ch: quorum_ch,
             randomx_vm,
             actions_in,
             events_out,
