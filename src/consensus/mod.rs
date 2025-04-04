@@ -1,6 +1,5 @@
 pub mod block;
 pub mod hash;
-pub mod validators;
 
 use crate::randomx::RandomXVMInstance;
 use crate::{p2p, randomx};
@@ -11,10 +10,9 @@ use randomx_rs::RandomXFlag;
 use std::path::PathBuf;
 use std::result;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
-use tokio::sync::{oneshot, watch};
+use tokio::sync::oneshot;
 use tokio::{select, sync::broadcast};
 use tracing::{error, info, warn};
-pub use validators::ValidatorQuorum;
 
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
 /// [`tokio::sync::broadcast`] for more information.
@@ -121,7 +119,6 @@ pub fn start(
 pub struct Runtime {
     config: Config,
     peer_id: Option<PeerId>,
-    _quorum_ch: watch::Receiver<ValidatorQuorum>,
     randomx_vm: RandomXVMInstance,
     actions_in: UnboundedReceiver<Action>,
     events_out: broadcast::Sender<Event>,
@@ -139,9 +136,6 @@ impl Runtime {
     ) -> Result<Runtime> {
         info!("Starting consensus...");
 
-        // Start the validator raffle
-        let (_ticket_ch, quorum_ch) = validators::raffle::start(&config);
-
         // Create a randomx VM instance for verifying proofs of work
         let randomx_vm =
             RandomXVMInstance::new(b"cordelia-randomx", RandomXFlag::get_recommended_flags())?;
@@ -150,7 +144,6 @@ impl Runtime {
         Ok(Runtime {
             config,
             peer_id: None,
-            _quorum_ch: quorum_ch,
             randomx_vm,
             actions_in,
             events_out,

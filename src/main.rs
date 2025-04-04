@@ -9,12 +9,11 @@ mod randomx;
 mod util;
 
 use clap::{arg, command, ArgMatches, Command};
-use consensus::{validators::database::ValidatorDatabase, GenesisConfig};
+use consensus::GenesisConfig;
 pub use consensus::{Block, Header};
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
-use itertools::Itertools;
 use p2p::PeerDatabase;
-use std::{collections::HashMap, path::PathBuf};
+use std::path::PathBuf;
 use tokio::{self, select};
 use tracing::{error, trace};
 use tracing_subscriber::EnvFilter;
@@ -38,7 +37,6 @@ async fn main() {
     match parse_cli_args().subcommand() {
         Some(("run", sub_args)) => cmd_run(sub_args).await,
         Some(("list-peers", sub_args)) => cmd_list_peers(sub_args),
-        Some(("list-validators", sub_args)) => cmd_list_validators(sub_args),
         _ => unreachable!("Exausted list of subcommands and subcommand_requred prevents 'None'"),
     }
 }
@@ -118,67 +116,6 @@ fn cmd_list_peers(args: &ArgMatches) {
     }
 }
 
-/// Command to list peers
-fn cmd_list_validators(args: &ArgMatches) {
-    // Set up a subscriber to capture logs
-    setup_logger(&args);
-
-    // Build config from args
-    let cfg = build_cfg(&args);
-
-    // Open the validators database
-    let validators_db = match ValidatorDatabase::open(
-        &cfg.consensus
-            .data_dir
-            .join(consensus::validators::DATABASE_DIR),
-        false,
-    ) {
-        Ok(db) => db,
-        Err(e) => {
-            error!("Unable to open validator database: {e}");
-            return;
-        }
-    };
-
-    // Iterate the entries and build a histogram of ticket counts for each validator with a ticket
-    // in the validator database.
-    let mut histogram = HashMap::new();
-    let mut all_tickets_count = 0;
-    let rtxn = validators_db.env.read_txn().unwrap();
-    for entry in validators_db.db.iter(&rtxn).unwrap() {
-        match entry {
-            Ok((_hash, ticket)) => {
-                // Count the total number of tickets in the database
-                all_tickets_count += 1;
-                // Lookup/initialize the ticket count for this peer, and increment it
-                if let Some(count) = histogram.get_mut(&ticket.peer) {
-                    *count += 1;
-                } else {
-                    // Create a new entry if this peer hasn't been recorded yet
-                    histogram.insert(ticket.peer, 1);
-                };
-            }
-            Err(e) => error!("error validator ticket: {e}"),
-        }
-    }
-    rtxn.commit().unwrap();
-
-    // Print out the histogram data
-    println!("\n{:=^80}", " Validator Database ");
-    println!(
-        "{0: <54} | {1: <10} | {2: <10}",
-        "peer id", "# tickets", "% of total"
-    );
-    for (validator, count) in histogram.into_iter().sorted_by(|a, b| Ord::cmp(&b.1, &a.1)) {
-        let percentage = 100 * count / all_tickets_count;
-        println!(
-            "{0: <54} | {1: <10} | {2: <2}%",
-            validator, count, percentage
-        );
-    }
-    println!("\n");
-}
-
 /// Parse CLI args
 fn parse_cli_args() -> ArgMatches {
     command!() // initialize CLI with details from cargo.toml
@@ -193,13 +130,6 @@ fn parse_cli_args() -> ArgMatches {
         )
         .subcommand(
             Command::new("list-peers")
-                .about("Lists all peers saved in the peer database")
-                .arg(arg!(-v --verbosity ... "Increase verbosity level").required(false))
-                .arg(arg!(-d --data_dir <PATH> "Specify data directory").required(false))
-                .arg(arg!(-n --max <COUNT> "Max number of peers to list").required(false)),
-        )
-        .subcommand(
-            Command::new("list-validators")
                 .about("Lists all peers saved in the peer database")
                 .arg(arg!(-v --verbosity ... "Increase verbosity level").required(false))
                 .arg(arg!(-d --data_dir <PATH> "Specify data directory").required(false))
