@@ -1,15 +1,14 @@
 pub mod database;
 pub mod raffle;
 
+use super::{hash::Hash, Error, Result};
+use crate::{params, randomx::RandomXVMInstance, Header};
+use chrono::{DateTime, Utc};
 use heed::{BytesDecode, BytesEncode};
 use libp2p::PeerId;
 use num::{BigUint, FromPrimitive};
 pub use raffle::ValidatorQuorum;
 use serde_derive::{Deserialize, Serialize};
-
-use crate::{params, randomx::RandomXVMInstance, Header};
-
-use super::{hash::Hash, Error, Result};
 
 /// Any node may submit a mined ValidatorTicket to be entered into the validator raffle
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,6 +17,7 @@ pub struct ValidatorTicket {
     pub heads: Vec<Hash>,
     pub height: u64,
     pub difficulty: u64,
+    pub time: DateTime<Utc>,
     pub nonce: u64,
 }
 
@@ -32,9 +32,16 @@ impl ValidatorTicket {
                 heads: heads.iter().map(|h| h.hash()).collect(),
                 height: heads[0].height,
                 difficulty: heads.into_iter().map(|h| h.difficulty).max().unwrap(),
+                time: Utc::now(),
                 nonce: 0,
             })
         }
+    }
+
+    /// Update the timestamp to the current UTC time
+    pub fn update_timestamp(&mut self) -> &mut Self {
+        self.time = Utc::now();
+        self
     }
 
     /// Compute the frontier hash
@@ -75,6 +82,7 @@ impl Default for ValidatorTicket {
             heads: Vec::new(),
             height: 0,
             difficulty: 0,
+            time: Utc::now(),
             nonce: 0,
         }
     }

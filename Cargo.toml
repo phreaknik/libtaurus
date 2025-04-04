@@ -48,3 +48,4 @@ num = "0.4.0"
 rand = "0.8.5"
 randomx-rs = { path = "../randomx-rs" }
 heed = "0.11.0"
+itertools = "0.11.0"
