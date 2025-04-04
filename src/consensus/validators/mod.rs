@@ -10,6 +10,9 @@ use num::{BigUint, FromPrimitive};
 pub use raffle::ValidatorQuorum;
 use serde_derive::{Deserialize, Serialize};
 
+/// Path to the validator database, from within the consensus data directory
+pub const DATABASE_DIR: &str = "validators_db/";
+
 /// Any node may submit a mined ValidatorTicket to be entered into the validator raffle
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidatorTicket {

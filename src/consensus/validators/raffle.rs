@@ -1,25 +1,19 @@
 use super::database::ValidatorDatabase;
 use crate::consensus::validators::database::ValidatorDbKey;
+use crate::consensus::validators::DATABASE_DIR;
 use crate::consensus::Config;
-use crate::params::{RAFFLE_TICKET_MAX_AGE_DAYS, VALIDATOR_QUORUM_SIZE};
 use crate::ValidatorTicket;
-use chrono::{Duration, Utc};
-use itertools::Itertools;
+use chrono::Duration;
 use libp2p::PeerId;
-use rand::seq::IteratorRandom;
-use rand::thread_rng;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::{mpsc, watch};
 use tokio::{select, time};
-use tracing::{error, info};
+use tracing::{debug, error};
 
 /// Seconds between raffle drawings
 const RAFFLE_PERIOD_SECS: i64 = 10;
-
-/// Path to the consensus database, from within the consensus data directory
-const DATABASE_DIR: &str = "validators_db/";
 
 /// Starts a raffle task, which periodically selects a new random set of validators from the set of
 /// raffle tickets which have been entered.
@@ -49,7 +43,7 @@ async fn task_fn(
     quorum_ch: watch::Sender<ValidatorQuorum>,
 ) {
     // Open the validator database
-    let database =
+    let mut database =
         ValidatorDatabase::open(&db_path, true).expect("Failed to open validator database");
 
     // Start timer to start next raffle and draw new validators
@@ -66,7 +60,7 @@ async fn task_fn(
                         return;
                     },
                     Some(ticket) => {
-                        info!("Received ticket {} from peer {}", ticket.hash(), ticket.peer);
+                        debug!("Received ticket {} from peer {}", ticket.hash(), ticket.peer);
                         let mut wtxn = database.env.write_txn().unwrap();
                         database.db.put(&mut wtxn, &ValidatorDbKey::from(&ticket), &ticket)
                             .expect("Error writing ticket to database");
@@ -78,44 +72,13 @@ async fn task_fn(
             // Periodically draw a new quorum from the raffle
             _ = raffle_timer.tick() => {
                 // First, remove expired entries
-                let now = Utc::now();
-                let mut wtxn = database.env.write_txn().unwrap();
-                let expired: Vec<_> = database.db.iter(&mut wtxn).unwrap().filter_map(|entry| {
-                    if let Ok((key, ticket)) = entry {
-                        if  now.signed_duration_since(ticket.time).num_days() > RAFFLE_TICKET_MAX_AGE_DAYS {
-                            Some(key)
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                }).collect();
-                for entry in expired {
-                    database.db.delete(&mut wtxn, &entry).unwrap();
-                }
-                wtxn.commit().unwrap();
+                database.delete_expired().expect("Failed to expire validator tickets!");
 
                 // Next build a random quorum
-                let rtxn = database.env.read_txn().unwrap();
-                let iter_peers = database.db.iter(&rtxn).unwrap().filter_map(|t| {
-                        if let Ok((_key, ticket)) = t {
-                            return Some(ticket.peer);
-                        } else {
-                            None
-                        }
-                    }).unique();
-                let quorum = if database.db.len(&rtxn).unwrap() > VALIDATOR_QUORUM_SIZE.try_into().unwrap() {
-                    // If we have more than enough validators to fill the quorum, take a random sample.
-                     iter_peers.choose_multiple(&mut thread_rng(), VALIDATOR_QUORUM_SIZE)
-                } else {
-                    // Otherwise, just collect as many unique validators as we have
-                    iter_peers.collect()
-                };
-                rtxn.commit().unwrap();
+                let quorum = database.select_quorum().expect("Failed to select a quorum of validators!");
 
                 // Finally send the quorum
-                quorum_ch.send(ValidatorQuorum::from(quorum)).unwrap();
+                quorum_ch.send(quorum).unwrap();
             }
         }
     }

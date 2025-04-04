@@ -203,9 +203,13 @@ impl Runtime {
                     match action {
                         Action::SubmitMinedTicket(ticket) => {
                             if ticket.verify_pow(&self.randomx_vm).is_ok() {
+                                if let Err(e) = self.ticket_ch.send(ticket.clone()){
+                                    error!("Stopping due to p2p_action channel error: {e}");
+                                    return;
+                                }
                                 if let Err(e) = self.p2p_action_ch.send(p2p::Action::Broadcast(p2p::MessageData::Ticket(ticket))) {
-                                error!("Stopping due to p2p_action channel error: {e}");
-                                return;
+                                    error!("Stopping due to p2p_action channel error: {e}");
+                                    return;
                                 }
                             }
                         }
