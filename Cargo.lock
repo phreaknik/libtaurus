@@ -843,6 +843,7 @@ dependencies = [
  "itertools",
  "libp2p",
  "num",
+ "quick-protobuf",
  "rand 0.8.5",
  "randomx-rs",
  "serde",

@@ -1,4 +1,4 @@
-use super::{Event, MessageData, PeerDatabase, PeerInfo};
+use super::{peer_rpc, Event, MessageData, PeerDatabase, PeerInfo};
 use libp2p::core::Endpoint;
 use libp2p::gossipsub::{self, MessageAcceptance, MessageAuthenticity, MessageId, Sha256Topic};
 use libp2p::identity::Keypair;
@@ -33,6 +33,7 @@ pub struct InnerBehaviour {
     identify: identify::Behaviour,
     kademlia: Kademlia<MemoryStore>,
     gossipsub: gossipsub::Behaviour,
+    peer_rpc: peer_rpc::Behaviour,
 }
 
 impl InnerBehaviour {
@@ -56,6 +57,7 @@ impl InnerBehaviour {
                 config.kad_cfg,
             ),
             gossipsub,
+            peer_rpc: peer_rpc::Behaviour::new(config.peer_rpc_cfg),
         })
     }
 }
@@ -311,6 +313,8 @@ pub struct Config {
     kad_cfg: KademliaConfig,
     /// Gossipsub protocol configuration
     gossipsub_cfg: gossipsub::Config,
+    /// Peer RPC protocol configuration
+    peer_rpc_cfg: peer_rpc::Config,
     /// Bootstrap nodes to join the P2P network
     boot_nodes: Vec<Multiaddr>,
 }
@@ -331,6 +335,7 @@ impl Config {
                 pubkey,
             ),
             kad_cfg,
+            peer_rpc_cfg: peer_rpc::Config {},
             gossipsub_cfg,
             boot_nodes,
         }

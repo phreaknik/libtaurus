@@ -1,6 +1,7 @@
 mod behaviour;
 mod database;
 pub mod message;
+mod peer_rpc;
 
 pub use behaviour::Behaviour;
 use core::result;
