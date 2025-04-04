@@ -1,5 +1,5 @@
 use super::Error;
-use crate::{Block, Header, ValidatorTicket};
+use crate::{Block, Header};
 use libp2p::{
     gossipsub::{self, MessageAcceptance, MessageId, Sha256Topic, TopicHash},
     PeerId,
@@ -78,7 +78,6 @@ pub struct MessageValidationReport {
 pub enum MessageData {
     Block(Block),
     Header(Header),
-    Ticket(ValidatorTicket),
 }
 
 impl<H: gossipsub::Hasher> From<&MessageData> for gossipsub::Topic<H> {

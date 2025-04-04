@@ -1,8 +1,5 @@
+use crate::consensus::{hash::Hash, validators::ValidatorTicket, Result};
 use crate::params::{RAFFLE_TICKET_MAX_AGE_DAYS, VALIDATOR_QUORUM_SIZE};
-use crate::{
-    consensus::{hash::Hash, Result},
-    ValidatorTicket,
-};
 use chrono::Utc;
 use heed::{BytesDecode, BytesEncode, Database, Env, EnvOpenOptions};
 use itertools::Itertools;

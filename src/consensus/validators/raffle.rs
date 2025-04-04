@@ -1,8 +1,8 @@
 use super::database::ValidatorDatabase;
 use crate::consensus::validators::database::ValidatorDbKey;
+use crate::consensus::validators::ValidatorTicket;
 use crate::consensus::validators::DATABASE_DIR;
 use crate::consensus::Config;
-use crate::ValidatorTicket;
 use chrono::Duration;
 use libp2p::PeerId;
 use serde::{Deserialize, Serialize};

@@ -1,5 +1,5 @@
 use crate::randomx::{self, RandomXVMInstance};
-use crate::{consensus, util, ValidatorTicket};
+use crate::{consensus, util, Block};
 use num::{BigUint, FromPrimitive};
 use randomx_rs::RandomXFlag;
 use std::cmp;
@@ -37,7 +37,7 @@ pub enum Error {
     #[error(transparent)]
     Dial(#[from] consensus::Error),
     #[error(transparent)]
-    MinerChanClosed(#[from] mpsc::error::SendError<ValidatorTicket>),
+    MinerChanClosed(#[from] mpsc::error::SendError<Block>),
     #[error(transparent)]
     RandomX(#[from] randomx::Error),
 }
@@ -93,9 +93,9 @@ async fn task_fn(
                     Ok(event) => {
                         match event {
                             // Restart mining threads to mine on new frontier
-                            consensus::Event::NewMiningJob(ticket) => {
+                            consensus::Event::NewFrontier(f) => {
                                 results_receiver.close(); // Kill previous mining threads
-                                results_receiver = match spawn_mining_threads(config.num_threads.unwrap_or(0), randomx_vm.clone(), ticket, sols_count_sender.clone()) {
+                                results_receiver = match spawn_mining_threads(config.num_threads.unwrap_or(0), randomx_vm.clone(), f.to_candidate_block(), sols_count_sender.clone()) {
                                     Ok(ch) => ch,
                                     Err(e) => {
                                         error!("Failed to start miners: {e}");
@@ -109,10 +109,10 @@ async fn task_fn(
             }
 
             // Handle results from the mining threads
-            Some(ticket) = results_receiver.recv() => {
-                if ticket.verify_pow(&randomx_vm).is_ok() {
-                    info!("Mined a new validator ticket: {}", ticket.hash());
-                    if consensus_action_ch.send(consensus::Action::SubmitMinedTicket(ticket)).is_err() {
+            Some(block) = results_receiver.recv() => {
+                if block.header.verify_pow(&randomx_vm).is_ok() {
+                    info!("Mined a new block: {}", block.hash());
+                    if consensus_action_ch.send(consensus::Action::SubmitMinedBlock(block)).is_err() {
                         error!("Stopping...");
                     }
                 } else {
@@ -127,23 +127,26 @@ async fn task_fn(
 fn spawn_mining_threads(
     num_threads: usize,
     randomx_vm: RandomXVMInstance,
-    ticket: ValidatorTicket,
+    block: Block,
     sols_count_ch: UnboundedSender<usize>,
-) -> Result<UnboundedReceiver<ValidatorTicket>> {
-    info!("Mining new validator ticket: {}", ticket.hash());
+) -> Result<UnboundedReceiver<Block>> {
+    info!(
+        "Mining new block: {} {:?}",
+        block.header.height, block.header.parents
+    );
     // Close the old channel to kill the old mining threads, and
     // create a new channel for the new mining threads.
     let (results_sender, results_receiver) = mpsc::unbounded_channel();
     let target = BigUint::from_u64(2).unwrap().pow(256)
-        / BigUint::from_u64(cmp::min(MINING_SHARE_DIFFICULTY, ticket.difficulty)).unwrap();
+        / BigUint::from_u64(cmp::min(MINING_SHARE_DIFFICULTY, block.header.difficulty)).unwrap();
     for _ in 0..num_threads {
-        let ticket = ticket.clone();
+        let block = block.clone();
         let target = target.clone();
         let results_sender = results_sender.clone();
         let sols_count_ch = sols_count_ch.clone();
         let rx = randomx_vm.clone();
         spawn_blocking(
-            || match mine(rx, ticket, target, results_sender, sols_count_ch) {
+            || match mine(rx, block, target, results_sender, sols_count_ch) {
                 Ok(_) | Err(Error::MinerChanClosed(_)) => {}
                 Err(e) => {
                     warn!("Mining thread stopped with error: {e}");
@@ -157,23 +160,23 @@ fn spawn_mining_threads(
 /// Find a nonce which satisfies the difficulty target
 fn mine(
     randomx_vm: RandomXVMInstance,
-    mut ticket: ValidatorTicket,
+    mut block: Block,
     target: BigUint,
-    results_ch: UnboundedSender<ValidatorTicket>,
+    results_ch: UnboundedSender<Block>,
     sols_count_ch: UnboundedSender<usize>,
 ) -> Result<()> {
-    ticket.nonce = rand::random();
+    block.header.nonce = rand::random();
     loop {
         let loop_count = 1_000;
         for i in 0..loop_count {
-            let hash = randomx_vm.calculate_hash(&serde_cbor::to_vec(&ticket).unwrap())?;
+            let hash = randomx_vm.calculate_hash(&serde_cbor::to_vec(&block.header).unwrap())?;
             if BigUint::from_bytes_be(&hash) < target {
-                results_ch.send(ticket.clone())?;
+                results_ch.send(block.clone())?;
                 sols_count_ch.send(i).unwrap();
             } else if results_ch.is_closed() {
                 return Ok(());
             }
-            ticket.nonce += 1;
+            block.header.nonce += 1;
         }
         sols_count_ch.send(loop_count).unwrap();
     }

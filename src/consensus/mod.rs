@@ -4,7 +4,7 @@ pub mod validators;
 
 use crate::randomx::RandomXVMInstance;
 use crate::{p2p, randomx};
-pub use block::{Block, Header};
+pub use block::{Block, Frontier, Header};
 use chrono::{DateTime, Utc};
 use libp2p::PeerId;
 use randomx_rs::RandomXFlag;
@@ -14,7 +14,7 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::{oneshot, watch};
 use tokio::{select, sync::broadcast};
 use tracing::{error, info, warn};
-pub use validators::{ValidatorQuorum, ValidatorTicket};
+pub use validators::ValidatorQuorum;
 
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
 /// [`tokio::sync::broadcast`] for more information.
@@ -23,14 +23,14 @@ pub const CONSENSUS_EVENT_CHAN_CAPACITY: usize = 32;
 /// Events produced by the consensus process
 #[derive(Debug, Clone)]
 pub enum Event {
-    /// New ValidatorTicket to be sent to miners
-    NewMiningJob(ValidatorTicket),
+    /// The DAG frontier has updated
+    NewFrontier(Frontier),
 }
 
 /// Actions that can be performed by the consensus process
 #[derive(Clone, Debug)]
 pub enum Action {
-    SubmitMinedTicket(ValidatorTicket),
+    SubmitMinedBlock(Block),
 }
 
 /// Error type for consensus errors
@@ -45,7 +45,7 @@ pub enum Error {
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error("validator ticket channel error")]
-    TicketChannel(#[from] tokio::sync::mpsc::error::SendError<ValidatorTicket>),
+    NewBlockCh(#[from] tokio::sync::mpsc::error::SendError<Block>),
     #[error("collection is empty")]
     EmptyCollection,
     #[error("frontier object is empty")]
@@ -121,7 +121,6 @@ pub fn start(
 pub struct Runtime {
     config: Config,
     peer_id: Option<PeerId>,
-    ticket_ch: UnboundedSender<ValidatorTicket>,
     _quorum_ch: watch::Receiver<ValidatorQuorum>,
     randomx_vm: RandomXVMInstance,
     actions_in: UnboundedReceiver<Action>,
@@ -141,7 +140,7 @@ impl Runtime {
         info!("Starting consensus...");
 
         // Start the validator raffle
-        let (ticket_ch, quorum_ch) = validators::raffle::start(&config);
+        let (_ticket_ch, quorum_ch) = validators::raffle::start(&config);
 
         // Create a randomx VM instance for verifying proofs of work
         let randomx_vm =
@@ -151,7 +150,6 @@ impl Runtime {
         Ok(Runtime {
             config,
             peer_id: None,
-            ticket_ch,
             _quorum_ch: quorum_ch,
             randomx_vm,
             actions_in,
@@ -173,9 +171,10 @@ impl Runtime {
         // TODO: This just initializes a frontier on genesis... obviously we don't always want to do
         // this. We usually want to load state from a db or something.
         let genesis = self.config.genesis.to_block();
-        let ticket = ValidatorTicket::new(self.peer_id.unwrap(), vec![genesis.into()])
-            .expect("Failed to create initial ValidatorTicket");
-        while let Err(e) = self.events_out.send(Event::NewMiningJob(ticket.clone())) {
+        while let Err(e) = self
+            .events_out
+            .send(Event::NewFrontier(Frontier(vec![genesis.header.clone()])))
+        {
             error!("failed to send consensus event: {e}");
         }
 
@@ -201,13 +200,9 @@ impl Runtime {
                 },
                 Some(action) = self.actions_in.recv() => {
                     match action {
-                        Action::SubmitMinedTicket(ticket) => {
-                            if ticket.verify_pow(&self.randomx_vm).is_ok() {
-                                if let Err(e) = self.ticket_ch.send(ticket.clone()){
-                                    error!("Stopping due to p2p_action channel error: {e}");
-                                    return;
-                                }
-                                if let Err(e) = self.p2p_action_ch.send(p2p::Action::Broadcast(p2p::MessageData::Ticket(ticket))) {
+                        Action::SubmitMinedBlock(block) => {
+                            if block.header.verify_pow(&self.randomx_vm).is_ok() {
+                                if let Err(e) = self.p2p_action_ch.send(p2p::Action::Broadcast(p2p::MessageData::Block(block))) {
                                     error!("Stopping due to p2p_action channel error: {e}");
                                     return;
                                 }
@@ -223,10 +218,9 @@ impl Runtime {
     /// p2p client.
     fn handle_p2p_message(&mut self, msg: &p2p::Message) -> Result<p2p::MessageValidationReport> {
         match &msg.data {
-            p2p::MessageData::Ticket(ticket) => {
-                if ticket.verify_pow(&self.randomx_vm).is_ok() {
-                    info!("Received ticket from {}", ticket.peer);
-                    self.ticket_ch.send(ticket.clone())?;
+            p2p::MessageData::Block(block) => {
+                if block.header.verify_pow(&self.randomx_vm).is_ok() {
+                    info!("Received block {}", block.header.hash());
                     Ok(msg.accept())
                 } else {
                     Ok(msg.reject())

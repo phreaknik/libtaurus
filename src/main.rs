@@ -10,7 +10,7 @@ mod util;
 
 use clap::{arg, command, ArgMatches, Command};
 use consensus::{validators::database::ValidatorDatabase, GenesisConfig};
-pub use consensus::{Block, Header, ValidatorTicket};
+pub use consensus::{Block, Header};
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
 use itertools::Itertools;
 use p2p::PeerDatabase;
