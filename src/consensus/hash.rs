@@ -1,5 +1,6 @@
 use std::fmt;
 
+use heed::{BytesDecode, BytesEncode};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -23,5 +24,25 @@ impl fmt::Display for Hash {
             write!(f, "{:x}", byte)?;
         }
         Ok(())
+    }
+}
+
+impl<'a> BytesEncode<'a> for Hash {
+    type EItem = Hash;
+
+    fn bytes_encode(
+        item: &'a Self::EItem,
+    ) -> std::result::Result<std::borrow::Cow<'a, [u8]>, Box<dyn std::error::Error>> {
+        Ok(serde_cbor::to_vec(item)?.into())
+    }
+}
+
+impl<'a> BytesDecode<'a> for Hash {
+    type DItem = Hash;
+
+    fn bytes_decode(
+        bytes: &'a [u8],
+    ) -> std::result::Result<Self::DItem, Box<dyn std::error::Error>> {
+        Ok(serde_cbor::from_slice(bytes)?)
     }
 }

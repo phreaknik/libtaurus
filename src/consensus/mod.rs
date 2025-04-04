@@ -1,6 +1,8 @@
 pub mod block;
+mod database;
 pub mod hash;
 
+use self::database::BlocksDatabase;
 use crate::randomx::RandomXVMInstance;
 use crate::{p2p, randomx};
 pub use block::{Block, Frontier, Header};
@@ -13,6 +15,9 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 use tokio::{select, sync::broadcast};
 use tracing::{error, info, warn};
+
+/// Path to the peer database, from within the peer data directory
+pub const DATABASE_DIR: &str = "blocks_db/";
 
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
 /// [`tokio::sync::broadcast`] for more information.
@@ -118,6 +123,7 @@ pub fn start(
 /// Runtime state for the consensus process
 pub struct Runtime {
     config: Config,
+    database: BlocksDatabase,
     peer_id: Option<PeerId>,
     randomx_vm: RandomXVMInstance,
     actions_in: UnboundedReceiver<Action>,
@@ -136,6 +142,10 @@ impl Runtime {
     ) -> Result<Runtime> {
         info!("Starting consensus...");
 
+        // Open the blocks database
+        let database = BlocksDatabase::open(&config.data_dir.join(DATABASE_DIR), true)
+            .expect("Failed to open blocks database");
+
         // Create a randomx VM instance for verifying proofs of work
         let randomx_vm =
             RandomXVMInstance::new(b"cordelia-randomx", RandomXFlag::get_recommended_flags())?;
@@ -143,6 +153,7 @@ impl Runtime {
         // Instantiate the runtime
         Ok(Runtime {
             config,
+            database,
             peer_id: None,
             randomx_vm,
             actions_in,
@@ -195,8 +206,12 @@ impl Runtime {
                     match action {
                         Action::SubmitMinedBlock(block) => {
                             if block.header.verify_pow(&self.randomx_vm).is_ok() {
-                                if let Err(e) = self.p2p_action_ch.send(p2p::Action::Broadcast(p2p::MessageData::Block(block))) {
+                                if let Err(e) = self.p2p_action_ch.send(p2p::Action::Broadcast(p2p::MessageData::Block(block.clone()))) {
                                     error!("Stopping due to p2p_action channel error: {e}");
+                                    return;
+                                }
+                                if let Err(e) = self.database.write_block(block, false) {
+                                    error!("Failed to write block: {e}");
                                     return;
                                 }
                             }
@@ -214,6 +229,7 @@ impl Runtime {
             p2p::MessageData::Block(block) => {
                 if block.header.verify_pow(&self.randomx_vm).is_ok() {
                     info!("Received block {}", block.header.hash());
+                    self.database.write_block(block.clone(), false)?;
                     Ok(msg.accept())
                 } else {
                     Ok(msg.reject())
