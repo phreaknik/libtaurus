@@ -93,6 +93,7 @@ impl Behaviour {
             .map_err(crate::p2p::Error::from)
     }
 
+    /// Report back if the gossipped message should be propagated/ignored/rejected
     pub fn report_message_validation_result(
         &mut self,
         msg_id: &MessageId,
