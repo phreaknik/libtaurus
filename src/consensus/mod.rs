@@ -59,8 +59,8 @@ pub enum Error {
     InvalidPoW,
     #[error("missing parent")]
     MissingParent(Hash),
-    #[error("detached block")]
-    DetachedBlock,
+    #[error("missing data")]
+    MissingData,
     #[error("error acquiring read lock")]
     ReadLock,
     #[error("error acquiring write lock")]

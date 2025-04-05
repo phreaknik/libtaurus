@@ -53,10 +53,10 @@ impl DAG {
         // Make sure this block has parents to attach to the DAG
         if block.parents.len() == 0 && hash != self.genesis_hash {
             // This block has no parents to attach to the DAG
-            Err(Error::DetachedBlock)
+            Err(Error::MissingData)
         } else {
             // Write it to the database
-            self.database.write_block(block.clone(), false)?;
+            let wtxn = self.database.write_block(None, block.clone(), false)?;
 
             // Create a new vertex from this block, if we have the requisite parents
             let vertex = Arc::new(TracingRwLock::new(Vertex {
@@ -73,6 +73,9 @@ impl DAG {
                 children: Vec::new(),
                 block,
             }));
+
+            // Commit the block to the database only now that it has passed all validation
+            wtxn.commit()?;
 
             // Update each parent
             for parent in vertex

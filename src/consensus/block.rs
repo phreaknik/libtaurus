@@ -7,7 +7,6 @@ use libp2p::{multihash::Multihash, PeerId};
 use num::{BigUint, FromPrimitive};
 use serde_derive::{Deserialize, Serialize};
 
-/// A compact representation of the vertex, suitable for serialization and transmission
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
     pub version: u32,

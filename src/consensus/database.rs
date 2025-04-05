@@ -1,6 +1,6 @@
 use super::{Block, SerdeHash};
 use crate::consensus::Result;
-use heed::{BytesDecode, BytesEncode, Database, Env, EnvOpenOptions};
+use heed::{BytesDecode, BytesEncode, Database, Env, EnvOpenOptions, RwTxn};
 use itertools::Itertools;
 use libp2p::PeerId;
 use rand::{seq::IteratorRandom, thread_rng};
@@ -30,15 +30,22 @@ impl BlocksDatabase {
     }
 
     /// Write a new block into the database
-    pub fn write_block(&mut self, block: Block, canonical: bool) -> Result<()> {
-        let mut wtxn = self.env.write_txn().unwrap();
+    /// May optionally pass in an existing write transaction, to add this to a batch of writes
+    /// Must call ['heed::RwTxn::commit'] on the resulting ['RwTxn'] for the database write to
+    /// complete.
+    pub fn write_block<'a>(
+        &'a mut self,
+        wtxn: Option<RwTxn<'a, 'a>>,
+        block: Block,
+        canonical: bool,
+    ) -> Result<RwTxn<'a, 'a>> {
+        let mut wtxn = wtxn.unwrap_or(self.env.write_txn().unwrap());
         self.db.put(
             &mut wtxn,
             &block.hash()?.into(),
             &BlockEntry { block, canonical },
         )?;
-        wtxn.commit()?;
-        Ok(())
+        Ok(wtxn)
     }
 
     /// Select a random quorum of miners from the list of recently mined blocks. Will return a set
