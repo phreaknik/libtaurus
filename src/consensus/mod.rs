@@ -7,6 +7,8 @@ use crate::randomx::RandomXVMInstance;
 use crate::{p2p, randomx};
 pub use block::{Block, Frontier, Header};
 use chrono::{DateTime, Utc};
+pub use hash::Hash;
+use libp2p::multihash::Multihash;
 use libp2p::PeerId;
 use randomx_rs::RandomXFlag;
 use std::path::PathBuf;
@@ -89,8 +91,9 @@ impl GenesisConfig {
                 height: 0,
                 parents: Vec::new(),
                 difficulty: self.difficulty,
-                nonce: 0,
+                miner: PeerId::from_multihash(Multihash::default()).unwrap(),
                 time: self.time,
+                nonce: 0,
             },
         }
     }

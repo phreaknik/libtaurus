@@ -1,5 +1,7 @@
 use crate::randomx::{self, RandomXVMInstance};
 use crate::{consensus, util, Block};
+use libp2p::identity::Keypair;
+use libp2p::PeerId;
 use num::{BigUint, FromPrimitive};
 use randomx_rs::RandomXFlag;
 use std::cmp;
@@ -50,6 +52,8 @@ pub type Result<T> = result::Result<T, Error>;
 pub struct Config {
     /// Number of mining threads to spawn. If unspecified, will use max available CPUs.
     pub num_threads: Option<usize>,
+    /// Key used to identify self on p2p network
+    pub identity_key: Keypair,
 }
 
 /// Run the mining process, spawning the task as a new thread. Returns an ['broadcast::Sender'],
@@ -84,6 +88,7 @@ async fn task_fn(
     let sols_count_sender = start_stats();
     let randomx_vm =
         RandomXVMInstance::new(b"cordelia-randomx", RandomXFlag::get_recommended_flags()).unwrap();
+    let miner_id = PeerId::from(config.identity_key.public());
     loop {
         select! {
             // Handle consensus events
@@ -95,7 +100,7 @@ async fn task_fn(
                             // Restart mining threads to mine on new frontier
                             consensus::Event::NewFrontier(f) => {
                                 results_receiver.close(); // Kill previous mining threads
-                                results_receiver = match spawn_mining_threads(config.num_threads.unwrap_or(0), randomx_vm.clone(), f.to_candidate_block(), sols_count_sender.clone()) {
+                                results_receiver = match spawn_mining_threads(config.num_threads.unwrap_or(0), randomx_vm.clone(), f.to_candidate_block(miner_id), sols_count_sender.clone()) {
                                     Ok(ch) => ch,
                                     Err(e) => {
                                         error!("Failed to start miners: {e}");

@@ -4,7 +4,7 @@ use heed::{BytesDecode, BytesEncode};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Hash([u8; blake3::OUT_LEN]);
+pub struct Hash(pub [u8; blake3::OUT_LEN]);
 
 impl Hash {
     pub fn as_bytes(&self) -> &[u8] {

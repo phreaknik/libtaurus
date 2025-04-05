@@ -2,6 +2,8 @@ use super::hash::Hash;
 use crate::consensus::{Error, Result};
 use crate::{params, randomx::RandomXVMInstance};
 use chrono::{DateTime, Utc};
+use libp2p::multihash::Multihash;
+use libp2p::PeerId;
 use num::{BigUint, FromPrimitive};
 use serde::{Deserialize, Serialize};
 use serde_cbor;
@@ -16,26 +18,28 @@ impl Frontier {
     }
 
     /// Compute a candidate block to mine atop the given frontier
-    pub fn to_candidate_block(&self) -> Block {
+    pub fn to_candidate_block(&self, miner: PeerId) -> Block {
         Block::new(Header {
             version: params::PROTOCOL_VERSION,
             height: self.0[0].height + 1,
             parents: self.0.iter().map(|header| header.hash()).collect(),
             difficulty: self.difficulty(), // TODO: needs to adjust
-            nonce: 0,
+            miner,
             time: Utc::now(),
+            nonce: 0,
         })
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Header {
     pub version: u32,
     pub height: u64,
     pub parents: Vec<Hash>,
     pub difficulty: u64,
-    pub nonce: u64,
+    pub miner: PeerId,
     pub time: DateTime<Utc>,
+    pub nonce: u64,
 }
 
 impl Header {
@@ -79,6 +83,22 @@ impl Header {
 impl From<Block> for Header {
     fn from(b: Block) -> Self {
         b.header
+    }
+}
+
+/// This implementation of ['Default'] is nonsense and should never be used. It is only implemented
+/// to satisfy a trait boundary, but the actual contents are not used.
+impl Default for Header {
+    fn default() -> Self {
+        Header {
+            version: 0,
+            height: 0,
+            parents: Vec::new(),
+            difficulty: 0,
+            miner: PeerId::from_multihash(Multihash::default()).unwrap(),
+            time: Utc::now(),
+            nonce: 0,
+        }
     }
 }
 

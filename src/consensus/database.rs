@@ -2,7 +2,6 @@ use crate::{
     consensus::{hash::Hash, Result},
     Block,
 };
-use chrono::Utc;
 use heed::{BytesDecode, BytesEncode, Database, Env, EnvOpenOptions};
 use itertools::Itertools;
 use libp2p::PeerId;
@@ -42,28 +41,28 @@ impl BlocksDatabase {
         Ok(())
     }
 
-    ///// Select a random quorum of miners from the list of recently mined blocks. Will return a set
-    ///// of 'count' unique miners, where each miner's probability of selection is weighted
-    ///// proportionally to the number of blocks he has mined in the last 'age' blocks.
-    //pub fn select_random_miners(&mut self, count: usize, age: usize) -> Result<Vec<PeerId>> {
-    //    let rtxn = self.env.read_txn().unwrap();
-    //    let selected = self
-    //        .db
-    //        .iter(&rtxn)
-    //        .unwrap()
-    //        .take(age)
-    //        .filter_map(|element| {
-    //            if let Ok((hash, block_entry)) = element {
-    //                return Some(block_entry.block.header.miner);
-    //            } else {
-    //                None
-    //            }
-    //        })
-    //        .unique()
-    //        .choose_multiple(&mut thread_rng(), count);
-    //    rtxn.commit().unwrap();
-    //    Ok(selected)
-    //}
+    /// Select a random quorum of miners from the list of recently mined blocks. Will return a set
+    /// of 'count' unique miners, where each miner's probability of selection is weighted
+    /// proportionally to the number of blocks he has mined in the last 'age' blocks.
+    pub fn select_random_miners(&mut self, count: usize, age: usize) -> Result<Vec<PeerId>> {
+        let rtxn = self.env.read_txn().unwrap();
+        let selected = self
+            .db
+            .iter(&rtxn)
+            .unwrap()
+            .take(age)
+            .filter_map(|element| {
+                if let Ok((_hash, block_entry)) = element {
+                    return Some(block_entry.block.header.miner);
+                } else {
+                    None
+                }
+            })
+            .unique()
+            .choose_multiple(&mut thread_rng(), count);
+        rtxn.commit().unwrap();
+        Ok(selected)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

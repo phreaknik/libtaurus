@@ -10,13 +10,17 @@ mod util;
 
 use clap::{arg, command, ArgMatches, Command};
 use consensus::GenesisConfig;
-pub use consensus::{Block, Header};
+pub use consensus::{Block, Hash, Header};
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
+use libp2p::identity::Keypair;
 use p2p::PeerDatabase;
-use std::path::PathBuf;
+use std::{fs, path::PathBuf};
 use tokio::{self, select};
 use tracing::{error, trace};
 use tracing_subscriber::EnvFilter;
+
+/// File name of the stored identity_key
+const IDENTITY_KEY_FILE: &str = "identity_key";
 
 /// Application configuration details
 struct Config {
@@ -172,14 +176,17 @@ fn build_cfg(args: &ArgMatches) -> Config {
 
 /// Build P2P ['p2p::Config'] from parsed CLI args
 fn build_p2p_cfg(args: &ArgMatches) -> p2p::Config {
-    let data_dir = parse_data_dir(args).join("p2p/");
+    // Read the peer identity key if it exists, or create a new one.
+    let data_dir = parse_data_dir(args);
+    let identity_key = get_peer_identity_key(&data_dir);
     let boot_nodes = match args.try_get_one::<String>("bootnode") {
         Ok(Some(v)) => vec![v.parse().expect("failed to parse bootnode address")],
         _ => Vec::new(),
     };
     p2p::Config {
-        data_dir,
+        data_dir: data_dir.join("p2p/"),
         boot_nodes,
+        identity_key,
     }
 }
 
@@ -197,10 +204,36 @@ fn build_consensus_cfg(args: &ArgMatches) -> consensus::Config {
 
 /// Build miner ['miner::Config'] from parsed CLI args
 fn build_miner_cfg(args: &ArgMatches) -> miner::Config {
+    let data_dir = parse_data_dir(args);
+    let identity_key = get_peer_identity_key(&data_dir);
     miner::Config {
         num_threads: args
             .try_get_one::<String>("mining_threads")
             .unwrap_or(Some(&"0".to_string()))
             .map(|v| v.parse().expect("failed to parse miner num-threads")),
+        identity_key,
+    }
+}
+
+fn get_peer_identity_key(data_dir: &PathBuf) -> Keypair {
+    let keypath = data_dir.join(IDENTITY_KEY_FILE);
+    let _ = fs::create_dir_all(&data_dir);
+    match fs::read(&keypath) {
+        Ok(keydata) => {
+            Keypair::from_protobuf_encoding(&keydata).expect("Failed to decode keyfile!")
+        }
+        Err(_) => {
+            // Generate a random new key
+            let newkey = Keypair::generate_ed25519();
+            // Save the key to the file
+            fs::write(
+                keypath,
+                newkey
+                    .to_protobuf_encoding()
+                    .expect("Failed to encode key to save to keyfile!"),
+            )
+            .expect("Failed to write to keyfile!");
+            newkey
+        }
     }
 }

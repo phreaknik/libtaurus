@@ -14,7 +14,6 @@ use libp2p::multiaddr::Protocol;
 use libp2p::swarm::{SwarmBuilder, SwarmEvent};
 use libp2p::{Multiaddr, PeerId};
 pub use message::{Message, MessageData, MessageValidationReport};
-use std::fs;
 use std::io;
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
@@ -22,7 +21,7 @@ use thiserror;
 use tokio::select;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::{broadcast, oneshot};
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
 /// [`tokio::sync::broadcast`] for more information.
@@ -80,6 +79,8 @@ pub struct Config {
     pub data_dir: PathBuf,
     /// Bootstrap nodes to join P2P network
     pub boot_nodes: Vec<Multiaddr>,
+    /// Key used to identify self on p2p network
+    pub identity_key: Keypair,
 }
 
 /// Run the p2p networking client, spawning the client task as a new thread. Returns an
@@ -106,18 +107,14 @@ async fn task_fn(
     let peer_db = PeerDatabase::open(&config.data_dir.join(DATABASE_DIR), true)
         .expect("Failed to open peer database");
 
-    // Load the peer identity key
-    let local_key = get_keypair(&config.data_dir);
-    let local_peer_id = PeerId::from(local_key.public());
-    debug!("peer_id = {local_peer_id}");
-
     // Build the swarm
     // TODO: pick a different transport. development_transport() has features we likely don't want,
     // e.g. noise encryption
+    let local_peer_id = PeerId::from(config.identity_key.public());
     let mut swarm = SwarmBuilder::with_tokio_executor(
-        libp2p::tokio_development_transport(local_key.clone()).unwrap(),
+        libp2p::tokio_development_transport(config.identity_key.clone()).unwrap(),
         Behaviour::new(
-            behaviour::Config::new(local_key, config.boot_nodes.clone()),
+            behaviour::Config::new(config.identity_key, config.boot_nodes.clone()),
             peer_db,
         )
         .unwrap(),
@@ -186,29 +183,6 @@ async fn task_fn(
                     break;
                 }
             },
-        }
-    }
-}
-
-fn get_keypair(data_dir: &PathBuf) -> Keypair {
-    let keypath = data_dir.join("private-key");
-    let _ = fs::create_dir_all(&data_dir);
-    match fs::read(&keypath) {
-        Ok(keydata) => {
-            Keypair::from_protobuf_encoding(&keydata).expect("Failed to decode keyfile!")
-        }
-        Err(_) => {
-            // Generate a random new key
-            let newkey = Keypair::generate_ed25519();
-            // Save the key to the file
-            fs::write(
-                keypath,
-                newkey
-                    .to_protobuf_encoding()
-                    .expect("Failed to encode key to save to keyfile!"),
-            )
-            .expect("Failed to write to keyfile!");
-            newkey
         }
     }
 }
