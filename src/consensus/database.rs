@@ -1,3 +1,4 @@
+use super::Block;
 use crate::consensus::{hash::Hash, Result};
 use heed::{BytesDecode, BytesEncode, Database, Env, EnvOpenOptions};
 use itertools::Itertools;
@@ -6,8 +7,6 @@ use rand::seq::IteratorRandom;
 use rand::thread_rng;
 use serde_derive::{Deserialize, Serialize};
 use std::{fs, path::PathBuf};
-
-use super::CompactVertex;
 
 /// Database to store consensus data, using the ['heed'] LMDB database wrapper.
 #[derive(Clone)]
@@ -32,7 +31,7 @@ impl BlocksDatabase {
     }
 
     /// Write a new block into the database
-    pub fn write_block(&mut self, block: CompactVertex, canonical: bool) -> Result<()> {
+    pub fn write_block(&mut self, block: Block, canonical: bool) -> Result<()> {
         let mut wtxn = self.env.write_txn().unwrap();
         self.db.put(
             &mut wtxn,
@@ -70,7 +69,7 @@ impl BlocksDatabase {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BlockEntry {
     /// The actual block data
-    block: CompactVertex,
+    block: Block,
     /// Is this block considered canonical?
     canonical: bool,
 }

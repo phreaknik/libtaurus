@@ -1,11 +1,13 @@
 mod avalanche;
+mod block;
 mod database;
-pub mod hash;
+mod hash;
 
 use self::database::BlocksDatabase;
 use crate::randomx::RandomXVMInstance;
 use crate::{p2p, randomx};
 pub use avalanche::*;
+pub use block::*;
 use chrono::{DateTime, Utc};
 pub use hash::Hash;
 use libp2p::multihash::Multihash;
@@ -35,14 +37,12 @@ pub enum Event {
 /// Actions that can be performed by the consensus process
 #[derive(Clone, Debug)]
 pub enum Action {
-    SubmitMinedBlock(CompactVertex),
+    SubmitBlock(Block),
 }
 
 /// Error type for consensus errors
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[error(transparent)]
-    Avalanche(#[from] avalanche::Error),
     #[error(transparent)]
     RandomX(#[from] randomx::Error),
     #[error(transparent)]
@@ -52,7 +52,7 @@ pub enum Error {
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error("validator ticket channel error")]
-    NewVertexCh(#[from] tokio::sync::mpsc::error::SendError<CompactVertex>),
+    NewBlockCh(#[from] tokio::sync::mpsc::error::SendError<Block>),
     #[error("collection is empty")]
     EmptyCollection,
     #[error("frontier object is empty")]
@@ -63,6 +63,12 @@ pub enum Error {
     InvalidDifficulty,
     #[error("invalid proof-of-work")]
     InvalidPoW,
+    #[error("missing parent")]
+    MissingParent,
+    #[error("error acquiring read lock")]
+    ReadLock,
+    #[error("error acquiring write lock")]
+    WriteLock,
 }
 
 /// Result type for consensus errors
@@ -85,9 +91,9 @@ pub struct GenesisConfig {
 }
 
 impl GenesisConfig {
-    /// Create a genesis vertex
-    pub fn to_vertex(&self) -> CompactVertex {
-        CompactVertex {
+    /// Create a genesis block
+    pub fn to_block(&self) -> Block {
+        Block {
             version: 0,
             parents: Vec::new(),
             height: 0,
@@ -177,7 +183,7 @@ impl Runtime {
 
         // TODO: This just initializes a frontier on genesis... obviously we don't always want to do
         // this. We usually want to load state from a db or something.
-        let genesis = self.config.genesis.to_vertex();
+        let genesis = self.config.genesis.to_block();
         while let Err(e) = self
             .events_out
             .send(Event::NewFrontier(Frontier(vec![genesis.clone()])))
@@ -207,7 +213,7 @@ impl Runtime {
                 },
                 Some(action) = self.actions_in.recv() => {
                     match action {
-                        Action::SubmitMinedBlock(block) => {
+                        Action::SubmitBlock(block) => {
                             if block.verify_pow(&self.randomx_vm).is_ok() {
                                 if let Err(e) = self.p2p_action_ch.send(p2p::Action::Broadcast(p2p::MessageData::Block(block))) {
                                     error!("Stopping due to p2p_action channel error: {e}");
@@ -227,7 +233,7 @@ impl Runtime {
         match &msg.data {
             p2p::MessageData::Block(block) => {
                 if block.verify_pow(&self.randomx_vm).is_ok() {
-                    info!("Received vertex {}", block.hash()?);
+                    info!("Received block {}", block.hash()?);
                     Ok(msg.accept())
                 } else {
                     Ok(msg.reject())

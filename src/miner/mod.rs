@@ -1,4 +1,4 @@
-use crate::consensus::CompactVertex;
+use crate::consensus::Block;
 use crate::randomx::{self, RandomXVMInstance};
 use crate::{consensus, util};
 use libp2p::identity::Keypair;
@@ -40,7 +40,7 @@ pub enum Error {
     #[error(transparent)]
     Dial(#[from] consensus::Error),
     #[error(transparent)]
-    MinerChanClosed(#[from] mpsc::error::SendError<CompactVertex>),
+    MinerChanClosed(#[from] mpsc::error::SendError<Block>),
     #[error(transparent)]
     RandomX(#[from] randomx::Error),
 }
@@ -118,7 +118,7 @@ async fn task_fn(
             Some(block) = results_receiver.recv() => {
                 if block.verify_pow(&randomx_vm).is_ok() {
                     info!("Mined a new block: {}", block.hash().unwrap());
-                    if consensus_action_ch.send(consensus::Action::SubmitMinedBlock(block)).is_err() {
+                    if consensus_action_ch.send(consensus::Action::SubmitBlock(block)).is_err() {
                         error!("Stopping...");
                     }
                 } else {
@@ -133,9 +133,9 @@ async fn task_fn(
 fn spawn_mining_threads(
     num_threads: usize,
     randomx_vm: RandomXVMInstance,
-    block: CompactVertex,
+    block: Block,
     sols_count_ch: UnboundedSender<usize>,
-) -> Result<UnboundedReceiver<CompactVertex>> {
+) -> Result<UnboundedReceiver<Block>> {
     info!("Mining new block: {} {:?}", block.height, block.parents);
 
     // Close the old channel to kill the old mining threads, and
@@ -164,9 +164,9 @@ fn spawn_mining_threads(
 /// Find a nonce which satisfies the difficulty target
 fn mine(
     randomx_vm: RandomXVMInstance,
-    mut block: CompactVertex,
+    mut block: Block,
     target: BigUint,
-    results_ch: UnboundedSender<CompactVertex>,
+    results_ch: UnboundedSender<Block>,
     sols_count_ch: UnboundedSender<usize>,
 ) -> Result<()> {
     block.nonce = rand::random();

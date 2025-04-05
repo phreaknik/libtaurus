@@ -1,5 +1,5 @@
 use super::Error;
-use crate::consensus::CompactVertex;
+use crate::consensus::Block;
 use libp2p::{
     gossipsub::{self, MessageAcceptance, MessageId, Sha256Topic, TopicHash},
     PeerId,
@@ -76,7 +76,7 @@ pub struct MessageValidationReport {
 
 #[derive(Clone, Debug, Serialize, Deserialize, EnumIter, AsRefStr)]
 pub enum MessageData {
-    Block(CompactVertex),
+    Block(Block),
 }
 
 impl<H: gossipsub::Hasher> From<&MessageData> for gossipsub::Topic<H> {
