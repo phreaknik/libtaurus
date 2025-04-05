@@ -1,7 +1,8 @@
 use super::{Error, Result};
 use crate::{params, randomx::RandomXVMInstance};
-use blake3::Hash;
+pub use blake3::Hash;
 use chrono::{DateTime, Utc};
+use heed::{BytesDecode, BytesEncode};
 use libp2p::{multihash::Multihash, PeerId};
 use num::{BigUint, FromPrimitive};
 use serde_derive::{Deserialize, Serialize};
@@ -77,5 +78,25 @@ impl From<blake3::Hash> for SerdeHash {
 impl Into<blake3::Hash> for &SerdeHash {
     fn into(self) -> blake3::Hash {
         blake3::Hash::from(self.0)
+    }
+}
+
+impl<'a> BytesEncode<'a> for SerdeHash {
+    type EItem = SerdeHash;
+
+    fn bytes_encode(
+        item: &'a Self::EItem,
+    ) -> std::result::Result<std::borrow::Cow<'a, [u8]>, Box<dyn std::error::Error>> {
+        Ok(serde_cbor::to_vec(item)?.into())
+    }
+}
+
+impl<'a> BytesDecode<'a> for SerdeHash {
+    type DItem = SerdeHash;
+
+    fn bytes_decode(
+        bytes: &'a [u8],
+    ) -> std::result::Result<Self::DItem, Box<dyn std::error::Error>> {
+        Ok(serde_cbor::from_slice(bytes)?)
     }
 }

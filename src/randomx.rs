@@ -1,5 +1,6 @@
 use randomx_rs::{RandomXCache, RandomXError, RandomXFlag, RandomXVM};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+use tracing_mutex::stdsync::TracingRwLock;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -12,7 +13,7 @@ pub enum Error {
 /// Instance of the RandomX virtual machine
 #[derive(Clone)]
 pub struct RandomXVMInstance {
-    instance: Arc<RwLock<RandomXVM>>,
+    instance: Arc<TracingRwLock<RandomXVM>>,
 }
 
 impl RandomXVMInstance {
@@ -24,7 +25,7 @@ impl RandomXVMInstance {
         // RandomXFlag::FULL_MEM and RandomXFlag::LARGE_PAGES if possible
 
         Ok(Self {
-            instance: Arc::new(RwLock::new(vm)),
+            instance: Arc::new(TracingRwLock::new(vm)),
         })
     }
 

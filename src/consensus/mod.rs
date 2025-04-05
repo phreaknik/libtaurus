@@ -1,15 +1,12 @@
-mod avalanche;
+pub mod avalanche;
 mod block;
 mod database;
-mod hash;
 
-use self::database::BlocksDatabase;
 use crate::randomx::RandomXVMInstance;
 use crate::{p2p, randomx};
 pub use avalanche::*;
 pub use block::*;
 use chrono::{DateTime, Utc};
-pub use hash::Hash;
 use libp2p::multihash::Multihash;
 use libp2p::PeerId;
 use randomx_rs::RandomXFlag;
@@ -19,9 +16,6 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 use tokio::{select, sync::broadcast};
 use tracing::{error, info, warn};
-
-/// Path to the peer database, from within the peer data directory
-pub const DATABASE_DIR: &str = "blocks_db/";
 
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
 /// [`tokio::sync::broadcast`] for more information.
@@ -64,7 +58,9 @@ pub enum Error {
     #[error("invalid proof-of-work")]
     InvalidPoW,
     #[error("missing parent")]
-    MissingParent,
+    MissingParent(Hash),
+    #[error("detached block")]
+    DetachedBlock,
     #[error("error acquiring read lock")]
     ReadLock,
     #[error("error acquiring write lock")]
@@ -81,6 +77,8 @@ pub struct Config {
     pub genesis: GenesisConfig,
     /// Path to the consensus data directory
     pub data_dir: PathBuf,
+    /// Avalanche configuration
+    pub avalanche: avalanche::Config,
 }
 
 /// Genesis configuration
@@ -132,9 +130,9 @@ pub fn start(
 /// Runtime state for the consensus process
 pub struct Runtime {
     config: Config,
-    database: BlocksDatabase,
     peer_id: Option<PeerId>,
     randomx_vm: RandomXVMInstance,
+    dag: avalanche::DAG,
     actions_in: UnboundedReceiver<Action>,
     events_out: broadcast::Sender<Event>,
     p2p_action_ch: UnboundedSender<p2p::Action>,
@@ -151,18 +149,14 @@ impl Runtime {
     ) -> Result<Runtime> {
         info!("Starting consensus...");
 
-        // Open the blocks database
-        let database = BlocksDatabase::open(&config.data_dir.join(DATABASE_DIR), true)
-            .expect("Failed to open blocks database");
-
         // Create a randomx VM instance for verifying proofs of work
         let randomx_vm =
             RandomXVMInstance::new(b"cordelia-randomx", RandomXFlag::get_recommended_flags())?;
 
         // Instantiate the runtime
         Ok(Runtime {
-            config,
-            database,
+            config: config.clone(),
+            dag: DAG::new(config.avalanche),
             peer_id: None,
             randomx_vm,
             actions_in,
@@ -214,11 +208,20 @@ impl Runtime {
                 Some(action) = self.actions_in.recv() => {
                     match action {
                         Action::SubmitBlock(block) => {
-                            if block.verify_pow(&self.randomx_vm).is_ok() {
-                                if let Err(e) = self.p2p_action_ch.send(p2p::Action::Broadcast(p2p::MessageData::Block(block))) {
-                                    error!("Stopping due to p2p_action channel error: {e}");
-                                    return;
-                                }
+                            // Immediately forward the block on to our peers
+                            if let Err(e) = self.p2p_action_ch.send(p2p::Action::Broadcast(p2p::MessageData::Block(block.clone()))) {
+                                error!("Stopping due to p2p_action channel error: {e}");
+                                return;
+                            }
+
+                            // Validate the block and insert it into the DAG
+                            let hash = block.hash().unwrap();
+                            match block
+                                .verify_pow(&self.randomx_vm)
+                                .and_then(|_| self.dag.try_insert(block.clone()))
+                            {
+                                Err(e) => error!("Failed to insert mined block {hash}: {e:?}"),
+                                Ok(_) => {},
                             }
                         }
                     }
@@ -232,14 +235,18 @@ impl Runtime {
     fn handle_p2p_message(&mut self, msg: &p2p::Message) -> Result<p2p::MessageValidationReport> {
         match &msg.data {
             p2p::MessageData::Block(block) => {
-                if block.verify_pow(&self.randomx_vm).is_ok() {
-                    info!("Received block {}", block.hash()?);
-                    Ok(msg.accept())
-                } else {
-                    Ok(msg.reject())
+                let hash = block.hash()?;
+                match block
+                    .verify_pow(&self.randomx_vm)
+                    .and_then(|_| self.dag.try_insert(block.clone()))
+                {
+                    Err(e) => {
+                        warn!("Rejected block {hash}: {e:?}");
+                        Ok(msg.reject())
+                    }
+                    Ok(_) => Ok(msg.accept()),
                 }
             }
-            _ => Ok(msg.accept()), // Accept all other messages without validation
         }
     }
 }

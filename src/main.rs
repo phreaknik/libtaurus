@@ -9,8 +9,8 @@ mod randomx;
 mod util;
 
 use clap::{arg, command, ArgMatches, Command};
-use consensus::GenesisConfig;
 pub use consensus::Hash;
+use consensus::{avalanche, GenesisConfig};
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
 use libp2p::identity::Keypair;
 use p2p::PeerDatabase;
@@ -193,12 +193,17 @@ fn build_p2p_cfg(args: &ArgMatches) -> p2p::Config {
 /// Build P2P ['p2p::Config'] from parsed CLI args
 fn build_consensus_cfg(args: &ArgMatches) -> consensus::Config {
     let data_dir = parse_data_dir(args).join("consensus/");
+    let genesis = GenesisConfig {
+        difficulty: params::GENESIS_DIFFICULTY,
+        time: params::GENESIS_TIMESTAMP,
+    };
     consensus::Config {
-        data_dir,
-        genesis: GenesisConfig {
-            difficulty: params::GENESIS_DIFFICULTY,
-            time: params::GENESIS_TIMESTAMP,
+        data_dir: data_dir.clone(),
+        avalanche: avalanche::Config {
+            data_dir,
+            genesis: genesis.to_block(),
         },
+        genesis,
     }
 }
 

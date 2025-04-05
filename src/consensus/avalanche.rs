@@ -1,57 +1,103 @@
-use super::{Block, Error, Result};
-use crate::{params, randomx::RandomXVMInstance};
+use super::{database::BlocksDatabase, Block, Error, Result};
+use crate::params;
 use blake3::Hash;
 use chrono::Utc;
 use libp2p::PeerId;
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use tracing::info;
 use tracing_mutex::stdsync::TracingRwLock;
+
+/// Path to the peer database, from within the peer data directory
+pub const DATABASE_DIR: &str = "blocks_db/";
+
+/// Configuration details for the consensus process.
+#[derive(Debug, Clone)]
+pub struct Config {
+    /// Path to the consensus data directory
+    pub data_dir: PathBuf,
+
+    /// Genesis block to serve as root vertex in the DAG
+    pub genesis: Block,
+}
 
 /// Implementation of Avalanche DAG
 pub struct DAG {
     vertices: HashMap<Hash, Arc<TracingRwLock<Vertex>>>,
-    randomx: RandomXVMInstance,
+    database: BlocksDatabase,
+    genesis_hash: Hash,
 }
 
 impl DAG {
+    /// Create a new DAG
+    pub fn new(config: Config) -> DAG {
+        // Create DAG instance
+        let mut dag = DAG {
+            vertices: HashMap::new(),
+            database: BlocksDatabase::open(&config.data_dir.join(DATABASE_DIR), true)
+                .expect("Failed to open blocks database"),
+            genesis_hash: config.genesis.hash().unwrap(),
+        };
+
+        // Insert the genesis block
+        dag.try_insert(config.genesis)
+            .expect("Failed to insert genesis block");
+
+        // Return the dag
+        dag
+    }
+
     /// Try to insert a block as a new vertex in the DAG
     pub fn try_insert(&mut self, block: Block) -> Result<()> {
-        // Create a new vertex from this block, if we have the requisite parents
-        let vertex = Arc::new(TracingRwLock::new(Vertex {
-            parents: block
-                .parents
-                .iter()
-                .map(|hash| {
-                    self.vertices
-                        .get(&hash.into())
-                        .ok_or(Error::MissingParent)
-                        .map(|val| val.clone())
-                })
-                .try_collect()?,
-            children: Vec::new(),
-            block,
-        }));
+        let hash = block.hash()?;
 
-        // Update each parent
-        for parent in vertex
-            .write()
-            .map_err(|_| Error::WriteLock)?
-            .parents
-            .iter_mut()
-        {
-            parent
+        // Make sure this block has parents to attach to the DAG
+        if block.parents.len() == 0 && hash != self.genesis_hash {
+            // This block has no parents to attach to the DAG
+            Err(Error::DetachedBlock)
+        } else {
+            // Write it to the database
+            self.database.write_block(block.clone(), false)?;
+
+            // Create a new vertex from this block, if we have the requisite parents
+            let vertex = Arc::new(TracingRwLock::new(Vertex {
+                parents: block
+                    .parents
+                    .iter()
+                    .map(|hash| {
+                        self.vertices
+                            .get(&hash.into())
+                            .ok_or(Error::MissingParent(hash.into()))
+                            .map(|val| val.clone())
+                    })
+                    .try_collect()?,
+                children: Vec::new(),
+                block,
+            }));
+
+            // Update each parent
+            for parent in vertex
                 .write()
                 .map_err(|_| Error::WriteLock)?
-                .children
-                .push(vertex.clone());
+                .parents
+                .iter_mut()
+            {
+                parent
+                    .write()
+                    .map_err(|_| Error::WriteLock)?
+                    .children
+                    .push(vertex.clone());
+            }
+
+            // Add it to the collection of vertices
+            self.vertices.insert(
+                vertex.read().map_err(|_| Error::ReadLock)?.hash()?,
+                vertex.clone(),
+            );
+
+            info!("Inserted block: {hash}");
+
+            Ok(())
         }
-
-        // Add it to the collection of vertices
-        self.vertices.insert(
-            vertex.read().map_err(|_| Error::ReadLock)?.hash()?,
-            vertex.clone(),
-        );
-
-        Ok(())
     }
 }
 

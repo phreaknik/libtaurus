@@ -1,10 +1,9 @@
-use super::Block;
-use crate::consensus::{hash::Hash, Result};
+use super::{Block, SerdeHash};
+use crate::consensus::Result;
 use heed::{BytesDecode, BytesEncode, Database, Env, EnvOpenOptions};
 use itertools::Itertools;
 use libp2p::PeerId;
-use rand::seq::IteratorRandom;
-use rand::thread_rng;
+use rand::{seq::IteratorRandom, thread_rng};
 use serde_derive::{Deserialize, Serialize};
 use std::{fs, path::PathBuf};
 
@@ -12,7 +11,7 @@ use std::{fs, path::PathBuf};
 #[derive(Clone)]
 pub struct BlocksDatabase {
     pub env: Env,
-    pub db: Database<Hash, BlockEntry>,
+    pub db: Database<SerdeHash, BlockEntry>,
 }
 
 impl BlocksDatabase {
