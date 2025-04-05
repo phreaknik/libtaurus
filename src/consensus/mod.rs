@@ -1,3 +1,4 @@
+mod avalanche;
 pub mod block;
 mod database;
 pub mod hash;

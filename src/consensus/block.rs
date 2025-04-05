@@ -1,5 +1,5 @@
-use super::hash::Hash;
 use crate::consensus::{Error, Result};
+use crate::Hash;
 use crate::{params, randomx::RandomXVMInstance};
 use chrono::{DateTime, Utc};
 use libp2p::multihash::Multihash;
@@ -45,9 +45,7 @@ pub struct Header {
 impl Header {
     /// Compute the block hash
     pub fn hash(&self) -> Hash {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(&serde_cbor::to_vec(self).unwrap());
-        hasher.finalize().into()
+        blake3::hash(&serde_cbor::to_vec(self).unwrap()).into()
     }
 
     /// Update the timestamp to the current UTC time
