@@ -10,17 +10,17 @@ use tracing_mutex::stdsync::TracingRwLock;
 
 /// A vertex in the avalanche DAG
 #[derive(Debug, Clone)]
-pub struct Vertex<'a> {
+pub struct Vertex {
     /// Version number for this vertex structure
     pub version: u32,
 
     /// Every vertex after the genesis vertex will have parents.
-    pub parents: HashMap<Hash, Arc<TracingRwLock<Vertex<'a>>>>,
+    pub parents: Vec<Arc<TracingRwLock<Vertex>>>,
 
     /// If this vertex is accepted into the DAG, it will be built upon and acquire children. This
     /// map will be empty when the vertex is first mined, and omitted from the marshalled output
     /// when the vertex is marshalled for storage or transmission.
-    pub children: HashMap<Hash, Arc<TracingRwLock<Vertex<'a>>>>,
+    pub children: Vec<Arc<TracingRwLock<Vertex>>>,
 
     /// The height of this vertex in the DAG
     pub height: u64,
@@ -38,7 +38,13 @@ pub struct Vertex<'a> {
     pub nonce: u64,
 }
 
-impl Vertex<'_> {
+impl Vertex {
+    /// Compute the hash of the vertex. Note, this only hashes the static components. Dynamic
+    /// components (such as children) may be updated without changing the hash.
+    pub fn hash(&self) -> Result<Hash> {
+        Ok(blake3::hash(&self.marshal_bytes()?))
+    }
+
     /// Marshal the vertex into bytes for storage/transmission
     pub fn marshal_bytes(&self) -> Result<Vec<u8>> {
         Ok(serde_cbor::to_vec(&CompactVertex::from(self))?)
@@ -46,15 +52,15 @@ impl Vertex<'_> {
 
     /// Unmarshal a byte slice into a complete vertex object
     pub fn unmarshal_bytes<'a>(
-        ancestors: HashMap<Hash, Arc<TracingRwLock<Vertex<'a>>>>,
+        ancestors: &HashMap<Hash, Arc<TracingRwLock<Vertex>>>,
         rxvm: &RandomXVMInstance,
         bytes: &[u8],
-    ) -> Result<Vertex<'a>> {
+    ) -> Result<Vertex> {
         let compact: CompactVertex = serde_cbor::from_slice(bytes)?;
         compact.verify_pow(rxvm)?;
         Ok(Vertex {
             version: compact.version,
-            children: HashMap::new(),
+            children: Vec::new(),
             height: compact.height,
             difficulty: compact.difficulty,
             miner: compact.miner,
@@ -67,9 +73,9 @@ impl Vertex<'_> {
                 .iter()
                 .map(|hash| {
                     ancestors
-                        .get_key_value(&hash.into())
+                        .get(&hash.into())
                         .ok_or(Error::MissingParent)
-                        .map(|(key, val)| (*key, val.clone()))
+                        .map(|val| val.clone())
                 })
                 .try_collect()?,
         })
@@ -113,14 +119,14 @@ impl CompactVertex {
     }
 }
 
-impl<'a> From<&Vertex<'_>> for CompactVertex {
+impl From<&Vertex> for CompactVertex {
     fn from(vertex: &Vertex) -> Self {
         CompactVertex {
             version: vertex.version,
             parents: vertex
                 .parents
                 .iter()
-                .map(|(hash, _vertex)| hash.into())
+                .map(|p| p.read().unwrap().hash().unwrap().into())
                 .collect(),
             height: vertex.height,
             difficulty: vertex.difficulty,
@@ -135,8 +141,8 @@ impl<'a> From<&Vertex<'_>> for CompactVertex {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SerdeHash([u8; blake3::OUT_LEN]);
 
-impl From<&blake3::Hash> for SerdeHash {
-    fn from(hash: &blake3::Hash) -> Self {
+impl From<blake3::Hash> for SerdeHash {
+    fn from(hash: blake3::Hash) -> Self {
         SerdeHash(*hash.as_bytes())
     }
 }

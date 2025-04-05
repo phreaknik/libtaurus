@@ -1,3 +1,4 @@
+pub mod dag;
 pub mod vertex;
 
 use crate::randomx;
@@ -16,6 +17,10 @@ pub enum Error {
     InvalidPoW,
     #[error("missing parent")]
     MissingParent,
+    #[error("error acquiring read lock")]
+    ReadLock,
+    #[error("error acquiring write lock")]
+    WriteLock,
 }
 
 /// Result type for consensus errors
