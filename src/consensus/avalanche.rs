@@ -1,9 +1,10 @@
-use super::{database::BlocksDatabase, Block, Error, Result};
+use super::{database::BlocksDatabase, Block, Error, Event, Result};
 use crate::params;
 use blake3::Hash;
 use chrono::Utc;
 use libp2p::PeerId;
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use tokio::sync::broadcast;
 use tracing::info;
 use tracing_mutex::stdsync::TracingRwLock;
 
@@ -20,30 +21,50 @@ pub struct Config {
     pub genesis: Block,
 }
 
-/// Implementation of Avalanche DAG
+/// Implementation of Avalanche DAG, using blocks as vertices
 pub struct DAG {
+    /// Configuration details
+    config: Config,
+
+    /// Complete list of active vertices
     vertices: HashMap<Hash, Arc<TracingRwLock<Vertex>>>,
+
+    /// The active edge of the DAG, i.e. the preferred vertices which don't yet have children
+    frontier: HashMap<Hash, Block>,
+
+    /// Database to store blocks
     database: BlocksDatabase,
+
+    /// Hash of the genesis block
     genesis_hash: Hash,
+
+    /// Handle to send events on the consensus event channel
+    events_ch: broadcast::Sender<Event>,
 }
 
 impl DAG {
     /// Create a new DAG
-    pub fn new(config: Config) -> DAG {
+    pub fn new(config: Config, events_ch: broadcast::Sender<Event>) -> DAG {
         // Create DAG instance
-        let mut dag = DAG {
+        let dag = DAG {
             vertices: HashMap::new(),
+            frontier: HashMap::new(),
             database: BlocksDatabase::open(&config.data_dir.join(DATABASE_DIR), true)
                 .expect("Failed to open blocks database"),
             genesis_hash: config.genesis.hash().unwrap(),
+            events_ch,
+            config,
         };
-
-        // Insert the genesis block
-        dag.try_insert(config.genesis)
-            .expect("Failed to insert genesis block");
 
         // Return the dag
         dag
+    }
+
+    /// Initialize the DAG on startup
+    pub fn init(&mut self) -> Result<()> {
+        // TODO: load blocks from database
+        // For now just init an empty DAG with the genesis block
+        self.try_insert(self.config.genesis.clone())
     }
 
     /// Try to insert a block as a new vertex in the DAG
@@ -55,27 +76,16 @@ impl DAG {
             // This block has no parents to attach to the DAG
             Err(Error::MissingData)
         } else {
+            // TODO: validate block (has parents, valid height, valid difficulty, etc...)
+
             // Write it to the database
             let wtxn = self.database.write_block(None, block.clone(), false)?;
 
             // Create a new vertex from this block, if we have the requisite parents
-            let vertex = Arc::new(TracingRwLock::new(Vertex {
-                parents: block
-                    .parents
-                    .iter()
-                    .map(|hash| {
-                        self.vertices
-                            .get(&hash.into())
-                            .ok_or(Error::MissingParent(hash.into()))
-                            .map(|val| val.clone())
-                    })
-                    .try_collect()?,
-                children: Vec::new(),
-                block,
-            }));
-
-            // Commit the block to the database only now that it has passed all validation
-            wtxn.commit()?;
+            let vertex = Arc::new(TracingRwLock::new(Vertex::new(
+                block.clone(),
+                &self.vertices,
+            )?));
 
             // Update each parent
             for parent in vertex
@@ -92,14 +102,25 @@ impl DAG {
             }
 
             // Add it to the collection of vertices
-            self.vertices.insert(
-                vertex.read().map_err(|_| Error::ReadLock)?.hash()?,
-                vertex.clone(),
-            );
+            self.vertices.insert(block.hash()?, vertex.clone());
+
+            // Remove its parents from the frontier, as they are no longer the youngest
+            for parent in block.parents.iter() {
+                self.frontier.remove(&parent.into());
+            }
+
+            // Add it to the frontier
+            self.frontier.insert(block.hash()?, block);
+
+            // Announce the new frontier
+            self.events_ch.send(Event::NewFrontier(Frontier(
+                self.frontier.values().cloned().collect(),
+            )))?;
 
             info!("Inserted block: {hash}");
 
-            Ok(())
+            // Commit the block to the database only now that it has passed all validation
+            wtxn.commit().map_err(Error::from)
         }
     }
 }
@@ -118,13 +139,31 @@ struct Vertex {
     /// map will be empty when the vertex is first mined, and omitted from the marshalled output
     /// when the vertex is marshalled for storage or transmission.
     children: Vec<Arc<TracingRwLock<Vertex>>>,
+
+    /// Chit score this vertex received when it was queried by the network
+    chit: usize,
 }
 
 impl Vertex {
-    /// Compute the hash of the vertex. Note, this is simply the hash of the block represented by
-    /// this vertex.
-    pub fn hash(&self) -> Result<Hash> {
-        self.block.hash()
+    pub fn new(
+        block: Block,
+        vertices: &HashMap<Hash, Arc<TracingRwLock<Vertex>>>,
+    ) -> Result<Vertex> {
+        Ok(Vertex {
+            parents: block
+                .parents
+                .iter()
+                .map(|hash| {
+                    vertices
+                        .get(&hash.into())
+                        .ok_or(Error::MissingParent(hash.into()))
+                        .map(|val| val.clone())
+                })
+                .try_collect()?,
+            children: Vec::new(),
+            block: block.clone(),
+            chit: 0,
+        })
     }
 }
 
@@ -157,6 +196,7 @@ impl Frontier {
         }
     }
 
+    /// This vertex's height in the DAG
     pub fn height(&self) -> u64 {
         self.0[0].height
     }

@@ -12,10 +12,12 @@ use libp2p::PeerId;
 use randomx_rs::RandomXFlag;
 use std::path::PathBuf;
 use std::result;
+
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 use tokio::{select, sync::broadcast};
 use tracing::{error, info, warn};
+
 
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
 /// [`tokio::sync::broadcast`] for more information.
@@ -45,8 +47,10 @@ pub enum Error {
     Heed(#[from] heed::Error),
     #[error(transparent)]
     Io(#[from] std::io::Error),
-    #[error("validator ticket channel error")]
+    #[error("new block channel error")]
     NewBlockCh(#[from] tokio::sync::mpsc::error::SendError<Block>),
+    #[error("consensus event channel error")]
+    EventsOutCh(#[from] tokio::sync::broadcast::error::SendError<Event>),
     #[error("collection is empty")]
     EmptyCollection,
     #[error("frontier object is empty")]
@@ -129,7 +133,7 @@ pub fn start(
 
 /// Runtime state for the consensus process
 pub struct Runtime {
-    config: Config,
+    _config: Config,
     peer_id: Option<PeerId>,
     randomx_vm: RandomXVMInstance,
     dag: avalanche::DAG,
@@ -155,8 +159,8 @@ impl Runtime {
 
         // Instantiate the runtime
         Ok(Runtime {
-            config: config.clone(),
-            dag: DAG::new(config.avalanche),
+            _config: config.clone(),
+            dag: DAG::new(config.avalanche, events_out.clone()),
             peer_id: None,
             randomx_vm,
             actions_in,
@@ -175,16 +179,11 @@ impl Runtime {
             .unwrap();
         self.peer_id = Some(resp_ch.await.unwrap());
 
-        // TODO: This just initializes a frontier on genesis... obviously we don't always want to do
-        // this. We usually want to load state from a db or something.
-        let genesis = self.config.genesis.to_block();
-        while let Err(e) = self
-            .events_out
-            .send(Event::NewFrontier(Frontier(vec![genesis.clone()])))
-        {
-            error!("failed to send consensus event: {e}");
-        }
+        // Wait until the events channel has listeners, before initializing the DAG
+        while self.events_out.receiver_count() == 0 {}
+        self.dag.init().expect("failed to initialize the DAG");
 
+        // Handle consensus events
         loop {
             select! {
                 event = self.p2p_event_ch.recv() => {
