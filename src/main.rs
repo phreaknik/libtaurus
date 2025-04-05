@@ -10,7 +10,7 @@ mod util;
 
 use clap::{arg, command, ArgMatches, Command};
 use consensus::GenesisConfig;
-pub use consensus::{Block, Hash, Header};
+pub use consensus::Hash;
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
 use libp2p::identity::Keypair;
 use p2p::PeerDatabase;

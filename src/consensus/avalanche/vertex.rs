@@ -2,7 +2,7 @@ use super::{Error, Result};
 use crate::{params, randomx::RandomXVMInstance};
 use blake3::Hash;
 use chrono::{DateTime, Utc};
-use libp2p::PeerId;
+use libp2p::{multihash::Multihash, PeerId};
 use num::{BigUint, FromPrimitive};
 use serde_derive::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
@@ -42,7 +42,7 @@ impl Vertex {
     /// Compute the hash of the vertex. Note, this only hashes the static components. Dynamic
     /// components (such as children) may be updated without changing the hash.
     pub fn hash(&self) -> Result<Hash> {
-        Ok(blake3::hash(&self.marshal_bytes()?))
+        CompactVertex::from(self).hash()
     }
 
     /// Marshal the vertex into bytes for storage/transmission
@@ -84,17 +84,22 @@ impl Vertex {
 
 /// A compact representation of the vertex, suitable for serialization and transmission
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct CompactVertex {
-    version: u32,
-    parents: Vec<SerdeHash>,
-    height: u64,
-    difficulty: u64,
-    miner: PeerId,
-    time: DateTime<Utc>,
-    nonce: u64,
+pub struct CompactVertex {
+    pub version: u32,
+    pub parents: Vec<SerdeHash>,
+    pub height: u64,
+    pub difficulty: u64,
+    pub miner: PeerId,
+    pub time: DateTime<Utc>,
+    pub nonce: u64,
 }
 
 impl CompactVertex {
+    /// Compute the hash of the vertex
+    pub fn hash(&self) -> Result<Hash> {
+        Ok(blake3::hash(&serde_cbor::to_vec(self)?))
+    }
+
     /// Compute the mining target from the given difficulty
     pub fn mining_target(&self) -> Result<BigUint> {
         if self.difficulty < params::MIN_DIFFICULTY {
@@ -119,6 +124,22 @@ impl CompactVertex {
     }
 }
 
+/// This implementation of ['Default'] is nonsense and should never be used. It is only implemented
+/// to satisfy a trait boundary, but the actual contents are not used.
+impl Default for CompactVertex {
+    fn default() -> Self {
+        CompactVertex {
+            version: 0,
+            parents: Vec::new(),
+            height: 0,
+            difficulty: 0,
+            miner: PeerId::from_multihash(Multihash::default()).unwrap(),
+            time: Utc::now(),
+            nonce: 0,
+        }
+    }
+}
+
 impl From<&Vertex> for CompactVertex {
     fn from(vertex: &Vertex) -> Self {
         CompactVertex {
@@ -139,7 +160,7 @@ impl From<&Vertex> for CompactVertex {
 
 /// Wrapper struct around blake3::Hash to facilitate serde implementation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct SerdeHash([u8; blake3::OUT_LEN]);
+pub struct SerdeHash([u8; blake3::OUT_LEN]);
 
 impl From<blake3::Hash> for SerdeHash {
     fn from(hash: blake3::Hash) -> Self {

@@ -2,7 +2,9 @@ pub mod dag;
 pub mod vertex;
 
 use crate::randomx;
+pub use dag::{Frontier, DAG};
 use std::result;
+pub use vertex::{CompactVertex, Vertex};
 
 /// Error type for Avalanche errors
 #[derive(thiserror::Error, Debug)]

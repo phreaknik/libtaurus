@@ -1,7 +1,4 @@
-use crate::{
-    consensus::{hash::Hash, Result},
-    Block,
-};
+use crate::consensus::{hash::Hash, Result};
 use heed::{BytesDecode, BytesEncode, Database, Env, EnvOpenOptions};
 use itertools::Itertools;
 use libp2p::PeerId;
@@ -9,6 +6,8 @@ use rand::seq::IteratorRandom;
 use rand::thread_rng;
 use serde_derive::{Deserialize, Serialize};
 use std::{fs, path::PathBuf};
+
+use super::CompactVertex;
 
 /// Database to store consensus data, using the ['heed'] LMDB database wrapper.
 #[derive(Clone)]
@@ -33,10 +32,13 @@ impl BlocksDatabase {
     }
 
     /// Write a new block into the database
-    pub fn write_block(&mut self, block: Block, canonical: bool) -> Result<()> {
+    pub fn write_block(&mut self, block: CompactVertex, canonical: bool) -> Result<()> {
         let mut wtxn = self.env.write_txn().unwrap();
-        self.db
-            .put(&mut wtxn, &block.hash(), &BlockEntry { block, canonical })?;
+        self.db.put(
+            &mut wtxn,
+            &block.hash()?.into(),
+            &BlockEntry { block, canonical },
+        )?;
         wtxn.commit()?;
         Ok(())
     }
@@ -53,7 +55,7 @@ impl BlocksDatabase {
             .take(age)
             .filter_map(|element| {
                 if let Ok((_hash, block_entry)) = element {
-                    return Some(block_entry.block.header.miner);
+                    return Some(block_entry.block.miner);
                 } else {
                     None
                 }
@@ -68,7 +70,7 @@ impl BlocksDatabase {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BlockEntry {
     /// The actual block data
-    block: Block,
+    block: CompactVertex,
     /// Is this block considered canonical?
     canonical: bool,
 }

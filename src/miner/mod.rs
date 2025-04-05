@@ -1,5 +1,6 @@
+use crate::consensus::CompactVertex;
 use crate::randomx::{self, RandomXVMInstance};
-use crate::{consensus, util, Block};
+use crate::{consensus, util};
 use libp2p::identity::Keypair;
 use libp2p::PeerId;
 use num::{BigUint, FromPrimitive};
@@ -39,7 +40,7 @@ pub enum Error {
     #[error(transparent)]
     Dial(#[from] consensus::Error),
     #[error(transparent)]
-    MinerChanClosed(#[from] mpsc::error::SendError<Block>),
+    MinerChanClosed(#[from] mpsc::error::SendError<CompactVertex>),
     #[error(transparent)]
     RandomX(#[from] randomx::Error),
 }
@@ -100,7 +101,7 @@ async fn task_fn(
                             // Restart mining threads to mine on new frontier
                             consensus::Event::NewFrontier(f) => {
                                 results_receiver.close(); // Kill previous mining threads
-                                results_receiver = match spawn_mining_threads(config.num_threads.unwrap_or(0), randomx_vm.clone(), f.to_candidate_block(miner_id), sols_count_sender.clone()) {
+                                results_receiver = match spawn_mining_threads(config.num_threads.unwrap_or(0), randomx_vm.clone(), f.to_candidate(miner_id), sols_count_sender.clone()) {
                                     Ok(ch) => ch,
                                     Err(e) => {
                                         error!("Failed to start miners: {e}");
@@ -115,8 +116,8 @@ async fn task_fn(
 
             // Handle results from the mining threads
             Some(block) = results_receiver.recv() => {
-                if block.header.verify_pow(&randomx_vm).is_ok() {
-                    info!("Mined a new block: {}", block.hash());
+                if block.verify_pow(&randomx_vm).is_ok() {
+                    info!("Mined a new block: {}", block.hash().unwrap());
                     if consensus_action_ch.send(consensus::Action::SubmitMinedBlock(block)).is_err() {
                         error!("Stopping...");
                     }
@@ -132,18 +133,16 @@ async fn task_fn(
 fn spawn_mining_threads(
     num_threads: usize,
     randomx_vm: RandomXVMInstance,
-    block: Block,
+    block: CompactVertex,
     sols_count_ch: UnboundedSender<usize>,
-) -> Result<UnboundedReceiver<Block>> {
-    info!(
-        "Mining new block: {} {:?}",
-        block.header.height, block.header.parents
-    );
+) -> Result<UnboundedReceiver<CompactVertex>> {
+    info!("Mining new block: {} {:?}", block.height, block.parents);
+
     // Close the old channel to kill the old mining threads, and
     // create a new channel for the new mining threads.
     let (results_sender, results_receiver) = mpsc::unbounded_channel();
     let target = BigUint::from_u64(2).unwrap().pow(256)
-        / BigUint::from_u64(cmp::min(MINING_SHARE_DIFFICULTY, block.header.difficulty)).unwrap();
+        / BigUint::from_u64(cmp::min(MINING_SHARE_DIFFICULTY, block.difficulty)).unwrap();
     for _ in 0..num_threads {
         let block = block.clone();
         let target = target.clone();
@@ -165,23 +164,23 @@ fn spawn_mining_threads(
 /// Find a nonce which satisfies the difficulty target
 fn mine(
     randomx_vm: RandomXVMInstance,
-    mut block: Block,
+    mut block: CompactVertex,
     target: BigUint,
-    results_ch: UnboundedSender<Block>,
+    results_ch: UnboundedSender<CompactVertex>,
     sols_count_ch: UnboundedSender<usize>,
 ) -> Result<()> {
-    block.header.nonce = rand::random();
+    block.nonce = rand::random();
     loop {
         let loop_count = 1_000;
         for i in 0..loop_count {
-            let hash = randomx_vm.calculate_hash(&serde_cbor::to_vec(&block.header).unwrap())?;
+            let hash = randomx_vm.calculate_hash(&serde_cbor::to_vec(&block).unwrap())?;
             if BigUint::from_bytes_be(&hash) < target {
                 results_ch.send(block.clone())?;
                 sols_count_ch.send(i).unwrap();
             } else if results_ch.is_closed() {
                 return Ok(());
             }
-            block.header.nonce += 1;
+            block.nonce += 1;
         }
         sols_count_ch.send(loop_count).unwrap();
     }

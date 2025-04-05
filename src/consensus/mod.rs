@@ -1,12 +1,11 @@
 mod avalanche;
-pub mod block;
 mod database;
 pub mod hash;
 
 use self::database::BlocksDatabase;
 use crate::randomx::RandomXVMInstance;
 use crate::{p2p, randomx};
-pub use block::{Block, Frontier, Header};
+pub use avalanche::*;
 use chrono::{DateTime, Utc};
 pub use hash::Hash;
 use libp2p::multihash::Multihash;
@@ -36,12 +35,14 @@ pub enum Event {
 /// Actions that can be performed by the consensus process
 #[derive(Clone, Debug)]
 pub enum Action {
-    SubmitMinedBlock(Block),
+    SubmitMinedBlock(CompactVertex),
 }
 
 /// Error type for consensus errors
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    #[error(transparent)]
+    Avalanche(#[from] avalanche::Error),
     #[error(transparent)]
     RandomX(#[from] randomx::Error),
     #[error(transparent)]
@@ -51,7 +52,7 @@ pub enum Error {
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error("validator ticket channel error")]
-    NewBlockCh(#[from] tokio::sync::mpsc::error::SendError<Block>),
+    NewVertexCh(#[from] tokio::sync::mpsc::error::SendError<CompactVertex>),
     #[error("collection is empty")]
     EmptyCollection,
     #[error("frontier object is empty")]
@@ -84,18 +85,16 @@ pub struct GenesisConfig {
 }
 
 impl GenesisConfig {
-    /// Create a genesis block
-    pub fn to_block(&self) -> Block {
-        Block {
-            header: Header {
-                version: 0,
-                height: 0,
-                parents: Vec::new(),
-                difficulty: self.difficulty,
-                miner: PeerId::from_multihash(Multihash::default()).unwrap(),
-                time: self.time,
-                nonce: 0,
-            },
+    /// Create a genesis vertex
+    pub fn to_vertex(&self) -> CompactVertex {
+        CompactVertex {
+            version: 0,
+            parents: Vec::new(),
+            height: 0,
+            difficulty: self.difficulty,
+            miner: PeerId::from_multihash(Multihash::default()).unwrap(),
+            time: self.time,
+            nonce: 0,
         }
     }
 }
@@ -178,10 +177,10 @@ impl Runtime {
 
         // TODO: This just initializes a frontier on genesis... obviously we don't always want to do
         // this. We usually want to load state from a db or something.
-        let genesis = self.config.genesis.to_block();
+        let genesis = self.config.genesis.to_vertex();
         while let Err(e) = self
             .events_out
-            .send(Event::NewFrontier(Frontier(vec![genesis.header.clone()])))
+            .send(Event::NewFrontier(Frontier(vec![genesis.clone()])))
         {
             error!("failed to send consensus event: {e}");
         }
@@ -209,13 +208,9 @@ impl Runtime {
                 Some(action) = self.actions_in.recv() => {
                     match action {
                         Action::SubmitMinedBlock(block) => {
-                            if block.header.verify_pow(&self.randomx_vm).is_ok() {
-                                if let Err(e) = self.p2p_action_ch.send(p2p::Action::Broadcast(p2p::MessageData::Block(block.clone()))) {
+                            if block.verify_pow(&self.randomx_vm).is_ok() {
+                                if let Err(e) = self.p2p_action_ch.send(p2p::Action::Broadcast(p2p::MessageData::Block(block))) {
                                     error!("Stopping due to p2p_action channel error: {e}");
-                                    return;
-                                }
-                                if let Err(e) = self.database.write_block(block, false) {
-                                    error!("Failed to write block: {e}");
                                     return;
                                 }
                             }
@@ -231,9 +226,8 @@ impl Runtime {
     fn handle_p2p_message(&mut self, msg: &p2p::Message) -> Result<p2p::MessageValidationReport> {
         match &msg.data {
             p2p::MessageData::Block(block) => {
-                if block.header.verify_pow(&self.randomx_vm).is_ok() {
-                    info!("Received block {}", block.header.hash());
-                    self.database.write_block(block.clone(), false)?;
+                if block.verify_pow(&self.randomx_vm).is_ok() {
+                    info!("Received vertex {}", block.hash()?);
                     Ok(msg.accept())
                 } else {
                     Ok(msg.reject())

@@ -1,6 +1,9 @@
-use super::{vertex::Vertex, Error, Result};
-use crate::randomx::RandomXVMInstance;
+use super::{vertex::Vertex, CompactVertex, Error, Result};
+use crate::{params, randomx::RandomXVMInstance};
 use blake3::Hash;
+use chrono::Utc;
+use libp2p::PeerId;
+
 use std::{collections::HashMap, sync::Arc};
 use tracing_mutex::stdsync::TracingRwLock;
 
@@ -35,5 +38,33 @@ impl DAG {
         self.vertices.insert(hash, unmarshalled.clone());
 
         Ok(())
+    }
+}
+
+/// The frontier describes the highest vertexes in the DAG
+#[derive(Debug, Clone)]
+pub struct Frontier(pub Vec<CompactVertex>);
+
+impl Frontier {
+    /// Compute the difficulty of the next vertex to build on this frontier
+    pub fn next_difficulty(&self) -> u64 {
+        self.0.iter().map(|h| h.difficulty).min().unwrap()
+    }
+
+    /// Compute a candidate block to mine atop the given frontier
+    pub fn to_candidate(&self, miner: PeerId) -> CompactVertex {
+        CompactVertex {
+            version: params::PROTOCOL_VERSION,
+            parents: self.0.iter().map(|v| v.hash().unwrap().into()).collect(),
+            height: self.height() + 1,
+            difficulty: self.next_difficulty(),
+            miner,
+            time: Utc::now(),
+            nonce: 0,
+        }
+    }
+
+    pub fn height(&self) -> u64 {
+        self.0[0].height
     }
 }
