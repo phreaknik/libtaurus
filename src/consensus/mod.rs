@@ -10,11 +10,11 @@ pub use block::*;
 use chrono::{DateTime, Utc};
 use libp2p::multihash::Multihash;
 use libp2p::PeerId;
+use lru::LruCache;
 use randomx_rs::RandomXFlag;
-use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::result;
-
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 use tokio::{select, sync::broadcast};
@@ -23,6 +23,12 @@ use tracing::{debug, error, info, warn};
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
 /// [`tokio::sync::broadcast`] for more information.
 pub const CONSENSUS_EVENT_CHAN_CAPACITY: usize = 32;
+
+/// Maximum depth (in terms of block height) of the pending block queue
+const PENDING_BLOCK_QUEUE_DEPTH: usize = 10;
+
+/// Maximum number of pending blocks we can store at a given height in the queue
+const PENDING_BLOCK_QUEUE_WIDTH: usize = 10;
 
 /// Events produced by the consensus process
 #[derive(Debug, Clone)]
@@ -41,13 +47,17 @@ pub enum Action {
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error(transparent)]
-    RandomX(#[from] randomx::Error),
+    Avalanche(#[from] avalanche::Error),
     #[error(transparent)]
-    Cbor(#[from] serde_cbor::error::Error),
+    Block(#[from] block::Error),
+    #[error(transparent)]
+    SerdeCbor(#[from] serde_cbor::error::Error),
     #[error(transparent)]
     Heed(#[from] heed::Error),
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    #[error(transparent)]
+    RandomX(#[from] randomx::Error),
     #[error("new block channel error")]
     NewBlockCh(#[from] tokio::sync::mpsc::error::SendError<Block>),
     #[error("p2p action channel error")]
@@ -58,22 +68,6 @@ pub enum Error {
     EmptyCollection,
     #[error("frontier object is empty")]
     EmptyFrontier,
-    #[error("invalid frontier")]
-    InvalidFrontier,
-    #[error("invalid difficulty")]
-    InvalidDifficulty,
-    #[error("invalid proof-of-work")]
-    InvalidPoW,
-    #[error("missing parent")]
-    MissingParent(Hash),
-    #[error("missing data")]
-    MissingData,
-    #[error("data not found")]
-    NotFound,
-    #[error("error acquiring read lock")]
-    ReadLock,
-    #[error("error acquiring write lock")]
-    WriteLock,
 }
 
 /// Result type for consensus errors
@@ -146,7 +140,7 @@ pub struct Runtime {
     events_out: broadcast::Sender<Event>,
     p2p_action_ch: UnboundedSender<p2p::Action>,
     p2p_event_ch: broadcast::Receiver<p2p::Event>,
-    pending_blocks: HashMap<Hash, Block>,
+    pending_blocks: LruCache<u64, LruCache<Hash, Block>>,
 }
 
 impl Runtime {
@@ -173,7 +167,7 @@ impl Runtime {
             events_out,
             p2p_action_ch,
             p2p_event_ch,
-            pending_blocks: HashMap::new(),
+            pending_blocks: LruCache::new(NonZeroUsize::new(PENDING_BLOCK_QUEUE_DEPTH).unwrap()),
         })
     }
 
@@ -238,13 +232,17 @@ impl Runtime {
     fn try_insert_block(&mut self, block: Block, sender: Option<PeerId>) -> Result<()> {
         let hash = block.hash()?;
         let height = block.height;
-        self.pending_blocks.insert(hash, block); should this be a 2-D map? map<height, map<hash, block>>?
         block
             .verify_pow(&self.randomx_vm)
-            .and_then(|_| self.dag.try_insert(block))
+            .map_err(Error::from)
+            .and_then(|_| self.dag.try_insert(block).map_err(Error::from))
             .or_else(|e| {
-                if let Error::MissingParent(parent) = e {
+                if let Error::Avalanche(avalanche::Error::MissingParent(parent)) = e {
                     debug!("Block {hash} is mising parent {parent}");
+                    // Add to the pending block queue to try again later
+                    // TODO
+
+                    // Look for parent block in P2P network
                     if let Some(peer) = sender {
                         self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
                             peer,
@@ -306,7 +304,7 @@ impl Runtime {
         match msg.data {
             p2p::MessageData::Block(block) => {
                 match self.try_insert_block(block, Some(msg.msg_source)) {
-                    Err(Error::MissingParent(_)) => Ok(ignore),
+                    Err(Error::Avalanche(avalanche::Error::MissingParent(_))) => Ok(ignore),
                     Err(_) => Ok(reject),
                     Ok(_) => Ok(accept),
                 }

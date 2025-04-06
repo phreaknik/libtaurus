@@ -1,15 +1,50 @@
-use super::{database::BlocksDatabase, Block, Error, Event, Result};
+use super::{database::BlocksDatabase, Block, Event};
 use crate::params;
 use blake3::Hash;
 use chrono::Utc;
 use libp2p::PeerId;
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use lru::LruCache;
+use std::{collections::HashMap, num::NonZeroUsize, path::PathBuf, result, sync::Arc};
 use tokio::sync::broadcast;
 use tracing::info;
 use tracing_mutex::stdsync::TracingRwLock;
 
 /// Path to the peer database, from within the peer data directory
 pub const DATABASE_DIR: &str = "blocks_db/";
+
+/// Error type for avalanche errors
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error(transparent)]
+    Block(#[from] super::block::Error),
+    #[error(transparent)]
+    Cbor(#[from] serde_cbor::error::Error),
+    #[error(transparent)]
+    Database(#[from] super::database::Error),
+    #[error(transparent)]
+    Heed(#[from] heed::Error),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error("new block channel error")]
+    NewBlockCh(#[from] tokio::sync::mpsc::error::SendError<Block>),
+    #[error("consensus event channel error")]
+    EventsOutCh(#[from] tokio::sync::broadcast::error::SendError<Event>),
+    #[error("evicted vertex from waitlist")]
+    EvictedFromWaitlist(Arc<TracingRwLock<Vertex>>),
+    #[error("missing parent")]
+    MissingParent(Hash),
+    #[error("data not found")]
+    NotFound,
+    #[error("missing data")]
+    MissingData,
+    #[error("error acquiring read lock")]
+    ReadLock,
+    #[error("error acquiring write lock")]
+    WriteLock,
+}
+
+/// Result type for avalanche errors
+pub type Result<T> = result::Result<T, Error>;
 
 /// Configuration details for the consensus process.
 #[derive(Debug, Clone)]
@@ -139,7 +174,7 @@ impl DAG {
 /// A vertex in the avalanche DAG. A vertex is essentially a block with parent & child links to
 /// assist DAG operations.
 #[derive(Debug, Clone)]
-struct Vertex {
+pub struct Vertex {
     /// Block represented by this vertex
     block: Block,
 
@@ -210,5 +245,47 @@ impl Frontier {
     /// This vertex's height in the DAG
     pub fn height(&self) -> u64 {
         self.0[0].height
+    }
+}
+
+/// A waitlist is a dependency graph of ancestor blocks which must be processed before future child
+/// blocks may be processed.
+///
+/// The list is constructed as a map of <K, V>, where K is the hash of a block, and V is a list
+/// child blocks which depend on that block.
+struct WaitList(LruCache<Hash, Vec<Arc<TracingRwLock<Vertex>>>>);
+
+impl WaitList {
+    /// Create a new waitlist
+    fn new(cap: NonZeroUsize) -> WaitList {
+        WaitList(LruCache::new(cap))
+    }
+
+    /// Inserts a new vertex into the waitlist.
+    fn insert(&mut self, arc_vertex: Arc<TracingRwLock<Vertex>>) -> Result<()> {
+        let vertex = arc_vertex.read().map_err(|_| Error::ReadLock)?;
+        for parent in vertex.block.parents.iter().map(|h| h.into()) {
+            if let Some(parent_queue) = self.0.get_mut(&parent) {
+                // Add this vertex as a dependent in the parent's queue
+                parent_queue.push(arc_vertex.clone());
+            } else {
+                // Insert a new entry
+                let evicted = self.0.put(parent, vec![arc_vertex.clone()]);
+
+                // If an existing entry was evicted, demote all the dependents in its queue
+                if let Some(queue) = evicted {
+                    for child in queue {
+                        self.0
+                            .demote(&child.read().map_err(|_| Error::ReadLock)?.block.hash()?);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Remove an entry from the list, and return the vertices which were waiting on it
+    fn remove(&mut self, hash: &Hash) -> Option<Vec<Arc<TracingRwLock<Vertex>>>> {
+        self.0.pop(hash)
     }
 }

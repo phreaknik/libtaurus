@@ -1,12 +1,27 @@
 use super::{Block, SerdeHash};
-use crate::consensus::Result;
 use blake3::Hash;
 use heed::{BytesDecode, BytesEncode, Database, Env, EnvOpenOptions, RwTxn};
 use itertools::Itertools;
 use libp2p::PeerId;
 use rand::{seq::IteratorRandom, thread_rng};
 use serde_derive::{Deserialize, Serialize};
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, result};
+
+/// Error type for consensus errors
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error(transparent)]
+    Block(#[from] super::block::Error),
+    #[error(transparent)]
+    SerdeCbor(#[from] serde_cbor::error::Error),
+    #[error(transparent)]
+    Heed(#[from] heed::Error),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+}
+
+/// Result type for consensus errors
+pub type Result<T> = result::Result<T, Error>;
 
 /// Database to store consensus data, using the ['heed'] LMDB database wrapper.
 #[derive(Clone)]

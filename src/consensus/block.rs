@@ -1,11 +1,30 @@
-use super::{Error, Result};
-use crate::{params, randomx::RandomXVMInstance};
+use crate::{
+    params,
+    randomx::{self, RandomXVMInstance},
+};
 pub use blake3::Hash;
 use chrono::{DateTime, Utc};
 use heed::{BytesDecode, BytesEncode};
 use libp2p::{multihash::Multihash, PeerId};
 use num::{BigUint, FromPrimitive};
 use serde_derive::{Deserialize, Serialize};
+use std::{result};
+
+/// Error type for block errors
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error(transparent)]
+    SerdeCbor(#[from] serde_cbor::error::Error),
+    #[error(transparent)]
+    RandomX(#[from] randomx::Error),
+    #[error("invalid difficulty")]
+    InvalidDifficulty,
+    #[error("invalid proof-of-work")]
+    InvalidPoW,
+}
+
+/// Result type for block errors
+pub type Result<T> = result::Result<T, Error>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
