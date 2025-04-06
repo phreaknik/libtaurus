@@ -13,7 +13,7 @@ use tokio::sync::broadcast;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::task::spawn_blocking;
 use tokio::time::interval;
-use tracing::{debug, error, info};
+use tracing::{error, info, trace};
 use tracing_log::log::warn;
 
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
@@ -122,7 +122,7 @@ async fn task_fn(
                         error!("Stopping...");
                     }
                 } else {
-                    debug!("Found mining share");
+                    trace!("Found mining share");
                 }
             }
         }

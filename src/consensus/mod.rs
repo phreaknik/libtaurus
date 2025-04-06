@@ -226,7 +226,7 @@ impl Runtime {
             .and_then(|_| self.dag.try_insert(block).map_err(Error::from))
             .or_else(|e| {
                 if let Error::Avalanche(avalanche::Error::MissingParents(parents)) = &e {
-                    debug!("Block {hash} is mising parents");
+                    debug!("Block {hash} is missing parents");
                     // Add to the pending block queue to try again later
                     // TODO
 
