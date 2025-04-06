@@ -11,6 +11,7 @@ use chrono::{DateTime, Utc};
 use libp2p::multihash::Multihash;
 use libp2p::PeerId;
 use randomx_rs::RandomXFlag;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::result;
 
@@ -145,6 +146,7 @@ pub struct Runtime {
     events_out: broadcast::Sender<Event>,
     p2p_action_ch: UnboundedSender<p2p::Action>,
     p2p_event_ch: broadcast::Receiver<p2p::Event>,
+    pending_blocks: HashMap<Hash, Block>,
 }
 
 impl Runtime {
@@ -171,6 +173,7 @@ impl Runtime {
             events_out,
             p2p_action_ch,
             p2p_event_ch,
+            pending_blocks: HashMap::new(),
         })
     }
 
@@ -235,6 +238,7 @@ impl Runtime {
     fn try_insert_block(&mut self, block: Block, sender: Option<PeerId>) -> Result<()> {
         let hash = block.hash()?;
         let height = block.height;
+        self.pending_blocks.insert(hash, block); should this be a 2-D map? map<height, map<hash, block>>?
         block
             .verify_pow(&self.randomx_vm)
             .and_then(|_| self.dag.try_insert(block))
