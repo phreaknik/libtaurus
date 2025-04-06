@@ -29,10 +29,8 @@ pub enum Error {
     NewBlockCh(#[from] tokio::sync::mpsc::error::SendError<Block>),
     #[error("consensus event channel error")]
     EventsOutCh(#[from] tokio::sync::broadcast::error::SendError<Event>),
-    #[error("evicted vertex from waitlist")]
-    EvictedFromWaitlist(Arc<TracingRwLock<Vertex>>),
     #[error("missing parent")]
-    MissingParent(Hash),
+    MissingParents(Vec<Hash>),
     #[error("data not found")]
     NotFound,
     #[error("missing data")]
@@ -54,6 +52,9 @@ pub struct Config {
 
     /// Genesis block to serve as root vertex in the DAG
     pub genesis: Block,
+
+    /// Maximum number of vertices which can wait in the list
+    pub waitlist_cap: NonZeroUsize,
 }
 
 /// Implementation of Avalanche DAG, using blocks as vertices
@@ -63,6 +64,9 @@ pub struct DAG {
 
     /// Complete list of active vertices
     vertices: HashMap<Hash, Arc<TracingRwLock<Vertex>>>,
+
+    /// Waitlist for vertices that cannot be inserted yet
+    waitlist: WaitList,
 
     /// The active edge of the DAG, i.e. the preferred vertices which don't yet have children
     frontier: HashMap<Hash, Block>,
@@ -83,6 +87,7 @@ impl DAG {
         // Create DAG instance
         let dag = DAG {
             vertices: HashMap::new(),
+            waitlist: WaitList::new(config.waitlist_cap),
             frontier: HashMap::new(),
             database: BlocksDatabase::open(&config.data_dir.join(DATABASE_DIR), true)
                 .expect("Failed to open blocks database"),
@@ -109,53 +114,83 @@ impl DAG {
         // Make sure this block has parents to attach to the DAG
         if block.parents.len() == 0 && hash != self.genesis_hash {
             // This block has no parents to attach to the DAG
-            Err(Error::MissingData)
-        } else {
-            // TODO: validate block (has parents, valid height, valid difficulty, etc...)
+            return Err(Error::MissingData);
+        }
 
-            // Write it to the database
-            let wtxn = self.database.write_block(None, block.clone(), false)?;
+        // Create a new vertex from this block, if we have the requisite parents
+        let vertex = Arc::new(TracingRwLock::new(Vertex::new(
+            block.clone(),
+            &self.vertices,
+        )?));
 
-            // Create a new vertex from this block, if we have the requisite parents
-            let vertex = Arc::new(TracingRwLock::new(Vertex::new(
-                block.clone(),
-                &self.vertices,
-            )?));
+        // Check if block parents exist
+        let missing_parents: Vec<_> = block
+            .parents
+            .iter()
+            .map(|hash| hash.into())
+            .filter(|hash| !self.vertices.contains_key(hash))
+            .collect();
+        if missing_parents.len() > 0 {
+            self.waitlist.insert(vertex)?;
+            return Err(Error::MissingParents(missing_parents));
+        }
 
-            // Update each parent
-            for parent in vertex
+        // Attempt to insert the vertex
+        self.try_insert_vertex(vertex)
+    }
+
+    /// Try to insert a vertex into the DAG
+    fn try_insert_vertex(&mut self, arc_vertex: Arc<TracingRwLock<Vertex>>) -> Result<()> {
+        // TODO: validate block (has parents, valid height, valid difficulty, etc...)
+
+        let mut vertex = arc_vertex.write().map_err(|_| Error::WriteLock)?;
+        let hash = vertex.block.hash()?;
+
+        // Write it to the database
+        let wtxn = self
+            .database
+            .write_block(None, vertex.block.clone(), false)?;
+
+        // Update each parent
+        for parent in vertex.parents.iter_mut() {
+            parent
                 .write()
                 .map_err(|_| Error::WriteLock)?
-                .parents
-                .iter_mut()
-            {
-                parent
-                    .write()
-                    .map_err(|_| Error::WriteLock)?
-                    .children
-                    .push(vertex.clone());
+                .children
+                .push(arc_vertex.clone());
+        }
+
+        // Add it to the collection of vertices
+        self.vertices.insert(hash, arc_vertex.clone());
+
+        // Remove its parents from the frontier, as they are no longer the youngest
+        for parent in vertex.block.parents.iter() {
+            self.frontier.remove(&parent.into());
+        }
+
+        // Add it to the frontier
+        self.frontier.insert(hash, vertex.block.clone());
+
+        // Announce the new frontier
+        self.events_ch.send(Event::NewFrontier(Frontier(
+            self.frontier.values().cloned().collect(),
+        )))?;
+
+        info!("Inserted block: {hash}");
+
+        // Commit the block to the database only now that it has passed all validation
+        wtxn.commit().map_err(Error::from)?;
+
+        // Retry vertices in the waitlist
+        Ok(self.remove_and_retry_waitlist(hash))
+    }
+
+    /// Retry inserting any blocks from the waitlist
+    fn remove_and_retry_waitlist(&mut self, hash: Hash) {
+        if let Some(dependents) = self.waitlist.remove(&hash) {
+            for dependent in dependents {
+                let _ = self.try_insert_vertex(dependent);
             }
-
-            // Add it to the collection of vertices
-            self.vertices.insert(block.hash()?, vertex.clone());
-
-            // Remove its parents from the frontier, as they are no longer the youngest
-            for parent in block.parents.iter() {
-                self.frontier.remove(&parent.into());
-            }
-
-            // Add it to the frontier
-            self.frontier.insert(block.hash()?, block);
-
-            // Announce the new frontier
-            self.events_ch.send(Event::NewFrontier(Frontier(
-                self.frontier.values().cloned().collect(),
-            )))?;
-
-            info!("Inserted block: {hash}");
-
-            // Commit the block to the database only now that it has passed all validation
-            wtxn.commit().map_err(Error::from)
         }
     }
 
@@ -202,7 +237,7 @@ impl Vertex {
                 .map(|hash| {
                     vertices
                         .get(&hash.into())
-                        .ok_or(Error::MissingParent(hash.into()))
+                        .ok_or(Error::MissingParents(vec![hash.into()]))
                         .map(|val| val.clone())
                 })
                 .try_collect()?,

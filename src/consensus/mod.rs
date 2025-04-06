@@ -10,9 +10,9 @@ pub use block::*;
 use chrono::{DateTime, Utc};
 use libp2p::multihash::Multihash;
 use libp2p::PeerId;
-use lru::LruCache;
+
 use randomx_rs::RandomXFlag;
-use std::num::NonZeroUsize;
+
 use std::path::PathBuf;
 use std::result;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
@@ -23,12 +23,6 @@ use tracing::{debug, error, info, warn};
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
 /// [`tokio::sync::broadcast`] for more information.
 pub const CONSENSUS_EVENT_CHAN_CAPACITY: usize = 32;
-
-/// Maximum depth (in terms of block height) of the pending block queue
-const PENDING_BLOCK_QUEUE_DEPTH: usize = 10;
-
-/// Maximum number of pending blocks we can store at a given height in the queue
-const PENDING_BLOCK_QUEUE_WIDTH: usize = 10;
 
 /// Events produced by the consensus process
 #[derive(Debug, Clone)]
@@ -64,10 +58,6 @@ pub enum Error {
     P2pActionCh(#[from] tokio::sync::mpsc::error::SendError<p2p::Action>),
     #[error("consensus event channel error")]
     EventsOutCh(#[from] tokio::sync::broadcast::error::SendError<Event>),
-    #[error("collection is empty")]
-    EmptyCollection,
-    #[error("frontier object is empty")]
-    EmptyFrontier,
 }
 
 /// Result type for consensus errors
@@ -140,7 +130,6 @@ pub struct Runtime {
     events_out: broadcast::Sender<Event>,
     p2p_action_ch: UnboundedSender<p2p::Action>,
     p2p_event_ch: broadcast::Receiver<p2p::Event>,
-    pending_blocks: LruCache<u64, LruCache<Hash, Block>>,
 }
 
 impl Runtime {
@@ -167,7 +156,6 @@ impl Runtime {
             events_out,
             p2p_action_ch,
             p2p_event_ch,
-            pending_blocks: LruCache::new(NonZeroUsize::new(PENDING_BLOCK_QUEUE_DEPTH).unwrap()),
         })
     }
 
@@ -237,17 +225,19 @@ impl Runtime {
             .map_err(Error::from)
             .and_then(|_| self.dag.try_insert(block).map_err(Error::from))
             .or_else(|e| {
-                if let Error::Avalanche(avalanche::Error::MissingParent(parent)) = e {
-                    debug!("Block {hash} is mising parent {parent}");
+                if let Error::Avalanche(avalanche::Error::MissingParents(parents)) = &e {
+                    debug!("Block {hash} is mising parents");
                     // Add to the pending block queue to try again later
                     // TODO
 
-                    // Look for parent block in P2P network
+                    // Look for missing parents block in P2P network
                     if let Some(peer) = sender {
-                        self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
-                            peer,
-                            avalanche_rpc::Request::GetBlock(height - 1, parent.into()),
-                        ))?;
+                        for &hash in parents {
+                            self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
+                                peer,
+                                avalanche_rpc::Request::GetBlock(height - 1, hash.into()),
+                            ))?;
+                        }
                     }
                 } else {
                     warn!("Unable to insert block {hash}: {e:?}");
@@ -304,7 +294,7 @@ impl Runtime {
         match msg.data {
             p2p::MessageData::Block(block) => {
                 match self.try_insert_block(block, Some(msg.msg_source)) {
-                    Err(Error::Avalanche(avalanche::Error::MissingParent(_))) => Ok(ignore),
+                    Err(Error::Avalanche(avalanche::Error::MissingParents(_))) => Ok(ignore),
                     Err(_) => Ok(reject),
                     Ok(_) => Ok(accept),
                 }

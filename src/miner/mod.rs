@@ -51,8 +51,8 @@ pub type Result<T> = result::Result<T, Error>;
 /// Configuration details for the mining process.
 #[derive(Debug, Clone)]
 pub struct Config {
-    /// Number of mining threads to spawn. If unspecified, will use max available CPUs.
-    pub num_threads: Option<usize>,
+    /// Number of mining threads to spawn
+    pub num_threads: usize,
     /// Key used to identify self on p2p network
     pub identity_key: Keypair,
 }
@@ -101,7 +101,7 @@ async fn task_fn(
                             // Restart mining threads to mine on new frontier
                             consensus::Event::NewFrontier(f) => {
                                 results_receiver.close(); // Kill previous mining threads
-                                results_receiver = match spawn_mining_threads(config.num_threads.unwrap_or(0), randomx_vm.clone(), f.to_candidate(miner_id), sols_count_sender.clone()) {
+                                results_receiver = match spawn_mining_threads(config.num_threads, randomx_vm.clone(), f.to_candidate(miner_id), sols_count_sender.clone()) {
                                     Ok(ch) => ch,
                                     Err(e) => {
                                         error!("Failed to start miners: {e}");

@@ -127,9 +127,18 @@ fn parse_cli_args() -> ArgMatches {
             Command::new("run")
                 .about("Connect to the p2p network and join consensus")
                 .arg(arg!(--bootnode <MULTIADDR> "Specify boot node to connect to").required(false))
-                .arg(arg!(--mining_threads <NUMBER> "Number of threads for mining").required(false))
+                .arg(
+                    arg!(--mining_threads <NUMBER> "Number of threads for mining")
+                        .required(false)
+                        .default_value("0"),
+                )
                 .arg(arg!(-d --data_dir <PATH> "Specify data directory").required(false))
                 .arg(arg!(--nohttp "Disable HTTP server").required(false))
+                .arg(
+                    arg!(--waitlist_cap <CAP> "Set the capacity of the DAG waitlist")
+                        .required(false)
+                        .default_value("10"),
+                )
                 .arg(arg!(-v --verbosity ... "Increase verbosity level").required(false)),
         )
         .subcommand(
@@ -202,6 +211,13 @@ fn build_consensus_cfg(args: &ArgMatches) -> consensus::Config {
         avalanche: avalanche::Config {
             data_dir,
             genesis: genesis.to_block(),
+            waitlist_cap: args
+                .get_one::<String>("waitlist_cap")
+                .map(|v| {
+                    v.parse()
+                        .expect("waitlist_cap must be non-zero positive integer")
+                })
+                .unwrap(),
         },
         genesis,
     }
@@ -213,9 +229,12 @@ fn build_miner_cfg(args: &ArgMatches) -> miner::Config {
     let identity_key = get_peer_identity_key(&data_dir);
     miner::Config {
         num_threads: args
-            .try_get_one::<String>("mining_threads")
-            .unwrap_or(Some(&"0".to_string()))
-            .map(|v| v.parse().expect("failed to parse miner num-threads")),
+            .get_one::<String>("mining_threads")
+            .map(|v| {
+                v.parse()
+                    .expect("waitlist_cap must be non-zero positive integer")
+            })
+            .unwrap(),
         identity_key,
     }
 }
