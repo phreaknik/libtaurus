@@ -6,7 +6,7 @@ use libp2p::PeerId;
 use lru::LruCache;
 use std::{collections::HashMap, num::NonZeroUsize, path::PathBuf, result, sync::Arc};
 use tokio::sync::broadcast;
-use tracing::info;
+use tracing::{debug, info};
 use tracing_mutex::stdsync::TracingRwLock;
 
 /// Path to the peer database, from within the peer data directory
@@ -117,26 +117,17 @@ impl DAG {
             return Err(Error::MissingData);
         }
 
-        // Create a new vertex from this block, if we have the requisite parents
-        let vertex = Arc::new(TracingRwLock::new(Vertex::new(
-            block.clone(),
-            &self.vertices,
-        )?));
-
-        // Check if block parents exist
-        let missing_parents: Vec<_> = block
-            .parents
-            .iter()
-            .map(|hash| hash.into())
-            .filter(|hash| !self.vertices.contains_key(hash))
-            .collect();
-        if missing_parents.len() > 0 {
-            self.waitlist.insert(vertex)?;
-            return Err(Error::MissingParents(missing_parents));
+        // Create a new vertex from this block, and link to its parents if we have them
+        let mut vertex = Vertex::new(block.clone());
+        match self.link_parents(&mut vertex) {
+            Err(Error::MissingParents(e)) => {
+                debug!("Block {hash} is missing parents");
+                self.waitlist.insert(Arc::new(TracingRwLock::new(vertex)))?;
+                Err(Error::MissingParents(e))
+            }
+            Ok(_) => self.try_insert_vertex(Arc::new(TracingRwLock::new(vertex))),
+            error @ Err(_) => error,
         }
-
-        // Attempt to insert the vertex
-        self.try_insert_vertex(vertex)
     }
 
     /// Try to insert a vertex into the DAG
@@ -185,6 +176,21 @@ impl DAG {
         Ok(self.remove_and_retry_waitlist(hash))
     }
 
+    /// Fill out parent links if the parents are present in the DAG
+    fn link_parents(&mut self, vertex: &mut Vertex) -> Result<()> {
+        Ok(vertex.parents = vertex
+            .block
+            .parents
+            .iter()
+            .map(|hash| {
+                self.vertices
+                    .get(&hash.into())
+                    .ok_or(Error::MissingParents(vec![hash.into()]))
+                    .map(|val| val.clone())
+            })
+            .try_collect()?)
+    }
+
     /// Retry inserting any blocks from the waitlist
     fn remove_and_retry_waitlist(&mut self, hash: Hash) {
         if let Some(dependents) = self.waitlist.remove(&hash) {
@@ -226,25 +232,13 @@ pub struct Vertex {
 }
 
 impl Vertex {
-    pub fn new(
-        block: Block,
-        vertices: &HashMap<Hash, Arc<TracingRwLock<Vertex>>>,
-    ) -> Result<Vertex> {
-        Ok(Vertex {
-            parents: block
-                .parents
-                .iter()
-                .map(|hash| {
-                    vertices
-                        .get(&hash.into())
-                        .ok_or(Error::MissingParents(vec![hash.into()]))
-                        .map(|val| val.clone())
-                })
-                .try_collect()?,
+    pub fn new(block: Block) -> Vertex {
+        Vertex {
+            parents: Vec::new(),
             children: Vec::new(),
             block: block.clone(),
             chit: 0,
-        })
+        }
     }
 }
 

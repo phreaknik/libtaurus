@@ -8,7 +8,7 @@ use heed::{BytesDecode, BytesEncode};
 use libp2p::{multihash::Multihash, PeerId};
 use num::{BigUint, FromPrimitive};
 use serde_derive::{Deserialize, Serialize};
-use std::{result};
+use std::result;
 
 /// Error type for block errors
 #[derive(thiserror::Error, Debug)]
@@ -26,11 +26,11 @@ pub enum Error {
 /// Result type for block errors
 pub type Result<T> = result::Result<T, Error>;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Block {
     pub version: u32,
-    pub parents: Vec<SerdeHash>,
     pub height: u64,
+    pub parents: Vec<SerdeHash>,
     pub difficulty: u64,
     pub miner: PeerId,
     pub time: DateTime<Utc>,
@@ -64,6 +64,16 @@ impl Block {
         } else {
             Err(Error::InvalidPoW)
         }
+    }
+}
+
+impl std::fmt::Debug for Block {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "block: {}",
+            serde_json::to_string_pretty(&PrettyBlock::from(self)).unwrap()
+        )
     }
 }
 
@@ -122,5 +132,34 @@ impl<'a> BytesDecode<'a> for SerdeHash {
         bytes: &'a [u8],
     ) -> std::result::Result<Self::DItem, Box<dyn std::error::Error>> {
         Ok(serde_cbor::from_slice(bytes)?)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct PrettyBlock {
+    version: u32,
+    height: u64,
+    parents: Vec<String>,
+    difficulty: u64,
+    miner: PeerId,
+    time: DateTime<Utc>,
+    nonce: u64,
+}
+
+impl From<&Block> for PrettyBlock {
+    fn from(block: &Block) -> Self {
+        PrettyBlock {
+            version: block.version,
+            height: block.height,
+            parents: block
+                .parents
+                .iter()
+                .map(|p| p.0.iter().map(|b| format!("{b:02x}")).collect())
+                .collect(),
+            difficulty: block.difficulty,
+            miner: block.miner,
+            time: block.time,
+            nonce: block.nonce,
+        }
     }
 }

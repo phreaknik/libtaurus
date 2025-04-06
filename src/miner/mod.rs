@@ -13,7 +13,7 @@ use tokio::sync::broadcast;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::task::spawn_blocking;
 use tokio::time::interval;
-use tracing::{error, info, trace};
+use tracing::{debug, error, info, trace};
 use tracing_log::log::warn;
 
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
@@ -37,6 +37,8 @@ pub enum Action {}
 /// Error type for mining errors
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
     #[error(transparent)]
     Dial(#[from] consensus::Error),
     #[error(transparent)]
@@ -136,7 +138,8 @@ fn spawn_mining_threads(
     block: Block,
     sols_count_ch: UnboundedSender<usize>,
 ) -> Result<UnboundedReceiver<Block>> {
-    info!("Mining new block: {} {:?}", block.height, block.parents);
+    info!("Mining block {}", block.height);
+    debug!("Block template:\n{block:?}");
 
     // Close the old channel to kill the old mining threads, and
     // create a new channel for the new mining threads.
