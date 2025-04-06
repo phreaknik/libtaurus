@@ -37,7 +37,7 @@ pub struct PeerRpcCodec;
 #[async_trait]
 impl request_response::Codec for PeerRpcCodec {
     type Protocol = PeerRpcProtocol;
-    type Request = rpc_messages::Request;
+    type Request = rpc_messages::Request<'static>;
     type Response = rpc_messages::Response;
 
     async fn read_request<T>(

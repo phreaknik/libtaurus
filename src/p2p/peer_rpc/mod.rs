@@ -1,7 +1,7 @@
 mod generated;
 mod protocol;
 
-use self::proto::rpc_messages;
+use self::proto::rpc_messages::{self, Request};
 use self::protocol::{PeerRpcCodec, PeerRpcProtocol};
 use libp2p::core::Endpoint;
 use libp2p::request_response::{Message, ProtocolSupport};
@@ -31,7 +31,7 @@ pub struct Behaviour {
     _config: Config,
 }
 
-impl Behaviour {
+impl<'a> Behaviour {
     pub fn new(_config: Config) -> Self {
         let inner_protocols =
             iter::once((PeerRpcProtocol::new(_config.clone()), ProtocolSupport::Full));
@@ -77,6 +77,10 @@ impl Behaviour {
                 Poll::Pending
             }
         }
+    }
+
+    pub fn send_request(&mut self, peer: &PeerId, request: Request) {
+        self.inner.send_request(peer, request);
     }
 }
 
@@ -167,13 +171,14 @@ impl NetworkBehaviour for Behaviour {
     }
 }
 
-type SwarmAction = ToSwarm<<Behaviour as NetworkBehaviour>::OutEvent, THandlerInEvent<Behaviour>>;
+type SwarmAction<'a> =
+    ToSwarm<<Behaviour as NetworkBehaviour>::OutEvent, THandlerInEvent<Behaviour>>;
 
 /// Configuration for the ['peer_rpc::Behaviour'](Behaviour)
 #[derive(Debug, Clone)]
 pub struct Config {}
 
 #[allow(clippy::derive_partial_eq_without_eq)]
-mod proto {
+pub mod proto {
     include!("generated/mod.rs");
 }

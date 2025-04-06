@@ -1,4 +1,7 @@
+use super::peer_rpc::proto::rpc_messages::mod_Request::OneOfpayload;
+use super::peer_rpc::proto::rpc_messages::{GetBlock, Request};
 use super::{peer_rpc, Event, MessageData, PeerDatabase, PeerInfo};
+use blake3::Hash;
 use libp2p::core::Endpoint;
 use libp2p::gossipsub::{self, MessageAcceptance, MessageAuthenticity, MessageId, Sha256Topic};
 use libp2p::identity::Keypair;
@@ -9,7 +12,7 @@ use libp2p::swarm::{
     THandlerInEvent, THandlerOutEvent, ToSwarm,
 };
 use libp2p::{identify, Multiaddr, PeerId};
-use std::borrow::BorrowMut;
+use std::borrow::{BorrowMut, Cow};
 use std::str;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
@@ -36,7 +39,7 @@ pub struct InnerBehaviour {
     peer_rpc: peer_rpc::Behaviour,
 }
 
-impl InnerBehaviour {
+impl<'a> InnerBehaviour {
     fn new(config: Config) -> crate::p2p::Result<Self> {
         let local_peer_id = PeerId::from_public_key(&config.keys.public());
         let mut gossipsub = gossipsub::Behaviour::new(
@@ -72,7 +75,7 @@ pub struct Behaviour {
     last_bootstrap: Option<Instant>,
 }
 
-impl Behaviour {
+impl<'a> Behaviour {
     /// Create a new instance of the cordelia-p2p ['Behaviour'].
     pub fn new(config: Config, peer_db: PeerDatabase) -> crate::p2p::Result<Self> {
         let mut b = Behaviour {
@@ -158,6 +161,18 @@ impl Behaviour {
         wtxn.commit().unwrap();
     }
 
+    pub fn get_block_from_peer(&mut self, peer: &PeerId, height: u64, hash: &Hash) {
+        self.inner.peer_rpc.send_request(
+            peer,
+            Request {
+                payload: OneOfpayload::get_block(GetBlock {
+                    height,
+                    hash: Cow::from(&hash.as_bytes()[..]),
+                }),
+            },
+        )
+    }
+
     /// Handle peer identification events
     fn handle_identify_event(&mut self, peer_id: PeerId, info: identify::Info) {
         // Add the peer to the kademlia routing table
@@ -200,7 +215,7 @@ impl Behaviour {
     }
 }
 
-impl NetworkBehaviour for Behaviour {
+impl<'a> NetworkBehaviour for Behaviour {
     type ConnectionHandler = <InnerBehaviour as NetworkBehaviour>::ConnectionHandler;
     type OutEvent = Event;
 
@@ -301,7 +316,8 @@ impl NetworkBehaviour for Behaviour {
     }
 }
 
-type SwarmAction = ToSwarm<<Behaviour as NetworkBehaviour>::OutEvent, THandlerInEvent<Behaviour>>;
+type SwarmAction<'a> =
+    ToSwarm<<Behaviour as NetworkBehaviour>::OutEvent, THandlerInEvent<Behaviour>>;
 
 /// Configuration for the [`cordelia::Behaviour`](Behaviour).
 #[derive(Clone)]

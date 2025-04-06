@@ -18,7 +18,6 @@ use tokio::sync::oneshot;
 use tokio::{select, sync::broadcast};
 use tracing::{error, info, warn};
 
-
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
 /// [`tokio::sync::broadcast`] for more information.
 pub const CONSENSUS_EVENT_CHAN_CAPACITY: usize = 32;
@@ -239,6 +238,14 @@ impl Runtime {
                     .verify_pow(&self.randomx_vm)
                     .and_then(|_| self.dag.try_insert(block.clone()))
                 {
+                    Err(Error::MissingParent(parent)) => {
+                        self.p2p_action_ch.send(p2p::Action::GetBlock(
+                            msg.msg_source,
+                            block.height,
+                            block.hash()?,
+                        ));
+                        Ok(msg.ignore())
+                    }
                     Err(e) => {
                         warn!("Rejected block {hash}: {e:?}");
                         Ok(msg.reject())

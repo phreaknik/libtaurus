@@ -3,16 +3,16 @@ package rpc_messages;
 
 // RPC request message
 message Request {
-    //oneof payload {
-    //    Hello       hello        = 101;
-    //}
+    oneof payload {
+        GetBlock get_block = 101;
+    }
 }
 
 // RPC response message
 message Response {
     oneof payload {
-        Nack         nack          = 201;
-        Ack          ack           = 202;
+        Nack nack = 201;
+        Ack  ack  = 202;
     }
 }
 
@@ -22,3 +22,7 @@ message Nack {}
 // Peer accepted my request without response
 message Ack {}
 
+message GetBlock {
+    optional uint64 height = 301;
+    optional bytes hash    = 302;
+}

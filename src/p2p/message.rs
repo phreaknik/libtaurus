@@ -16,7 +16,7 @@ pub struct Message {
 }
 
 impl Message {
-    /// Generate an validation report to accept this message and propagate it to other peers.
+    /// Generate a validation report to accept this message and propagate it to other peers.
     pub fn accept(&self) -> MessageValidationReport {
         MessageValidationReport {
             msg_id: self.msg_id.clone(),
@@ -25,7 +25,7 @@ impl Message {
         }
     }
 
-    /// Generate an validation report to ignore this message and cease propagation, without
+    /// Generate a validation report to ignore this message and cease propagation, without
     /// penalty to the peer that sent it.
     pub fn ignore(&self) -> MessageValidationReport {
         MessageValidationReport {
@@ -35,7 +35,7 @@ impl Message {
         }
     }
 
-    /// Generate an validation report to reject this message, cease propagation, and penalize the
+    /// Generate a validation report to reject this message, cease propagation, and penalize the
     /// peer who sent it. Repeated penalization will eventually leading to that peer being banned.
     pub fn reject(&self) -> MessageValidationReport {
         MessageValidationReport {
