@@ -11,6 +11,7 @@ use libp2p::gossipsub;
 use libp2p::identity::Keypair;
 use libp2p::kad;
 use libp2p::multiaddr::Protocol;
+use libp2p::request_response::RequestId;
 use libp2p::swarm::{SwarmBuilder, SwarmEvent};
 use libp2p::{Multiaddr, PeerId};
 pub use message::{Message, MessageData, MessageValidationReport};
@@ -34,7 +35,7 @@ pub const DATABASE_DIR: &str = "peer_db/";
 #[derive(Debug, Clone)]
 pub enum Event {
     Pubsub(Message),
-    AvalancheMessage(avalanche_rpc::Message),
+    Avalanche(avalanche_rpc::Event),
 }
 
 /// Actions that can be performed by the p2p client
@@ -44,6 +45,7 @@ pub enum Action {
     GetLocalPeerId(oneshot::Sender<PeerId>),
     ReportMessageValidity(MessageValidationReport),
     AvalancheRequest(PeerId, avalanche_rpc::Request),
+    AvalancheResponse(RequestId, avalanche_rpc::Response),
 }
 
 /// Error type for cordelia-p2p errors
@@ -180,6 +182,9 @@ async fn task_fn(
                 },
                 Some(Action::AvalancheRequest(peer, request)) => {
                     swarm.behaviour_mut().avalanche_request(&peer, request)
+                },
+                Some(Action::AvalancheResponse(request_id, response)) => {
+                    swarm.behaviour_mut().avalanche_response(request_id, response)
                 },
                 None => {
                     // If we do not receive requests from the consensus module, we cannot

@@ -5,12 +5,13 @@ use libp2p::gossipsub::{self, MessageAcceptance, MessageAuthenticity, MessageId,
 use libp2p::identity::Keypair;
 use libp2p::kad::store::MemoryStore;
 use libp2p::kad::{self, Kademlia, KademliaConfig, NoKnownPeers};
+use libp2p::request_response::RequestId;
 use libp2p::swarm::{
     ConnectionDenied, ConnectionId, FromSwarm, NetworkBehaviour, PollParameters, THandler,
     THandlerInEvent, THandlerOutEvent, ToSwarm,
 };
 use libp2p::{identify, Multiaddr, PeerId};
-use std::borrow::{BorrowMut};
+use std::borrow::BorrowMut;
 use std::str;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
@@ -164,6 +165,11 @@ impl<'a> Behaviour {
         self.inner.avalanche_rpc.send_request(peer, request)
     }
 
+    /// Respond to a received avalanche request, via the ['avalanche_rpc'] protocol
+    pub fn avalanche_response(&mut self, request_id: RequestId, response: avalanche_rpc::Response) {
+        self.inner.avalanche_rpc.send_response(request_id, response)
+    }
+
     /// Handle peer identification events
     fn handle_identify_event(&mut self, peer_id: PeerId, info: identify::Info) {
         // Add the peer to the kademlia routing table
@@ -220,6 +226,7 @@ impl<'a> NetworkBehaviour for Behaviour {
 
         // Handle any events from the subprotocols
         match self.inner.poll(cx, params) {
+            //  Forward received identities out
             Poll::Ready(ToSwarm::GenerateEvent(InnerBehaviourEvent::Identify(
                 identify::Event::Received { peer_id, info },
             ))) => {
@@ -232,10 +239,16 @@ impl<'a> NetworkBehaviour for Behaviour {
             ))) => Poll::Ready(ToSwarm::GenerateEvent(Event::Pubsub(
                 message.try_into().unwrap(),
             ))),
+            // Forward avalanche requests out
+            Poll::Ready(ToSwarm::GenerateEvent(InnerBehaviourEvent::AvalancheRpc(
+                request @ avalanche_rpc::Event::Requested(..),
+            ))) => Poll::Ready(ToSwarm::GenerateEvent(Event::Avalanche(request))),
+            // Trap all other generated events
             Poll::Ready(ToSwarm::GenerateEvent(event)) => {
                 trace!("internal event: {event:?}");
                 Poll::Pending
-            } // Trap all sub events
+            }
+            // TODO: use the map_out() method to eliminate the bespoke routing cases above
             Poll::Ready(action) => Poll::Ready(action.map_out(|_| unreachable!())),
             Poll::Pending => Poll::Pending,
         }

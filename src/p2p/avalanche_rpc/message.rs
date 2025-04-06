@@ -1,12 +1,5 @@
-use crate::consensus::SerdeHash;
+use crate::consensus::{Block, SerdeHash};
 use serde_derive::{Deserialize, Serialize};
-
-/// Top level message type for RPC messages
-#[derive(Debug, Clone)]
-pub enum Message {
-    Request(Request),
-    Response(Response),
-}
 
 /// Message type defining the peer RPC request messages
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,4 +9,7 @@ pub enum Request {
 
 /// Message type defining the peer RPC response messages
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Response {}
+pub enum Response {
+    NotFound,
+    Block(Block),
+}

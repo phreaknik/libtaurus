@@ -17,7 +17,7 @@ use std::result;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 use tokio::{select, sync::broadcast};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
 /// [`tokio::sync::broadcast`] for more information.
@@ -197,16 +197,17 @@ impl Runtime {
                                 return;
                     },
                         Ok(p2p::Event::Pubsub(msg)) => {
-                            let validation = self.handle_p2p_pubsub(&msg).unwrap_or_else(|e| {
+                            let ignore = msg.ignore();
+                            let validation = self.handle_p2p_pubsub(msg).unwrap_or_else(|e| {
                                 warn!("Error handling p2p message: {e}");
-                                msg.ignore()
+                                ignore
                             });
                             if let Err(e) = self.p2p_action_ch.send(p2p::Action::ReportMessageValidity(validation)) {
                                 error!("Stopping due to p2p_action channel error: {e}");
                                 return;
                             }
                         },
-                        Ok(p2p::Event::AvalancheMessage(msg)) => self.handle_avalanche_msg(msg),
+                        Ok(p2p::Event::Avalanche(event)) => self.handle_avalanche_event(event),
                     }
                 },
                 Some(action) = self.actions_in.recv() => {
@@ -220,12 +221,8 @@ impl Runtime {
 
                             // Validate the block and insert it into the DAG
                             let hash = block.hash().unwrap();
-                            match block
-                                .verify_pow(&self.randomx_vm)
-                                .and_then(|_| self.dag.try_insert(block.clone()))
-                            {
-                                Err(e) => error!("Failed to insert mined block {hash}: {e:?}"),
-                                Ok(_) => {},
+                            if let Err(e) = self.try_insert_block(block, None) {
+                                error!("Failed to insert mined block {hash}: {e:?}")
                             }
                         }
                     }
@@ -234,38 +231,80 @@ impl Runtime {
         }
     }
 
-    /// Handle a response to an ['avalanche_rpc::Message']
-    fn handle_avalanche_msg(&mut self, message: avalanche_rpc::Message) {
-        match message {
-            avalanche_rpc::Message::Request(req) => match req {
-                avalanche_rpc::Request::GetBlock(_height, _hash) => {}
+    /// Try to insert a block
+    fn try_insert_block(&mut self, block: Block, sender: Option<PeerId>) -> Result<()> {
+        let hash = block.hash()?;
+        let height = block.height;
+        block
+            .verify_pow(&self.randomx_vm)
+            .and_then(|_| self.dag.try_insert(block))
+            .or_else(|e| {
+                if let Error::MissingParent(parent) = e {
+                    debug!("Block {hash} is mising parent {parent}");
+                    if let Some(peer) = sender {
+                        self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
+                            peer,
+                            avalanche_rpc::Request::GetBlock(height - 1, parent.into()),
+                        ))?;
+                    }
+                } else {
+                    warn!("Unable to insert block {hash}: {e:?}");
+                }
+                Err(e)
+            })
+    }
+
+    /// Handle a received avalanche request message from one of our peers
+    fn handle_avalanche_event(&mut self, event: avalanche_rpc::Event) {
+        match event {
+            // Handle inbound avalanche requests from other peers
+            avalanche_rpc::Event::Requested(request_id, request) => match request {
+                avalanche_rpc::Request::GetBlock(height, hash) => {
+                    // Generate a response with the requested block, if we have it
+                    let resp = match self.dag.get_block(height, &hash.into()) {
+                        Ok(block) => avalanche_rpc::Response::Block(block),
+                        Err(_) => avalanche_rpc::Response::NotFound,
+                    };
+                    // Send the response
+                    if let Err(e) = self
+                        .p2p_action_ch
+                        .send(p2p::Action::AvalancheResponse(request_id, resp))
+                    {
+                        error!("Stopping due to p2p_action channel error: {e}");
+                        return;
+                    }
+                }
             },
-            avalanche_rpc::Message::Response(_resp) => {}
+
+            // Handle responses to avalanche requests we sent out
+            avalanche_rpc::Event::Responded(peer, response) => match response {
+                // TODO: if the peer didn't have the requested data, what do we do?
+                // Do we ban the peer for not having data that they should?
+                // Do we try to find the requested data on the DHT instead?
+                avalanche_rpc::Response::NotFound => todo!(),
+                avalanche_rpc::Response::Block(block) => {
+                    if let Ok(hash) = block.hash() {
+                        if let Err(e) = self.try_insert_block(block, Some(peer)) {
+                            debug!("unable to insert requested block {hash}: {e}");
+                        }
+                    }
+                }
+            },
         }
     }
 
     /// Handle a message from the peer to peer network, and generate a validation report back to the
     /// p2p client.
-    fn handle_p2p_pubsub(&mut self, msg: &p2p::Message) -> Result<p2p::MessageValidationReport> {
-        match &msg.data {
+    fn handle_p2p_pubsub(&mut self, msg: p2p::Message) -> Result<p2p::MessageValidationReport> {
+        let accept = msg.accept();
+        let ignore = msg.ignore();
+        let reject = msg.reject();
+        match msg.data {
             p2p::MessageData::Block(block) => {
-                let hash = block.hash()?;
-                match block
-                    .verify_pow(&self.randomx_vm)
-                    .and_then(|_| self.dag.try_insert(block.clone()))
-                {
-                    Err(Error::MissingParent(parent)) => {
-                        self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
-                            msg.msg_source,
-                            avalanche_rpc::Request::GetBlock(block.height, parent.into()),
-                        ))?;
-                        Ok(msg.ignore())
-                    }
-                    Err(e) => {
-                        warn!("Rejected block {hash}: {e:?}");
-                        Ok(msg.reject())
-                    }
-                    Ok(_) => Ok(msg.accept()),
+                match self.try_insert_block(block, Some(msg.msg_source)) {
+                    Err(Error::MissingParent(_)) => Ok(ignore),
+                    Err(_) => Ok(reject),
+                    Ok(_) => Ok(accept),
                 }
             }
         }

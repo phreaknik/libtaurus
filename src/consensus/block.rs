@@ -80,6 +80,12 @@ impl Into<blake3::Hash> for &SerdeHash {
     }
 }
 
+impl Into<blake3::Hash> for SerdeHash {
+    fn into(self) -> blake3::Hash {
+        blake3::Hash::from(self.0)
+    }
+}
+
 impl<'a> BytesEncode<'a> for SerdeHash {
     type EItem = SerdeHash;
 

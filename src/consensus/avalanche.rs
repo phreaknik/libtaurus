@@ -125,7 +125,7 @@ impl DAG {
     }
 
     /// Look up a block from the DAG
-    pub fn get_block(&mut self, hash: &Hash) -> Result<Block> {
+    pub fn get_block(&mut self, _height: u64, hash: &Hash) -> Result<Block> {
         match self.vertices.get(hash) {
             Some(vertex) => Ok(vertex.read().map_err(|_| Error::ReadLock)?.block.clone()),
             None => self

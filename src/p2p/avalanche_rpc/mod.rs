@@ -3,23 +3,25 @@ mod protocol;
 
 use self::protocol::{AvalancheRpcCodec, AvalancheRpcProtocol};
 use libp2p::core::Endpoint;
-use libp2p::request_response::ProtocolSupport;
+use libp2p::request_response::{ProtocolSupport, RequestId, ResponseChannel};
 use libp2p::swarm::{
     ConnectionDenied, ConnectionId, FromSwarm, NetworkBehaviour, PollParameters, THandler,
     THandlerInEvent, THandlerOutEvent, ToSwarm,
 };
 use libp2p::{request_response, Multiaddr, PeerId};
-pub use message::{Message, Request, Response};
+pub use message::{Request, Response};
+use std::collections::HashMap;
 use std::iter;
 use std::task::{Context, Poll};
 use thiserror;
-use tracing::trace;
-
-
+use tracing::{trace, warn};
 
 /// Event produced by [`Behaviour`].
 #[derive(Debug, Clone)]
-pub enum Event {}
+pub enum Event {
+    Requested(RequestId, Request),
+    Responded(PeerId, Response),
+}
 
 /// Error type for peer RPC errors
 #[derive(thiserror::Error, Debug)]
@@ -31,6 +33,8 @@ pub struct Behaviour {
     inner: request_response::Behaviour<AvalancheRpcCodec>,
     /// Configuration parameters
     _config: Config,
+    /// Map of response channels for pending requests
+    pending: HashMap<RequestId, ResponseChannel<Response>>,
 }
 
 impl<'a> Behaviour {
@@ -47,6 +51,7 @@ impl<'a> Behaviour {
                 inner_config,
             ),
             _config,
+            pending: HashMap::new(),
         }
     }
 
@@ -59,36 +64,35 @@ impl<'a> Behaviour {
         // Process any response to our request, and remove the request from the
         // ongoing_outbound queue
         match message {
-            request_response::Message::Request { request, .. } => {
+            request_response::Message::Request {
+                request_id,
+                request,
+                channel,
+            } => {
                 trace!("Received avalanche_rpc request from {peer_id}: {request:?}");
-                //match self
-                //    .inner
-                //    .send_response(channel, rpc_messages::Response { .. }.into())
-                //{
-                //    Err(_) => Poll::Ready(SwarmAction::GenerateEvent(Event::ResponseFailed)),
-                //    Ok(_) => Poll::Ready(ToSwarm::GenerateEvent(Event::ProcessedPeerRequest)),
-                //}
-                Poll::Pending
+                // Save the response channel, so we can forward the response later
+                self.pending.insert(request_id, channel);
+                Poll::Ready(ToSwarm::GenerateEvent(Event::Requested(
+                    request_id, request,
+                )))
             }
             request_response::Message::Response { response, .. } => {
                 trace!("Received avalanche_rpc response from {peer_id}: {response:?}");
-                //Poll::Ready(ToSwarm::GenerateEvent(Event::Response((
-                //    peer_id,
-                //    response
-                //        .proto()
-                //        .peers
-                //        .clone()
-                //        .into_iter()
-                //        .filter_map(|p| p.try_into().ok())
-                //        .collect(),
-                //))))
-                Poll::Pending
+                Poll::Ready(ToSwarm::GenerateEvent(Event::Responded(peer_id, response)))
             }
         }
     }
 
     pub fn send_request(&mut self, peer: &PeerId, request: Request) {
         self.inner.send_request(peer, request);
+    }
+
+    pub fn send_response(&mut self, request_id: RequestId, response: Response) {
+        if let Some(ch) = self.pending.remove(&request_id) {
+            if let Err(_) = self.inner.send_response(ch, response) {
+                warn!("error responding to avalanche request");
+            }
+        }
     }
 }
 
