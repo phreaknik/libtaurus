@@ -1,19 +1,21 @@
-mod generated;
+mod message;
 mod protocol;
 
-use self::proto::rpc_messages::{self, Request};
-use self::protocol::{PeerRpcCodec, PeerRpcProtocol};
+use self::protocol::{AvalancheRpcCodec, AvalancheRpcProtocol};
 use libp2p::core::Endpoint;
-use libp2p::request_response::{Message, ProtocolSupport};
+use libp2p::request_response::ProtocolSupport;
 use libp2p::swarm::{
     ConnectionDenied, ConnectionId, FromSwarm, NetworkBehaviour, PollParameters, THandler,
     THandlerInEvent, THandlerOutEvent, ToSwarm,
 };
 use libp2p::{request_response, Multiaddr, PeerId};
+pub use message::{Message, Request, Response};
 use std::iter;
 use std::task::{Context, Poll};
 use thiserror;
 use tracing::trace;
+
+
 
 /// Event produced by [`Behaviour`].
 #[derive(Debug, Clone)]
@@ -26,18 +28,24 @@ pub enum Error {}
 /// [`NetworkBehaviour`] to implement the peer RPC message routing
 pub struct Behaviour {
     /// Inner behaviour for sending requests and receiving the response.
-    inner: request_response::Behaviour<PeerRpcCodec>,
+    inner: request_response::Behaviour<AvalancheRpcCodec>,
     /// Configuration parameters
     _config: Config,
 }
 
 impl<'a> Behaviour {
     pub fn new(_config: Config) -> Self {
-        let inner_protocols =
-            iter::once((PeerRpcProtocol::new(_config.clone()), ProtocolSupport::Full));
+        let inner_protocols = iter::once((
+            AvalancheRpcProtocol::new(_config.clone()),
+            ProtocolSupport::Full,
+        ));
         let inner_config = request_response::Config::default();
         Behaviour {
-            inner: request_response::Behaviour::new(PeerRpcCodec, inner_protocols, inner_config),
+            inner: request_response::Behaviour::new(
+                AvalancheRpcCodec,
+                inner_protocols,
+                inner_config,
+            ),
             _config,
         }
     }
@@ -46,13 +54,13 @@ impl<'a> Behaviour {
     fn handle_message(
         &mut self,
         peer_id: PeerId,
-        message: Message<rpc_messages::Request, rpc_messages::Response>,
+        message: request_response::Message<Request, Response>,
     ) -> Poll<SwarmAction> {
         // Process any response to our request, and remove the request from the
         // ongoing_outbound queue
         match message {
             request_response::Message::Request { request, .. } => {
-                trace!("Received peer_rpc request from {peer_id}: {request:?}");
+                trace!("Received avalanche_rpc request from {peer_id}: {request:?}");
                 //match self
                 //    .inner
                 //    .send_response(channel, rpc_messages::Response { .. }.into())
@@ -63,7 +71,7 @@ impl<'a> Behaviour {
                 Poll::Pending
             }
             request_response::Message::Response { response, .. } => {
-                trace!("Received peer_rpc response from {peer_id}: {response:?}");
+                trace!("Received avalanche_rpc response from {peer_id}: {response:?}");
                 //Poll::Ready(ToSwarm::GenerateEvent(Event::Response((
                 //    peer_id,
                 //    response
@@ -86,7 +94,7 @@ impl<'a> Behaviour {
 
 impl NetworkBehaviour for Behaviour {
     type ConnectionHandler =
-        <request_response::Behaviour<PeerRpcCodec> as NetworkBehaviour>::ConnectionHandler;
+        <request_response::Behaviour<AvalancheRpcCodec> as NetworkBehaviour>::ConnectionHandler;
     type OutEvent = Event;
 
     fn poll(
@@ -174,11 +182,6 @@ impl NetworkBehaviour for Behaviour {
 type SwarmAction<'a> =
     ToSwarm<<Behaviour as NetworkBehaviour>::OutEvent, THandlerInEvent<Behaviour>>;
 
-/// Configuration for the ['peer_rpc::Behaviour'](Behaviour)
+/// Configuration for the ['avalanche_rpc::Behaviour'](Behaviour)
 #[derive(Debug, Clone)]
 pub struct Config {}
-
-#[allow(clippy::derive_partial_eq_without_eq)]
-pub mod proto {
-    include!("generated/mod.rs");
-}

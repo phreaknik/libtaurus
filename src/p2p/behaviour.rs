@@ -1,7 +1,5 @@
-use super::peer_rpc::proto::rpc_messages::mod_Request::OneOfpayload;
-use super::peer_rpc::proto::rpc_messages::{GetBlock, Request};
-use super::{peer_rpc, Event, MessageData, PeerDatabase, PeerInfo};
-use blake3::Hash;
+use super::{avalanche_rpc, Event, MessageData, PeerDatabase, PeerInfo};
+
 use libp2p::core::Endpoint;
 use libp2p::gossipsub::{self, MessageAcceptance, MessageAuthenticity, MessageId, Sha256Topic};
 use libp2p::identity::Keypair;
@@ -12,7 +10,7 @@ use libp2p::swarm::{
     THandlerInEvent, THandlerOutEvent, ToSwarm,
 };
 use libp2p::{identify, Multiaddr, PeerId};
-use std::borrow::{BorrowMut, Cow};
+use std::borrow::{BorrowMut};
 use std::str;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
@@ -36,7 +34,7 @@ pub struct InnerBehaviour {
     identify: identify::Behaviour,
     kademlia: Kademlia<MemoryStore>,
     gossipsub: gossipsub::Behaviour,
-    peer_rpc: peer_rpc::Behaviour,
+    avalanche_rpc: avalanche_rpc::Behaviour,
 }
 
 impl<'a> InnerBehaviour {
@@ -60,7 +58,7 @@ impl<'a> InnerBehaviour {
                 config.kad_cfg,
             ),
             gossipsub,
-            peer_rpc: peer_rpc::Behaviour::new(config.peer_rpc_cfg),
+            avalanche_rpc: avalanche_rpc::Behaviour::new(config.avalanche_rpc_cfg),
         })
     }
 }
@@ -161,16 +159,9 @@ impl<'a> Behaviour {
         wtxn.commit().unwrap();
     }
 
-    pub fn get_block_from_peer(&mut self, peer: &PeerId, height: u64, hash: &Hash) {
-        self.inner.peer_rpc.send_request(
-            peer,
-            Request {
-                payload: OneOfpayload::get_block(GetBlock {
-                    height,
-                    hash: Cow::from(&hash.as_bytes()[..]),
-                }),
-            },
-        )
+    /// Send a request to a peer via the ['avalanche_rpc'] protocol
+    pub fn avalanche_request(&mut self, peer: &PeerId, request: avalanche_rpc::Request) {
+        self.inner.avalanche_rpc.send_request(peer, request)
     }
 
     /// Handle peer identification events
@@ -331,7 +322,7 @@ pub struct Config {
     /// Gossipsub protocol configuration
     gossipsub_cfg: gossipsub::Config,
     /// Peer RPC protocol configuration
-    peer_rpc_cfg: peer_rpc::Config,
+    avalanche_rpc_cfg: avalanche_rpc::Config,
     /// Bootstrap nodes to join the P2P network
     boot_nodes: Vec<Multiaddr>,
 }
@@ -352,7 +343,7 @@ impl Config {
                 pubkey,
             ),
             kad_cfg,
-            peer_rpc_cfg: peer_rpc::Config {},
+            avalanche_rpc_cfg: avalanche_rpc::Config {},
             gossipsub_cfg,
             boot_nodes,
         }

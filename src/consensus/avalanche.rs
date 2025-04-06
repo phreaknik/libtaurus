@@ -32,7 +32,7 @@ pub struct DAG {
     /// The active edge of the DAG, i.e. the preferred vertices which don't yet have children
     frontier: HashMap<Hash, Block>,
 
-    /// Database to store blocks
+    /// Database for block storage
     database: BlocksDatabase,
 
     /// Hash of the genesis block
@@ -121,6 +121,17 @@ impl DAG {
 
             // Commit the block to the database only now that it has passed all validation
             wtxn.commit().map_err(Error::from)
+        }
+    }
+
+    /// Look up a block from the DAG
+    pub fn get_block(&mut self, hash: &Hash) -> Result<Block> {
+        match self.vertices.get(hash) {
+            Some(vertex) => Ok(vertex.read().map_err(|_| Error::ReadLock)?.block.clone()),
+            None => self
+                .database
+                .read_block(hash.clone())?
+                .ok_or(Error::NotFound),
         }
     }
 }

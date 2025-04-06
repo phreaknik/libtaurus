@@ -1,10 +1,9 @@
+pub mod avalanche_rpc;
 mod behaviour;
 mod database;
 pub mod message;
-mod peer_rpc;
 
 pub use behaviour::Behaviour;
-use blake3::Hash;
 use core::result;
 pub use database::{PeerDatabase, PeerInfo};
 use futures::StreamExt;
@@ -24,8 +23,6 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::{broadcast, oneshot};
 use tracing::{error, info};
 
-use crate::consensus::SerdeHash;
-
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
 /// [`tokio::sync::broadcast`] for more information.
 pub const P2P_EVENT_CHAN_CAPACITY: usize = 32;
@@ -37,6 +34,7 @@ pub const DATABASE_DIR: &str = "peer_db/";
 #[derive(Debug, Clone)]
 pub enum Event {
     Pubsub(Message),
+    AvalancheMessage(avalanche_rpc::Message),
 }
 
 /// Actions that can be performed by the p2p client
@@ -45,7 +43,7 @@ pub enum Action {
     Broadcast(MessageData),
     GetLocalPeerId(oneshot::Sender<PeerId>),
     ReportMessageValidity(MessageValidationReport),
-    GetBlock(PeerId, u64, Hash),
+    AvalancheRequest(PeerId, avalanche_rpc::Request),
 }
 
 /// Error type for cordelia-p2p errors
@@ -180,8 +178,8 @@ async fn task_fn(
                 })) => {
                     swarm.behaviour_mut().report_message_validation_result(&msg_id, &msg_source, acceptance)
                 },
-                Some(Action::GetBlock(peer, height, hash)) => {
-                    swarm.behaviour_mut().get_block_from_peer(&peer, height, &hash);
+                Some(Action::AvalancheRequest(peer, request)) => {
+                    swarm.behaviour_mut().avalanche_request(&peer, request)
                 },
                 None => {
                     // If we do not receive requests from the consensus module, we cannot

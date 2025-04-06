@@ -2,6 +2,7 @@ pub mod avalanche;
 mod block;
 mod database;
 
+use crate::p2p::avalanche_rpc;
 use crate::randomx::RandomXVMInstance;
 use crate::{p2p, randomx};
 pub use avalanche::*;
@@ -48,6 +49,8 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("new block channel error")]
     NewBlockCh(#[from] tokio::sync::mpsc::error::SendError<Block>),
+    #[error("p2p action channel error")]
+    P2pActionCh(#[from] tokio::sync::mpsc::error::SendError<p2p::Action>),
     #[error("consensus event channel error")]
     EventsOutCh(#[from] tokio::sync::broadcast::error::SendError<Event>),
     #[error("collection is empty")]
@@ -64,6 +67,8 @@ pub enum Error {
     MissingParent(Hash),
     #[error("missing data")]
     MissingData,
+    #[error("data not found")]
+    NotFound,
     #[error("error acquiring read lock")]
     ReadLock,
     #[error("error acquiring write lock")]
@@ -192,7 +197,7 @@ impl Runtime {
                                 return;
                     },
                         Ok(p2p::Event::Pubsub(msg)) => {
-                            let validation = self.handle_p2p_message(&msg).unwrap_or_else(|e| {
+                            let validation = self.handle_p2p_pubsub(&msg).unwrap_or_else(|e| {
                                 warn!("Error handling p2p message: {e}");
                                 msg.ignore()
                             });
@@ -201,6 +206,7 @@ impl Runtime {
                                 return;
                             }
                         },
+                        Ok(p2p::Event::AvalancheMessage(msg)) => self.handle_avalanche_msg(msg),
                     }
                 },
                 Some(action) = self.actions_in.recv() => {
@@ -228,9 +234,19 @@ impl Runtime {
         }
     }
 
+    /// Handle a response to an ['avalanche_rpc::Message']
+    fn handle_avalanche_msg(&mut self, message: avalanche_rpc::Message) {
+        match message {
+            avalanche_rpc::Message::Request(req) => match req {
+                avalanche_rpc::Request::GetBlock(_height, _hash) => {}
+            },
+            avalanche_rpc::Message::Response(_resp) => {}
+        }
+    }
+
     /// Handle a message from the peer to peer network, and generate a validation report back to the
     /// p2p client.
-    fn handle_p2p_message(&mut self, msg: &p2p::Message) -> Result<p2p::MessageValidationReport> {
+    fn handle_p2p_pubsub(&mut self, msg: &p2p::Message) -> Result<p2p::MessageValidationReport> {
         match &msg.data {
             p2p::MessageData::Block(block) => {
                 let hash = block.hash()?;
@@ -239,11 +255,10 @@ impl Runtime {
                     .and_then(|_| self.dag.try_insert(block.clone()))
                 {
                     Err(Error::MissingParent(parent)) => {
-                        self.p2p_action_ch.send(p2p::Action::GetBlock(
+                        self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
                             msg.msg_source,
-                            block.height,
-                            block.hash()?,
-                        ));
+                            avalanche_rpc::Request::GetBlock(block.height, parent.into()),
+                        ))?;
                         Ok(msg.ignore())
                     }
                     Err(e) => {
