@@ -1,4 +1,4 @@
-use super::{proto, Config};
+use super::{proto, Config, Request, Response};
 use async_trait::async_trait;
 use futures::prelude::*;
 use libp2p::request_response;
@@ -53,7 +53,7 @@ impl request_response::Codec for AvalancheRpcCodec {
                 io::ErrorKind::InvalidData,
                 "unable to read request message",
             )),
-            Ok(request) => request.try_into().map_err(|_| {
+            Ok(protobuf) => Request::from_protobuf(protobuf).map_err(|_| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
                     "parsed request message is missing data",
@@ -78,7 +78,7 @@ impl request_response::Codec for AvalancheRpcCodec {
                 io::ErrorKind::InvalidData,
                 "unable to read response message",
             )),
-            Ok(request) => request.try_into().map_err(|_| {
+            Ok(protobuf) => Response::from_protobuf(protobuf).map_err(|_| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
                     "parsed response message is missing data",
@@ -98,10 +98,10 @@ impl request_response::Codec for AvalancheRpcCodec {
     {
         let mut bytes = Vec::new();
         let mut writer = Writer::new(&mut bytes);
-        let protobuf = TryInto::<proto::Request>::try_into(data).map_err(|_| {
+        let protobuf = data.to_protobuf().map_err(|_| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                "unable to encode request message",
+                "unable to convert request to protobuf",
             )
         })?;
         protobuf.write_message(&mut writer).map_err(|_| {
@@ -126,10 +126,10 @@ impl request_response::Codec for AvalancheRpcCodec {
         error!("sending response: {data:?}");
         let mut bytes = Vec::new();
         let mut writer = Writer::new(&mut bytes);
-        let protobuf = TryInto::<proto::Response>::try_into(data).map_err(|_| {
+        let protobuf = data.to_protobuf().map_err(|_| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                "unable to encode response message",
+                "unable to convert response to protobuf",
             )
         })?;
         protobuf.write_message(&mut writer).map_err(|_| {

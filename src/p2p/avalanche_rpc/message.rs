@@ -1,4 +1,5 @@
 use super::proto;
+use super::Error;
 use crate::consensus::{Block, SerdeHash};
 use strum_macros::EnumIter;
 
@@ -8,24 +9,9 @@ pub enum Request {
     GetBlock(u64, SerdeHash),
 }
 
-impl TryFrom<proto::Request> for Request {
-    type Error = super::Error;
-
-    fn try_from(req: proto::Request) -> Result<Self, super::Error> {
-        match req.RequestData {
-            proto::mod_Request::OneOfRequestData::get_block(message) => Ok(Request::GetBlock(
-                message.height,
-                serde_cbor::from_slice(message.hash.as_slice())?,
-            )),
-            proto::mod_Request::OneOfRequestData::None => Err(super::Error::IncompleteRequest),
-        }
-    }
-}
-
-impl TryInto<proto::Request> for Request {
-    type Error = super::Error;
-
-    fn try_into(self) -> Result<proto::Request, Self::Error> {
+impl Request {
+    /// Convert a Request to into protobuf format
+    pub fn to_protobuf(self) -> Result<proto::Request, Error> {
         Ok(proto::Request {
             RequestData: match self {
                 Request::GetBlock(height, hash) => {
@@ -37,6 +23,17 @@ impl TryInto<proto::Request> for Request {
             },
         })
     }
+
+    /// Convert a Request from protobuf format
+    pub fn from_protobuf(req: proto::Request) -> Result<Self, Error> {
+        match req.RequestData {
+            proto::mod_Request::OneOfRequestData::get_block(message) => Ok(Request::GetBlock(
+                message.height,
+                serde_cbor::from_slice(message.hash.as_slice())?,
+            )),
+            proto::mod_Request::OneOfRequestData::None => Err(super::Error::IncompleteRequest),
+        }
+    }
 }
 
 /// Message type defining the peer RPC response messages
@@ -46,28 +43,24 @@ pub enum Response {
     Block(Block),
 }
 
-impl TryFrom<proto::Response> for Response {
-    type Error = super::Error;
-
-    fn try_from(resp: proto::Response) -> Result<Self, super::Error> {
-        match resp.ResponseData {
-            proto::mod_Response::OneOfResponseData::error(e) => Ok(Response::Error(e)),
-            proto::mod_Response::OneOfResponseData::block(b) => Ok(Response::Block(b.try_into()?)),
-            proto::mod_Response::OneOfResponseData::None => Err(super::Error::IncompleteResponse),
-        }
-    }
-}
-
-impl TryInto<proto::Response> for Response {
-    type Error = super::Error;
-
-    fn try_into(self) -> Result<proto::Response, super::Error> {
+impl Response {
+    /// Convert a Response to protobuf format
+    pub fn to_protobuf(self) -> Result<proto::Response, Error> {
         Ok(proto::Response {
             ResponseData: match self {
                 Response::Error(e) => proto::mod_Response::OneOfResponseData::error(e),
                 Response::Block(b) => proto::mod_Response::OneOfResponseData::block(b.try_into()?),
             },
         })
+    }
+
+    /// Convert a Response from protobuf format
+    pub fn from_protobuf(resp: proto::Response) -> Result<Self, Error> {
+        match resp.ResponseData {
+            proto::mod_Response::OneOfResponseData::error(e) => Ok(Response::Error(e)),
+            proto::mod_Response::OneOfResponseData::block(b) => Ok(Response::Block(b.try_into()?)),
+            proto::mod_Response::OneOfResponseData::None => Err(super::Error::IncompleteResponse),
+        }
     }
 }
 
@@ -85,15 +78,13 @@ mod tests {
             // Encode the message
             let mut bytes = Vec::new();
             let mut writer = Writer::new(&mut bytes);
-            let protobuf = TryInto::<proto::Request>::try_into(request_in.clone()).unwrap();
+            let protobuf = request_in.clone().to_protobuf().unwrap();
             protobuf.write_message(&mut writer).unwrap();
 
             // Decode the request
             let mut reader = BytesReader::from_bytes(&bytes);
-            let request_out: Request = proto::Request::from_reader(&mut reader, &bytes)
-                .unwrap()
-                .try_into()
-                .unwrap();
+            let protobuf = proto::Request::from_reader(&mut reader, &bytes).unwrap();
+            let request_out = Request::from_protobuf(protobuf).unwrap();
             assert_eq!(request_in, request_out);
         }
     }
