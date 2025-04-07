@@ -46,8 +46,9 @@ impl request_response::Codec for AvalancheRpcCodec {
     {
         let mut bytes = Vec::new();
         io.read_to_end(&mut bytes).await?;
+        error!("received bytes: {bytes:?}");
         let mut reader = BytesReader::from_bytes(&bytes);
-        match super::proto::Request::from_reader(&mut reader, &bytes) {
+        match proto::Request::from_reader(&mut reader, &bytes) {
             Err(_) => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "unable to read request message",
@@ -72,7 +73,7 @@ impl request_response::Codec for AvalancheRpcCodec {
         let mut bytes = Vec::new();
         io.read_to_end(&mut bytes).await?;
         let mut reader = BytesReader::from_bytes(&bytes);
-        match super::proto::Response::from_reader(&mut reader, &bytes) {
+        match proto::Response::from_reader(&mut reader, &bytes) {
             Err(_) => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "unable to read response message",
@@ -110,6 +111,7 @@ impl request_response::Codec for AvalancheRpcCodec {
                     "unable to write request message",
                 )
             })?;
+        error!("sent bytes: {bytes:?}");
         io.write_all(bytes.as_slice()).await?;
         io.close().await
     }
@@ -123,6 +125,7 @@ impl request_response::Codec for AvalancheRpcCodec {
     where
         T: AsyncWrite + Send + Unpin,
     {
+        error!("sending response: {data:?}");
         let mut bytes = Vec::new();
         let mut writer = Writer::new(&mut bytes);
         writer

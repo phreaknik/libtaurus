@@ -2,7 +2,7 @@ use crate::{
     p2p, params,
     randomx::{self, RandomXVMInstance},
 };
-pub use blake3::Hash;
+pub use blake3::{Hash, OUT_LEN};
 use chrono::{DateTime, Utc};
 use heed::{BytesDecode, BytesEncode};
 use libp2p::{multihash::Multihash, PeerId};
@@ -141,7 +141,7 @@ impl TryInto<p2p::avalanche_rpc::proto::Block> for Block {
 
 /// Wrapper struct around blake3::Hash to facilitate serde implementation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SerdeHash([u8; blake3::OUT_LEN]);
+pub struct SerdeHash([u8; OUT_LEN]);
 
 impl From<blake3::Hash> for SerdeHash {
     fn from(hash: blake3::Hash) -> Self {
@@ -178,6 +178,12 @@ impl<'a> BytesDecode<'a> for SerdeHash {
         bytes: &'a [u8],
     ) -> std::result::Result<Self::DItem, Box<dyn std::error::Error>> {
         Ok(serde_cbor::from_slice(bytes)?)
+    }
+}
+
+impl Default for SerdeHash {
+    fn default() -> Self {
+        SerdeHash([0; OUT_LEN])
     }
 }
 

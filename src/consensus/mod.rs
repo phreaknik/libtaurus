@@ -228,10 +228,10 @@ impl Runtime {
                 if let Error::Avalanche(avalanche::Error::MissingParents(parents)) = &e {
                     // Look for missing parents block in P2P network
                     if let Some(peer) = sender {
-                        for &hash in parents {
+                        for &parent in parents {
                             self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
                                 peer,
-                                avalanche_rpc::Request::GetBlock(height - 1, hash.into()),
+                                avalanche_rpc::Request::GetBlock(height - 1, parent.into()),
                             ))?;
                         }
                     }
