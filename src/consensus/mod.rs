@@ -1,5 +1,5 @@
 pub mod avalanche;
-mod block;
+pub mod block;
 mod database;
 
 use crate::p2p::avalanche_rpc;
@@ -251,7 +251,9 @@ impl Runtime {
                     // Generate a response with the requested block, if we have it
                     let resp = match self.dag.get_block(height, &hash.into()) {
                         Ok(block) => avalanche_rpc::Response::Block(block),
-                        Err(_) => avalanche_rpc::Response::NotFound,
+                        Err(_) => avalanche_rpc::Response::Error(
+                            avalanche_rpc::proto::mod_Response::Error::NOT_FOUND,
+                        ),
                     };
                     // Send the response
                     if let Err(e) = self
@@ -269,7 +271,7 @@ impl Runtime {
                 // TODO: if the peer didn't have the requested data, what do we do?
                 // Do we ban the peer for not having data that they should?
                 // Do we try to find the requested data on the DHT instead?
-                avalanche_rpc::Response::NotFound => todo!(),
+                avalanche_rpc::Response::Error(_) => todo!(),
                 avalanche_rpc::Response::Block(block) => {
                     if let Ok(hash) = block.hash() {
                         if let Err(e) = self.try_insert_block(block, Some(peer)) {

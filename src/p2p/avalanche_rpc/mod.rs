@@ -1,7 +1,11 @@
+mod generated;
 mod message;
 mod protocol;
 
+use crate::consensus;
+
 use self::protocol::{AvalancheRpcCodec, AvalancheRpcProtocol};
+pub use generated::avalanche::proto;
 use libp2p::core::Endpoint;
 use libp2p::request_response::{ProtocolSupport, RequestId, ResponseChannel};
 use libp2p::swarm::{
@@ -25,7 +29,16 @@ pub enum Event {
 
 /// Error type for peer RPC errors
 #[derive(thiserror::Error, Debug)]
-pub enum Error {}
+pub enum Error {
+    #[error(transparent)]
+    Block(#[from] consensus::block::Error),
+    #[error(transparent)]
+    Cbor(#[from] serde_cbor::Error),
+    #[error("request message is missing data")]
+    IncompleteRequest,
+    #[error("response message is missing data")]
+    IncompleteResponse,
+}
 
 /// [`NetworkBehaviour`] to implement the peer RPC message routing
 pub struct Behaviour {

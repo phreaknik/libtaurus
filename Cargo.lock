@@ -850,6 +850,7 @@ dependencies = [
  "libp2p",
  "lru 0.11.0",
  "num",
+ "quick-protobuf",
  "rand 0.8.5",
  "randomx-rs",
  "serde",

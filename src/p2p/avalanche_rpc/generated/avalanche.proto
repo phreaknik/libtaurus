@@ -1,0 +1,38 @@
+syntax = "proto3";
+package avalanche.proto;
+
+// Request message type
+message Request {
+	oneof RequestData {
+		GetBlock get_block = 0;
+	}
+}
+
+// Response message type
+message Response {
+	// Error codes
+	enum Error {
+		NOT_FOUND = 0;
+	}
+
+	oneof ResponseData {
+		Error error = 0;
+		Block block = 1;
+	}
+}
+
+// Inner message types
+message GetBlock {
+  uint64 height = 0;
+  bytes hash = 1;
+}
+
+message Block {
+  uint32 version = 0;
+  uint64 height = 1;
+	uint64 difficulty = 2;
+	bytes miner = 3;
+	repeated bytes parents = 4;
+	bytes time = 5;
+	uint64 nonce = 6;
+}

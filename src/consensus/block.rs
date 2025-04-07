@@ -1,5 +1,5 @@
 use crate::{
-    params,
+    p2p, params,
     randomx::{self, RandomXVMInstance},
 };
 pub use blake3::Hash;
@@ -14,7 +14,13 @@ use std::result;
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error(transparent)]
+    Chrono(#[from] chrono::ParseError),
+    #[error(transparent)]
+    Multihash(#[from] libp2p::multihash::Error),
+    #[error(transparent)]
     SerdeCbor(#[from] serde_cbor::error::Error),
+    #[error(transparent)]
+    Utf8(#[from] std::string::FromUtf8Error),
     #[error(transparent)]
     RandomX(#[from] randomx::Error),
     #[error("invalid difficulty")]
@@ -30,9 +36,9 @@ pub type Result<T> = result::Result<T, Error>;
 pub struct Block {
     pub version: u32,
     pub height: u64,
-    pub parents: Vec<SerdeHash>,
     pub difficulty: u64,
     pub miner: PeerId,
+    pub parents: Vec<SerdeHash>,
     pub time: DateTime<Utc>,
     pub nonce: u64,
 }
@@ -90,6 +96,46 @@ impl Default for Block {
             time: Utc::now(),
             nonce: 0,
         }
+    }
+}
+
+impl TryFrom<p2p::avalanche_rpc::proto::Block> for Block {
+    type Error = Error;
+
+    fn try_from(block: p2p::avalanche_rpc::proto::Block) -> result::Result<Self, Self::Error> {
+        Ok(Block {
+            version: block.version,
+            height: block.height,
+            difficulty: block.difficulty,
+            miner: PeerId::from_bytes(&block.miner)?,
+            parents: block
+                .parents
+                .iter()
+                .map(|bytes| serde_cbor::from_slice(bytes))
+                .try_collect()?,
+            time: serde_cbor::from_slice(&block.time)?,
+            nonce: block.nonce,
+        })
+    }
+}
+
+impl TryInto<p2p::avalanche_rpc::proto::Block> for Block {
+    type Error = Error;
+
+    fn try_into(self) -> result::Result<p2p::avalanche_rpc::proto::Block, Self::Error> {
+        Ok(p2p::avalanche_rpc::proto::Block {
+            version: self.version,
+            height: self.height,
+            difficulty: self.difficulty,
+            miner: self.miner.to_bytes(),
+            parents: self
+                .parents
+                .iter()
+                .map(|p| serde_cbor::to_vec(p))
+                .try_collect()?,
+            time: serde_cbor::to_vec(&self.time)?,
+            nonce: self.nonce,
+        })
     }
 }
 

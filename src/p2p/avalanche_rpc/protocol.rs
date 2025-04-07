@@ -1,8 +1,9 @@
-use super::Config;
+use super::{proto, Config};
 use async_trait::async_trait;
 use futures::prelude::*;
 use libp2p::request_response;
 use libp2p::request_response::ProtocolName;
+use quick_protobuf::{BytesReader, MessageRead, Writer};
 use std::io;
 use thiserror::Error;
 use tracing::error;
@@ -43,14 +44,21 @@ impl request_response::Codec for AvalancheRpcCodec {
     where
         T: AsyncRead + Send + Unpin,
     {
-        let mut buf = Vec::new();
-        io.read_to_end(&mut buf).await?;
-        serde_cbor::from_slice(buf.as_slice()).map_err(|_| {
-            io::Error::new(
+        let mut bytes = Vec::new();
+        io.read_to_end(&mut bytes).await?;
+        let mut reader = BytesReader::from_bytes(&bytes);
+        match super::proto::Request::from_reader(&mut reader, &bytes) {
+            Err(_) => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "received invalid request message",
-            )
-        })
+                "unable to read request message",
+            )),
+            Ok(request) => request.try_into().map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "parsed request message is missing data",
+                )
+            }),
+        }
     }
 
     async fn read_response<T>(
@@ -61,14 +69,21 @@ impl request_response::Codec for AvalancheRpcCodec {
     where
         T: AsyncRead + Send + Unpin,
     {
-        let mut buf = Vec::new();
-        io.read_to_end(&mut buf).await?;
-        serde_cbor::from_slice(buf.as_slice()).map_err(|_| {
-            io::Error::new(
+        let mut bytes = Vec::new();
+        io.read_to_end(&mut bytes).await?;
+        let mut reader = BytesReader::from_bytes(&bytes);
+        match super::proto::Response::from_reader(&mut reader, &bytes) {
+            Err(_) => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "received invalid response message",
-            )
-        })
+                "unable to read response message",
+            )),
+            Ok(request) => request.try_into().map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "parsed response message is missing data",
+                )
+            }),
+        }
     }
 
     async fn write_request<T>(
@@ -80,16 +95,23 @@ impl request_response::Codec for AvalancheRpcCodec {
     where
         T: AsyncWrite + Send + Unpin,
     {
-        io.write_all(
-            &serde_cbor::to_vec(&data)
-                .map_err(|_| {
-                    io::Error::new(io::ErrorKind::InvalidData, "error encoding request message")
-                })?
-                .as_slice(),
-        )
-        .await?;
-        io.close().await?;
-        Ok(())
+        let mut bytes = Vec::new();
+        let mut writer = Writer::new(&mut bytes);
+        writer
+            .write_message(&TryInto::<proto::Request>::try_into(data).map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "unable to encode request message",
+                )
+            })?)
+            .map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "unable to write request message",
+                )
+            })?;
+        io.write_all(bytes.as_slice()).await?;
+        io.close().await
     }
 
     async fn write_response<T>(
@@ -101,19 +123,23 @@ impl request_response::Codec for AvalancheRpcCodec {
     where
         T: AsyncWrite + Send + Unpin,
     {
-        io.write_all(
-            &serde_cbor::to_vec(&data)
-                .map_err(|_| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "error encoding response message",
-                    )
-                })?
-                .as_slice(),
-        )
-        .await?;
-        io.close().await?;
-        Ok(())
+        let mut bytes = Vec::new();
+        let mut writer = Writer::new(&mut bytes);
+        writer
+            .write_message(&TryInto::<proto::Response>::try_into(data).map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "unable to encode response message",
+                )
+            })?)
+            .map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "unable to write response message",
+                )
+            })?;
+        io.write_all(bytes.as_slice()).await?;
+        io.close().await
     }
 }
 
