@@ -140,7 +140,7 @@ impl TryInto<p2p::avalanche_rpc::proto::Block> for Block {
 }
 
 /// Wrapper struct around blake3::Hash to facilitate serde implementation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SerdeHash([u8; OUT_LEN]);
 
 impl From<blake3::Hash> for SerdeHash {

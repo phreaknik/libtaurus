@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use futures::prelude::*;
 use libp2p::request_response;
 use libp2p::request_response::ProtocolName;
-use quick_protobuf::{BytesReader, MessageRead, Writer};
+use quick_protobuf::{BytesReader, MessageRead, MessageWrite, Writer};
 use std::io;
 use thiserror::Error;
 use tracing::error;
@@ -47,8 +47,8 @@ impl request_response::Codec for AvalancheRpcCodec {
         let mut bytes = Vec::new();
         io.read_to_end(&mut bytes).await?;
         error!("received bytes: {bytes:?}");
-        let mut reader = BytesReader::from_bytes(&bytes);
-        match proto::Request::from_reader(&mut reader, &bytes) {
+        let mut protobuf = BytesReader::from_bytes(&bytes);
+        match proto::Request::from_reader(&mut protobuf, &bytes) {
             Err(_) => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "unable to read request message",
@@ -72,8 +72,8 @@ impl request_response::Codec for AvalancheRpcCodec {
     {
         let mut bytes = Vec::new();
         io.read_to_end(&mut bytes).await?;
-        let mut reader = BytesReader::from_bytes(&bytes);
-        match proto::Response::from_reader(&mut reader, &bytes) {
+        let mut protobuf = BytesReader::from_bytes(&bytes);
+        match proto::Response::from_reader(&mut protobuf, &bytes) {
             Err(_) => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "unable to read response message",
@@ -98,20 +98,18 @@ impl request_response::Codec for AvalancheRpcCodec {
     {
         let mut bytes = Vec::new();
         let mut writer = Writer::new(&mut bytes);
-        writer
-            .write_message(&TryInto::<proto::Request>::try_into(data).map_err(|_| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "unable to encode request message",
-                )
-            })?)
-            .map_err(|_| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "unable to write request message",
-                )
-            })?;
-        error!("sent bytes: {bytes:?}");
+        let protobuf = TryInto::<proto::Request>::try_into(data).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unable to encode request message",
+            )
+        })?;
+        protobuf.write_message(&mut writer).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unable to write request message",
+            )
+        })?;
         io.write_all(bytes.as_slice()).await?;
         io.close().await
     }
@@ -128,19 +126,18 @@ impl request_response::Codec for AvalancheRpcCodec {
         error!("sending response: {data:?}");
         let mut bytes = Vec::new();
         let mut writer = Writer::new(&mut bytes);
-        writer
-            .write_message(&TryInto::<proto::Response>::try_into(data).map_err(|_| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "unable to encode response message",
-                )
-            })?)
-            .map_err(|_| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "unable to write response message",
-                )
-            })?;
+        let protobuf = TryInto::<proto::Response>::try_into(data).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unable to encode response message",
+            )
+        })?;
+        protobuf.write_message(&mut writer).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unable to write response message",
+            )
+        })?;
         io.write_all(bytes.as_slice()).await?;
         io.close().await
     }

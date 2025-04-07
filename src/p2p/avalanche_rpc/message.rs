@@ -1,8 +1,9 @@
 use super::proto;
 use crate::consensus::{Block, SerdeHash};
+use strum_macros::EnumIter;
 
 /// Message type defining the peer RPC request messages
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, EnumIter)]
 pub enum Request {
     GetBlock(u64, SerdeHash),
 }
@@ -72,30 +73,28 @@ impl TryInto<proto::Response> for Response {
 
 #[cfg(test)]
 mod tests {
-    use crate::consensus::SerdeHash;
-
     use super::proto;
     use super::Request;
-    use quick_protobuf::{BytesReader, MessageRead, Writer};
-    use std::io;
+    use quick_protobuf::{BytesReader, MessageRead, MessageWrite, Writer};
+    use strum::IntoEnumIterator;
 
     #[test]
     fn protobuf_requests() {
-        let request_in = Request::GetBlock(10, SerdeHash::default());
-        println!("encoded={request_in:?}");
-        let mut bytes = Vec::new();
-        let mut writer = Writer::new(&mut bytes);
-        // Encode the message
-        writer.write_message(&TryInto::<proto::Request>::try_into(request_in).unwrap());
-        println!("raw={bytes:?}");
+        // Attempt to serialize and deserialize each request type
+        for request_in in Request::iter() {
+            // Encode the message
+            let mut bytes = Vec::new();
+            let mut writer = Writer::new(&mut bytes);
+            let protobuf = TryInto::<proto::Request>::try_into(request_in.clone()).unwrap();
+            protobuf.write_message(&mut writer).unwrap();
 
-        // Decode the request
-        let mut reader = BytesReader::from_bytes(&bytes);
-        let request_out: Request = proto::Request::from_reader(&mut reader, &bytes)
-            .unwrap()
-            .try_into()
-            .unwrap();
-        println!("encoded={request_out:?}");
-        assert_eq!(0, 4);
+            // Decode the request
+            let mut reader = BytesReader::from_bytes(&bytes);
+            let request_out: Request = proto::Request::from_reader(&mut reader, &bytes)
+                .unwrap()
+                .try_into()
+                .unwrap();
+            assert_eq!(request_in, request_out);
+        }
     }
 }
