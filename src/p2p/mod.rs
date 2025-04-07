@@ -22,7 +22,7 @@ use thiserror;
 use tokio::select;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::{broadcast, oneshot};
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
 /// [`tokio::sync::broadcast`] for more information.
@@ -149,11 +149,14 @@ async fn task_fn(
                         swarm.connected_peers().count()
                     );
                 }
-                SwarmEvent::ConnectionClosed { peer_id, .. } => {
+                SwarmEvent::ConnectionClosed { peer_id, cause, .. } => {
                     info!(
                         "Disconnected from {peer_id}. Now have {} peers.",
                         swarm.connected_peers().count()
                     );
+                    if let Some(c) = cause {
+                        debug!("Disconnection reason: {c}");
+                    }
                 }
                 SwarmEvent::OutgoingConnectionError { peer_id, .. } => {
                     if let Some(peer_id) = peer_id {
