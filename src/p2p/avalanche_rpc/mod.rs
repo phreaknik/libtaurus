@@ -97,13 +97,11 @@ impl<'a> Behaviour {
     }
 
     pub fn send_request(&mut self, peer: &PeerId, request: Request) {
-        error!("sending request: {request:?}");
         self.inner.send_request(peer, request);
     }
 
     pub fn send_response(&mut self, request_id: RequestId, response: Response) {
         if let Some(ch) = self.pending.remove(&request_id) {
-            error!("sending response: {response:?}");
             if let Err(_) = self.inner.send_response(ch, response) {
                 warn!("error responding to avalanche request");
             }

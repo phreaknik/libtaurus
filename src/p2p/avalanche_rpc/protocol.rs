@@ -46,7 +46,6 @@ impl request_response::Codec for AvalancheRpcCodec {
     {
         let mut bytes = Vec::new();
         io.read_to_end(&mut bytes).await?;
-        error!("received bytes: {bytes:?}");
         let mut protobuf = BytesReader::from_bytes(&bytes);
         match proto::Request::from_reader(&mut protobuf, &bytes) {
             Err(_) => Err(io::Error::new(
@@ -123,7 +122,6 @@ impl request_response::Codec for AvalancheRpcCodec {
     where
         T: AsyncWrite + Send + Unpin,
     {
-        error!("sending response: {data:?}");
         let mut bytes = Vec::new();
         let mut writer = Writer::new(&mut bytes);
         let protobuf = data.to_protobuf().map_err(|_| {
