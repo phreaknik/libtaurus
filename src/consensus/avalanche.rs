@@ -37,8 +37,6 @@ pub enum Error {
     MissingData,
     #[error("error acquiring read lock")]
     ReadLock,
-    #[error("stale block")]
-    StaleBlock,
     #[error("error acquiring write lock")]
     WriteLock,
 }
@@ -161,13 +159,7 @@ impl DAG {
         // Add it to the collection of vertices
         self.vertices.insert(hash, arc_vertex.clone());
 
-        // TODO: This is naive longest-chain-rule consensus.A better form of consensus should
-        // replace this.
         // Add it to the frontier
-        println!("len(frontier)={}", self.frontier.len());
-        if vertex.block.height < self.frontier.values().map(|b| b.height).min().unwrap_or(0) {
-            return Err(Error::StaleBlock);
-        }
         self.frontier.insert(hash, vertex.block.clone());
 
         // Remove its parents from the frontier, as they are no longer the youngest
@@ -286,7 +278,7 @@ impl Frontier {
 
     /// This vertex's height in the DAG
     pub fn height(&self) -> u64 {
-        self.0[0].height
+        self.0.iter().map(|b| b.height).max().unwrap()
     }
 }
 
