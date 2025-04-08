@@ -94,7 +94,6 @@ impl GenesisConfig {
             miner: PeerId::from_multihash(Multihash::default()).unwrap(),
             parents: Vec::new(),
             inputs: Vec::new(),
-            outputs: Vec::new(),
             time: self.time,
             nonce: 0,
         }

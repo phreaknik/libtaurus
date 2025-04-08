@@ -205,7 +205,6 @@ pub struct Block {
     pub miner: Vec<u8>,
     pub parents: Vec<Vec<u8>>,
     pub inputs: Vec<Vec<u8>>,
-    pub outputs: Vec<Vec<u8>>,
     pub time: Vec<u8>,
     pub nonce: u64,
 }
@@ -221,7 +220,6 @@ impl<'a> MessageRead<'a> for Block {
                 Ok(26) => msg.miner = r.read_bytes(bytes)?.to_owned(),
                 Ok(34) => msg.parents.push(r.read_bytes(bytes)?.to_owned()),
                 Ok(42) => msg.inputs.push(r.read_bytes(bytes)?.to_owned()),
-                Ok(50) => msg.outputs.push(r.read_bytes(bytes)?.to_owned()),
                 Ok(58) => msg.time = r.read_bytes(bytes)?.to_owned(),
                 Ok(64) => msg.nonce = r.read_uint64(bytes)?,
                 Ok(t) => { r.read_unknown(bytes, t)?; }
@@ -241,7 +239,6 @@ impl MessageWrite for Block {
         + if self.miner.is_empty() { 0 } else { 1 + sizeof_len((&self.miner).len()) }
         + self.parents.iter().map(|s| 1 + sizeof_len((s).len())).sum::<usize>()
         + self.inputs.iter().map(|s| 1 + sizeof_len((s).len())).sum::<usize>()
-        + self.outputs.iter().map(|s| 1 + sizeof_len((s).len())).sum::<usize>()
         + if self.time.is_empty() { 0 } else { 1 + sizeof_len((&self.time).len()) }
         + if self.nonce == 0u64 { 0 } else { 1 + sizeof_varint(*(&self.nonce) as u64) }
     }
@@ -253,7 +250,6 @@ impl MessageWrite for Block {
         if !self.miner.is_empty() { w.write_with_tag(26, |w| w.write_bytes(&**&self.miner))?; }
         for s in &self.parents { w.write_with_tag(34, |w| w.write_bytes(&**s))?; }
         for s in &self.inputs { w.write_with_tag(42, |w| w.write_bytes(&**s))?; }
-        for s in &self.outputs { w.write_with_tag(50, |w| w.write_bytes(&**s))?; }
         if !self.time.is_empty() { w.write_with_tag(58, |w| w.write_bytes(&**&self.time))?; }
         if self.nonce != 0u64 { w.write_with_tag(64, |w| w.write_uint64(*&self.nonce))?; }
         Ok(())

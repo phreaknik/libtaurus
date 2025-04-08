@@ -41,8 +41,7 @@ pub struct Block {
     pub difficulty: u64,
     pub miner: PeerId,
     pub parents: Vec<SerdeHash>,
-    pub inputs: Vec<SerdeHash>,  // TODO: define real UTXOs
-    pub outputs: Vec<SerdeHash>, // TODO: define real UTXOs
+    pub inputs: Vec<SerdeHash>, // TODO: define real UTXOs
     pub time: DateTime<Utc>,
     pub nonce: u64,
 }
@@ -98,7 +97,6 @@ impl Default for Block {
             miner: PeerId::from_multihash(Multihash::default()).unwrap(),
             parents: Vec::new(),
             inputs: Vec::new(),
-            outputs: Vec::new(),
             time: Utc::now(),
             nonce: 0,
         }
@@ -121,11 +119,6 @@ impl TryFrom<p2p::avalanche_rpc::proto::Block> for Block {
                 .try_collect()?,
             inputs: block
                 .inputs
-                .iter()
-                .map(|bytes| rmp_serde::from_slice(bytes))
-                .try_collect()?,
-            outputs: block
-                .outputs
                 .iter()
                 .map(|bytes| rmp_serde::from_slice(bytes))
                 .try_collect()?,
@@ -153,11 +146,6 @@ impl TryInto<p2p::avalanche_rpc::proto::Block> for Block {
                 .inputs
                 .iter()
                 .map(|i| rmp_serde::to_vec(i))
-                .try_collect()?,
-            outputs: self
-                .parents
-                .iter()
-                .map(|o| rmp_serde::to_vec(o))
                 .try_collect()?,
             time: rmp_serde::to_vec(&self.time)?,
             nonce: self.nonce,
@@ -221,7 +209,6 @@ struct PrettyBlock {
     miner: PeerId,
     parents: Vec<String>,
     inputs: Vec<String>,
-    outputs: Vec<String>,
     time: DateTime<Utc>,
     nonce: u64,
 }
@@ -238,11 +225,6 @@ impl From<&Block> for PrettyBlock {
                 .collect(),
             inputs: block
                 .inputs
-                .iter()
-                .map(|p| p.0.iter().map(|b| format!("{b:02x}")).collect())
-                .collect(),
-            outputs: block
-                .outputs
                 .iter()
                 .map(|p| p.0.iter().map(|b| format!("{b:02x}")).collect())
                 .collect(),

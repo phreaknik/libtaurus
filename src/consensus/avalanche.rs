@@ -318,7 +318,6 @@ impl Frontier {
             miner,
             parents: self.0.iter().map(|v| v.hash().unwrap().into()).collect(),
             inputs: Vec::new(),
-            outputs: Vec::new(),
             time: Utc::now(),
             nonce: 0,
         }
