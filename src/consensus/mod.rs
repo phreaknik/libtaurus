@@ -86,10 +86,12 @@ impl GenesisConfig {
     pub fn to_block(&self) -> Block {
         Block {
             version: 0,
-            parents: Vec::new(),
             height: 0,
             difficulty: self.difficulty,
             miner: PeerId::from_multihash(Multihash::default()).unwrap(),
+            parents: Vec::new(),
+            inputs: Vec::new(),
+            outputs: Vec::new(),
             time: self.time,
             nonce: 0,
         }
@@ -216,8 +218,9 @@ impl Runtime {
         }
     }
 
-    /// Try to insert a block
-    fn try_insert_block(&mut self, block: Block, sender: Option<PeerId>) -> Result<()> {
+    /// Try to insert a block as a new vertex in the DAG. Returns true if the vertex is considered
+    /// strongly preffered, according to Avalanche consensus.
+    fn try_insert_block(&mut self, block: Block, sender: Option<PeerId>) -> Result<bool> {
         let hash = block.hash()?;
         let height = block.height;
         block
@@ -266,6 +269,10 @@ impl Runtime {
                             return;
                         }
                     }
+                    avalanche_rpc::Request::GetPreference(_height, _hash) => {
+                        // Query if the specified block is preferred in the Avalanche DAG.
+                        todo!()
+                    }
                 }
             }
 
@@ -284,6 +291,7 @@ impl Runtime {
                             }
                         }
                     }
+                    avalanche_rpc::Response::Preference(_) => todo!(),
                 }
             }
         }

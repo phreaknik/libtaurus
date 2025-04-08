@@ -4,7 +4,8 @@ package avalanche.proto;
 // Request message type
 message Request {
 	oneof RequestData {
-		GetBlock get_block = 0;
+		BlockID get_block = 0;
+		BlockID get_preference = 1;
 	}
 }
 
@@ -18,11 +19,12 @@ message Response {
 	oneof ResponseData {
 		Error error = 0;
 		Block block = 1;
+		bool preference = 2;
 	}
 }
 
 // Inner message types
-message GetBlock {
+message BlockID {
   uint64 height = 0;
   bytes hash = 1;
 }
@@ -33,6 +35,8 @@ message Block {
 	uint64 difficulty = 2;
 	bytes miner = 3;
 	repeated bytes parents = 4;
-	bytes time = 5;
-	uint64 nonce = 6;
+  repeated bytes inputs = 5;
+  repeated bytes outputs = 6;
+	bytes time = 7;
+	uint64 nonce = 8;
 }

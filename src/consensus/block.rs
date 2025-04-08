@@ -39,6 +39,8 @@ pub struct Block {
     pub difficulty: u64,
     pub miner: PeerId,
     pub parents: Vec<SerdeHash>,
+    pub inputs: Vec<SerdeHash>,  // TODO: define real UTXOs
+    pub outputs: Vec<SerdeHash>, // TODO: define real UTXOs
     pub time: DateTime<Utc>,
     pub nonce: u64,
 }
@@ -89,10 +91,12 @@ impl Default for Block {
     fn default() -> Self {
         Block {
             version: 0,
-            parents: Vec::new(),
             height: 0,
             difficulty: 0,
             miner: PeerId::from_multihash(Multihash::default()).unwrap(),
+            parents: Vec::new(),
+            inputs: Vec::new(),
+            outputs: Vec::new(),
             time: Utc::now(),
             nonce: 0,
         }
@@ -110,6 +114,16 @@ impl TryFrom<p2p::avalanche_rpc::proto::Block> for Block {
             miner: PeerId::from_bytes(&block.miner)?,
             parents: block
                 .parents
+                .iter()
+                .map(|bytes| serde_cbor::from_slice(bytes))
+                .try_collect()?,
+            inputs: block
+                .inputs
+                .iter()
+                .map(|bytes| serde_cbor::from_slice(bytes))
+                .try_collect()?,
+            outputs: block
+                .outputs
                 .iter()
                 .map(|bytes| serde_cbor::from_slice(bytes))
                 .try_collect()?,
@@ -132,6 +146,16 @@ impl TryInto<p2p::avalanche_rpc::proto::Block> for Block {
                 .parents
                 .iter()
                 .map(|p| serde_cbor::to_vec(p))
+                .try_collect()?,
+            inputs: self
+                .inputs
+                .iter()
+                .map(|i| serde_cbor::to_vec(i))
+                .try_collect()?,
+            outputs: self
+                .parents
+                .iter()
+                .map(|o| serde_cbor::to_vec(o))
                 .try_collect()?,
             time: serde_cbor::to_vec(&self.time)?,
             nonce: self.nonce,

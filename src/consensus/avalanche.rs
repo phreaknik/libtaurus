@@ -19,26 +19,28 @@ pub enum Error {
     Block(#[from] super::block::Error),
     #[error(transparent)]
     Cbor(#[from] serde_cbor::error::Error),
+    #[error("error acquiring write lock on conflict set")]
+    ConflictSetWriteLock,
     #[error(transparent)]
     Database(#[from] super::database::Error),
+    #[error("consensus event channel error")]
+    EventsOutCh(#[from] tokio::sync::broadcast::error::SendError<Event>),
     #[error(transparent)]
     Heed(#[from] heed::Error),
     #[error(transparent)]
     Io(#[from] std::io::Error),
-    #[error("new block channel error")]
-    NewBlockCh(#[from] tokio::sync::mpsc::error::SendError<Block>),
-    #[error("consensus event channel error")]
-    EventsOutCh(#[from] tokio::sync::broadcast::error::SendError<Event>),
-    #[error("missing parent")]
-    MissingParents(Vec<Hash>),
-    #[error("data not found")]
-    NotFound,
     #[error("missing data")]
     MissingData,
-    #[error("error acquiring read lock")]
-    ReadLock,
-    #[error("error acquiring write lock")]
-    WriteLock,
+    #[error("missing parent")]
+    MissingParents(Vec<Hash>),
+    #[error("new block channel error")]
+    NewBlockCh(#[from] tokio::sync::mpsc::error::SendError<Block>),
+    #[error("data not found")]
+    NotFound,
+    #[error("error acquiring read lock on vertex")]
+    VertexReadLock,
+    #[error("error acquiring write lock on vertex")]
+    VertexWriteLock,
 }
 
 /// Result type for avalanche errors
@@ -65,6 +67,9 @@ pub struct DAG {
     /// Complete list of active vertices
     vertices: HashMap<Hash, Arc<TracingRwLock<Vertex>>>,
 
+    /// Conflict sets for each transaction input
+    conflicts: HashMap<Hash, Arc<TracingRwLock<Vec<Hash>>>>,
+
     /// Waitlist for vertices that cannot be inserted yet
     waitlist: WaitList,
 
@@ -89,6 +94,7 @@ impl DAG {
         // Create DAG instance, initialized with genesis block in the frontier
         let dag = DAG {
             vertices: HashMap::new(),
+            conflicts: HashMap::new(),
             waitlist: WaitList::new(config.waitlist_cap),
             frontier: [(genesis_hash, config.genesis.clone())]
                 .iter()
@@ -106,14 +112,15 @@ impl DAG {
     }
 
     /// Initialize the DAG on startup
-    pub fn init(&mut self) -> Result<()> {
+    pub fn init(&mut self) -> Result<bool> {
         // TODO: load blocks from database
         // For now just init an empty DAG with the genesis block
         self.try_insert(self.config.genesis.clone())
     }
 
-    /// Try to insert a block as a new vertex in the DAG
-    pub fn try_insert(&mut self, block: Block) -> Result<()> {
+    /// Try to insert a block as a new vertex in the DAG. Returns true if the vertex is considered
+    /// strongly preffered, according to Avalanche consensus.
+    pub fn try_insert(&mut self, block: Block) -> Result<bool> {
         let hash = block.hash()?;
 
         // Make sure this block has parents to attach to the DAG
@@ -130,16 +137,17 @@ impl DAG {
                 self.waitlist.insert(Arc::new(TracingRwLock::new(vertex)))?;
                 Err(Error::MissingParents(e))
             }
+            Err(e) => Err(e),
             Ok(_) => self.try_insert_vertex(Arc::new(TracingRwLock::new(vertex))),
-            error @ Err(_) => error,
         }
     }
 
-    /// Try to insert a vertex into the DAG
-    fn try_insert_vertex(&mut self, arc_vertex: Arc<TracingRwLock<Vertex>>) -> Result<()> {
+    /// Try to insert a vertex into the DAG. Returns true if the vertex is considered strongly
+    /// preffered, according to Avalanche consensus.
+    fn try_insert_vertex(&mut self, arc_vertex: Arc<TracingRwLock<Vertex>>) -> Result<bool> {
         // TODO: validate block (has parents, valid height, valid difficulty, etc...)
 
-        let mut vertex = arc_vertex.write().map_err(|_| Error::WriteLock)?;
+        let mut vertex = arc_vertex.write().map_err(|_| Error::VertexWriteLock)?;
         let hash = vertex.block.hash()?;
 
         // Write it to the database
@@ -151,10 +159,33 @@ impl DAG {
         for parent in vertex.parents.iter_mut() {
             parent
                 .write()
-                .map_err(|_| Error::WriteLock)?
+                .map_err(|_| Error::VertexWriteLock)?
                 .children
                 .push(arc_vertex.clone());
         }
+
+        // Update the conflict set for each transaction input
+        let mut preferred = true;
+        for input in vertex.block.inputs.iter() {
+            if let Some(set) = self.conflicts.get_mut(&input.into()) {
+                // A conflict set exists. Add this vertex to the set.
+                let mut conflicts = set.write().map_err(|_| Error::ConflictSetWriteLock)?;
+                if preferred
+                    && conflicts
+                        .iter()
+                        .any(|h| self.vertices.get(&h).unwrap().read().unwrap().preferred == true)
+                {
+                    // One of the conflicts is preferred. This vertex cannot be preferred.
+                    preferred = false;
+                }
+                conflicts.push(hash);
+            } else {
+                // Create a new conflict set for this transaction input
+                self.conflicts
+                    .insert(hash, Arc::new(TracingRwLock::new(vec![hash])));
+            }
+        }
+        vertex.preferred = preferred;
 
         // Add it to the collection of vertices
         self.vertices.insert(hash, arc_vertex.clone());
@@ -178,7 +209,14 @@ impl DAG {
         wtxn.commit().map_err(Error::from)?;
 
         // Retry vertices in the waitlist
-        Ok(self.remove_and_retry_waitlist(hash))
+        self.remove_and_retry_waitlist(hash);
+
+        // Return true if this vertex is strongly preferred
+        Ok(vertex.preferred
+            && vertex
+                .parents
+                .iter()
+                .all(|v| v.read().unwrap().preferred == true))
     }
 
     /// Fill out parent links if the parents are present in the DAG
@@ -208,7 +246,11 @@ impl DAG {
     /// Look up a block from the DAG
     pub fn get_block(&mut self, _height: u64, hash: &Hash) -> Result<Block> {
         match self.vertices.get(hash) {
-            Some(vertex) => Ok(vertex.read().map_err(|_| Error::ReadLock)?.block.clone()),
+            Some(vertex) => Ok(vertex
+                .read()
+                .map_err(|_| Error::VertexReadLock)?
+                .block
+                .clone()),
             None => self
                 .database
                 .read_block(hash.clone())?
@@ -234,6 +276,9 @@ pub struct Vertex {
 
     /// Chit score this vertex received when it was queried by the network
     chit: usize,
+
+    /// Is this vertex currently preferred?
+    preferred: bool,
 }
 
 impl Vertex {
@@ -243,6 +288,7 @@ impl Vertex {
             children: Vec::new(),
             block: block.clone(),
             chit: 0,
+            preferred: false,
         }
     }
 }
@@ -267,10 +313,12 @@ impl Frontier {
     pub fn to_candidate(&self, miner: PeerId) -> Block {
         Block {
             version: params::PROTOCOL_VERSION,
-            parents: self.0.iter().map(|v| v.hash().unwrap().into()).collect(),
             height: self.height() + 1,
             difficulty: self.next_difficulty(),
             miner,
+            parents: self.0.iter().map(|v| v.hash().unwrap().into()).collect(),
+            inputs: Vec::new(),
+            outputs: Vec::new(),
             time: Utc::now(),
             nonce: 0,
         }
@@ -297,7 +345,7 @@ impl WaitList {
 
     /// Inserts a new vertex into the waitlist.
     fn insert(&mut self, arc_vertex: Arc<TracingRwLock<Vertex>>) -> Result<()> {
-        let vertex = arc_vertex.read().map_err(|_| Error::ReadLock)?;
+        let vertex = arc_vertex.read().map_err(|_| Error::VertexReadLock)?;
         for parent_hash in vertex.block.parents.iter().map(|h| h.into()) {
             if let Some(parent_queue) = self.0.get_mut(&parent_hash) {
                 // Add this vertex as a descendent in the parent's queue
@@ -309,8 +357,13 @@ impl WaitList {
                 // If an existing entry was evicted, demote all the descendents in its queue
                 if let Some(queue) = evicted {
                     for child in queue {
-                        self.0
-                            .demote(&child.read().map_err(|_| Error::ReadLock)?.block.hash()?);
+                        self.0.demote(
+                            &child
+                                .read()
+                                .map_err(|_| Error::VertexReadLock)?
+                                .block
+                                .hash()?,
+                        );
                     }
                 }
             }

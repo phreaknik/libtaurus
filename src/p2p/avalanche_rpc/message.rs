@@ -8,6 +8,7 @@ use strum_macros::EnumIter;
 #[derive(Debug, Clone, PartialEq, Eq, EnumIter)]
 pub enum Request {
     GetBlock(u64, SerdeHash),
+    GetPreference(u64, SerdeHash),
 }
 
 impl Request {
@@ -16,7 +17,13 @@ impl Request {
         Ok(proto::Request {
             RequestData: match self {
                 Request::GetBlock(height, hash) => {
-                    proto::mod_Request::OneOfRequestData::get_block(proto::GetBlock {
+                    proto::mod_Request::OneOfRequestData::get_block(proto::BlockID {
+                        height,
+                        hash: serde_cbor::to_vec(&hash)?,
+                    })
+                }
+                Request::GetPreference(height, hash) => {
+                    proto::mod_Request::OneOfRequestData::get_preference(proto::BlockID {
                         height,
                         hash: serde_cbor::to_vec(&hash)?,
                     })
@@ -32,6 +39,12 @@ impl Request {
                 message.height,
                 serde_cbor::from_slice(message.hash.as_slice())?,
             )),
+            proto::mod_Request::OneOfRequestData::get_preference(message) => {
+                Ok(Request::GetPreference(
+                    message.height,
+                    serde_cbor::from_slice(message.hash.as_slice())?,
+                ))
+            }
             proto::mod_Request::OneOfRequestData::None => Err(super::Error::IncompleteRequest),
         }
     }
@@ -47,6 +60,13 @@ impl fmt::Display for Request {
                     Into::<blake3::Hash>::into(serde_hash)
                 )
             }
+            Request::GetPreference(height, serde_hash) => {
+                write!(
+                    f,
+                    "GetPreference({height}, {})",
+                    Into::<blake3::Hash>::into(serde_hash)
+                )
+            }
         }
     }
 }
@@ -56,6 +76,7 @@ impl fmt::Display for Request {
 pub enum Response {
     Error(proto::mod_Response::Error),
     Block(Block),
+    Preference(bool),
 }
 
 impl Response {
@@ -65,6 +86,7 @@ impl Response {
             ResponseData: match self {
                 Response::Error(e) => proto::mod_Response::OneOfResponseData::error(e),
                 Response::Block(b) => proto::mod_Response::OneOfResponseData::block(b.try_into()?),
+                Response::Preference(p) => proto::mod_Response::OneOfResponseData::preference(p),
             },
         })
     }
@@ -74,6 +96,7 @@ impl Response {
         match resp.ResponseData {
             proto::mod_Response::OneOfResponseData::error(e) => Ok(Response::Error(e)),
             proto::mod_Response::OneOfResponseData::block(b) => Ok(Response::Block(b.try_into()?)),
+            proto::mod_Response::OneOfResponseData::preference(p) => Ok(Response::Preference(p)),
             proto::mod_Response::OneOfResponseData::None => Err(super::Error::IncompleteResponse),
         }
     }
