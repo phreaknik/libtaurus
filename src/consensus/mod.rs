@@ -180,7 +180,7 @@ impl Runtime {
                         Err(e) => {
                                 error!("Stopping due to p2p_action channel error: {e}");
                                 return;
-                    },
+                        },
                         Ok(p2p::Event::Pubsub(msg)) => {
                             let ignore = msg.ignore();
                             let validation = self.handle_p2p_pubsub(msg).unwrap_or_else(|e| {
@@ -246,40 +246,46 @@ impl Runtime {
     fn handle_avalanche_event(&mut self, event: avalanche_rpc::Event) {
         match event {
             // Handle inbound avalanche requests from other peers
-            avalanche_rpc::Event::Requested(request_id, request) => match request {
-                avalanche_rpc::Request::GetBlock(height, hash) => {
-                    // Generate a response with the requested block, if we have it
-                    let resp = match self.dag.get_block(height, &hash.into()) {
-                        Ok(block) => avalanche_rpc::Response::Block(block),
-                        Err(_) => avalanche_rpc::Response::Error(
-                            avalanche_rpc::proto::mod_Response::Error::NOT_FOUND,
-                        ),
-                    };
-                    // Send the response
-                    if let Err(e) = self
-                        .p2p_action_ch
-                        .send(p2p::Action::AvalancheResponse(request_id, resp))
-                    {
-                        error!("Stopping due to p2p_action channel error: {e}");
-                        return;
-                    }
-                }
-            },
-
-            // Handle responses to avalanche requests we sent out
-            avalanche_rpc::Event::Responded(peer, response) => match response {
-                // TODO: if the peer didn't have the requested data, what do we do?
-                // Do we ban the peer for not having data that they should?
-                // Do we try to find the requested data on the DHT instead?
-                avalanche_rpc::Response::Error(_) => todo!(),
-                avalanche_rpc::Response::Block(block) => {
-                    if let Ok(hash) = block.hash() {
-                        if let Err(e) = self.try_insert_block(block, Some(peer)) {
-                            debug!("unable to insert requested block {hash}: {e}");
+            avalanche_rpc::Event::Requested(request_id, request) => {
+                debug!("Handling request: {request}");
+                match request {
+                    avalanche_rpc::Request::GetBlock(height, hash) => {
+                        // Generate a response with the requested block, if we have it
+                        let resp = match self.dag.get_block(height, &hash.into()) {
+                            Ok(block) => avalanche_rpc::Response::Block(block),
+                            Err(_) => avalanche_rpc::Response::Error(
+                                avalanche_rpc::proto::mod_Response::Error::NOT_FOUND,
+                            ),
+                        };
+                        // Send the response
+                        if let Err(e) = self
+                            .p2p_action_ch
+                            .send(p2p::Action::AvalancheResponse(request_id, resp))
+                        {
+                            error!("Stopping due to p2p_action channel error: {e}");
+                            return;
                         }
                     }
                 }
-            },
+            }
+
+            // Handle responses to avalanche requests we sent out
+            avalanche_rpc::Event::Responded(peer, response) => {
+                debug!("Received response: {response:?}");
+                match response {
+                    // TODO: if the peer didn't have the requested data, what do we do?
+                    // Do we ban the peer for not having data that they should?
+                    // Do we try to find the requested data on the DHT instead?
+                    avalanche_rpc::Response::Error(_) => todo!(),
+                    avalanche_rpc::Response::Block(block) => {
+                        if let Ok(hash) = block.hash() {
+                            if let Err(e) = self.try_insert_block(block, Some(peer)) {
+                                debug!("unable to insert requested block {hash}: {e}");
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 

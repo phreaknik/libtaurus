@@ -1,6 +1,7 @@
 use super::proto;
 use super::Error;
 use crate::consensus::{Block, SerdeHash};
+use std::fmt;
 use strum_macros::EnumIter;
 
 /// Message type defining the peer RPC request messages
@@ -32,6 +33,20 @@ impl Request {
                 serde_cbor::from_slice(message.hash.as_slice())?,
             )),
             proto::mod_Request::OneOfRequestData::None => Err(super::Error::IncompleteRequest),
+        }
+    }
+}
+
+impl fmt::Display for Request {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Request::GetBlock(height, serde_hash) => {
+                write!(
+                    f,
+                    "GetBlock({height}, {})",
+                    Into::<blake3::Hash>::into(serde_hash)
+                )
+            }
         }
     }
 }

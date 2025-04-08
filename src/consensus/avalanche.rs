@@ -37,6 +37,8 @@ pub enum Error {
     MissingData,
     #[error("error acquiring read lock")]
     ReadLock,
+    #[error("stale block")]
+    StaleBlock,
     #[error("error acquiring write lock")]
     WriteLock,
 }
@@ -84,14 +86,19 @@ pub struct DAG {
 impl DAG {
     /// Create a new DAG
     pub fn new(config: Config, events_ch: broadcast::Sender<Event>) -> DAG {
-        // Create DAG instance
+        let genesis_hash = config.genesis.hash().unwrap();
+
+        // Create DAG instance, initialized with genesis block in the frontier
         let dag = DAG {
             vertices: HashMap::new(),
             waitlist: WaitList::new(config.waitlist_cap),
-            frontier: HashMap::new(),
+            frontier: [(genesis_hash, config.genesis.clone())]
+                .iter()
+                .cloned()
+                .collect(),
             database: BlocksDatabase::open(&config.data_dir.join(DATABASE_DIR), true)
                 .expect("Failed to open blocks database"),
-            genesis_hash: config.genesis.hash().unwrap(),
+            genesis_hash,
             events_ch,
             config,
         };
@@ -154,13 +161,19 @@ impl DAG {
         // Add it to the collection of vertices
         self.vertices.insert(hash, arc_vertex.clone());
 
+        // TODO: This is naive longest-chain-rule consensus.A better form of consensus should
+        // replace this.
+        // Add it to the frontier
+        println!("len(frontier)={}", self.frontier.len());
+        if vertex.block.height < self.frontier.values().map(|b| b.height).min().unwrap_or(0) {
+            return Err(Error::StaleBlock);
+        }
+        self.frontier.insert(hash, vertex.block.clone());
+
         // Remove its parents from the frontier, as they are no longer the youngest
         for parent in vertex.block.parents.iter() {
             self.frontier.remove(&parent.into());
         }
-
-        // Add it to the frontier
-        self.frontier.insert(hash, vertex.block.clone());
 
         // Announce the new frontier
         self.events_ch.send(Event::NewFrontier(Frontier(
@@ -191,11 +204,11 @@ impl DAG {
             .try_collect()?)
     }
 
-    /// Retry inserting any blocks from the waitlist
+    /// Remove the specified entry from the waitlist, and retry inserting any of is descendents
     fn remove_and_retry_waitlist(&mut self, hash: Hash) {
-        if let Some(dependents) = self.waitlist.remove(&hash) {
-            for dependent in dependents {
-                let _ = self.try_insert_vertex(dependent);
+        if let Some(descendents) = self.waitlist.remove(&hash) {
+            for descendent in descendents {
+                let _ = self.try_insert_vertex(descendent);
             }
         }
     }
@@ -293,15 +306,15 @@ impl WaitList {
     /// Inserts a new vertex into the waitlist.
     fn insert(&mut self, arc_vertex: Arc<TracingRwLock<Vertex>>) -> Result<()> {
         let vertex = arc_vertex.read().map_err(|_| Error::ReadLock)?;
-        for parent in vertex.block.parents.iter().map(|h| h.into()) {
-            if let Some(parent_queue) = self.0.get_mut(&parent) {
-                // Add this vertex as a dependent in the parent's queue
+        for parent_hash in vertex.block.parents.iter().map(|h| h.into()) {
+            if let Some(parent_queue) = self.0.get_mut(&parent_hash) {
+                // Add this vertex as a descendent in the parent's queue
                 parent_queue.push(arc_vertex.clone());
             } else {
                 // Insert a new entry
-                let evicted = self.0.put(parent, vec![arc_vertex.clone()]);
+                let evicted = self.0.put(parent_hash, vec![arc_vertex.clone()]);
 
-                // If an existing entry was evicted, demote all the dependents in its queue
+                // If an existing entry was evicted, demote all the descendents in its queue
                 if let Some(queue) = evicted {
                     for child in queue {
                         self.0

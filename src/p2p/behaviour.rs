@@ -162,11 +162,13 @@ impl<'a> Behaviour {
 
     /// Send a request to a peer via the ['avalanche_rpc'] protocol
     pub fn avalanche_request(&mut self, peer: &PeerId, request: avalanche_rpc::Request) {
+        debug!("Sending request: {request}");
         self.inner.avalanche_rpc.send_request(peer, request)
     }
 
     /// Respond to a received avalanche request, via the ['avalanche_rpc'] protocol
     pub fn avalanche_response(&mut self, request_id: RequestId, response: avalanche_rpc::Response) {
+        debug!("Sending response: {response:?}");
         self.inner.avalanche_rpc.send_response(request_id, response)
     }
 
@@ -239,10 +241,10 @@ impl<'a> NetworkBehaviour for Behaviour {
             ))) => Poll::Ready(ToSwarm::GenerateEvent(Event::Pubsub(
                 message.try_into().unwrap(),
             ))),
-            // Forward avalanche requests out
-            Poll::Ready(ToSwarm::GenerateEvent(InnerBehaviourEvent::AvalancheRpc(
-                request @ avalanche_rpc::Event::Requested(..),
-            ))) => Poll::Ready(ToSwarm::GenerateEvent(Event::Avalanche(request))),
+            // Forward avalanche messages out
+            Poll::Ready(ToSwarm::GenerateEvent(InnerBehaviourEvent::AvalancheRpc(message))) => {
+                Poll::Ready(ToSwarm::GenerateEvent(Event::Avalanche(message)))
+            }
             // Trap all other generated events
             Poll::Ready(ToSwarm::GenerateEvent(event)) => {
                 trace!("internal event: {event:?}");
