@@ -4,6 +4,7 @@ use blake3::Hash;
 use chrono::Utc;
 use libp2p::PeerId;
 use lru::LruCache;
+//TODO: use RC instead of ARC. Don't need thread safety
 use std::{collections::HashMap, num::NonZeroUsize, path::PathBuf, result, sync::Arc};
 use tokio::sync::broadcast;
 use tracing::{debug, info};
@@ -19,8 +20,6 @@ pub enum Error {
     Block(#[from] super::block::Error),
     #[error(transparent)]
     Cbor(#[from] serde_cbor::error::Error),
-    #[error("error acquiring write lock on conflict set")]
-    ConflictSetWriteLock,
     #[error(transparent)]
     Database(#[from] super::database::Error),
     #[error("consensus event channel error")]
@@ -37,9 +36,9 @@ pub enum Error {
     NewBlockCh(#[from] tokio::sync::mpsc::error::SendError<Block>),
     #[error("data not found")]
     NotFound,
-    #[error("error acquiring read lock on vertex")]
+    #[error("error acquiring read lock on a vertex")]
     VertexReadLock,
-    #[error("error acquiring write lock on vertex")]
+    #[error("error acquiring write lock on a vertex")]
     VertexWriteLock,
 }
 
@@ -68,7 +67,7 @@ pub struct DAG {
     vertices: HashMap<Hash, Arc<TracingRwLock<Vertex>>>,
 
     /// Conflict sets for each transaction input
-    conflicts: HashMap<Hash, Arc<TracingRwLock<Vec<Hash>>>>,
+    conflicts: HashMap<Hash, Vec<Hash>>,
 
     /// Waitlist for vertices that cannot be inserted yet
     waitlist: WaitList,
@@ -130,15 +129,15 @@ impl DAG {
         }
 
         // Create a new vertex from this block, and link to its parents if we have them
-        let mut vertex = Vertex::new(block.clone());
-        match self.link_parents(&mut vertex) {
+        let vertex = Arc::new(TracingRwLock::new(Vertex::new(block.clone())));
+        match self.link_parents(vertex.clone()) {
             Err(Error::MissingParents(e)) => {
                 debug!("Block {hash} is missing parents");
-                self.waitlist.insert(Arc::new(TracingRwLock::new(vertex)))?;
+                self.waitlist.insert(vertex.clone())?;
                 Err(Error::MissingParents(e))
             }
             Err(e) => Err(e),
-            Ok(_) => self.try_insert_vertex(Arc::new(TracingRwLock::new(vertex))),
+            Ok(_) => self.try_insert_vertex(vertex),
         }
     }
 
@@ -156,7 +155,7 @@ impl DAG {
             .write_block(None, vertex.block.clone(), false)?;
 
         // Update each parent
-        for parent in vertex.parents.iter_mut() {
+        for parent in &vertex.parents {
             parent
                 .write()
                 .map_err(|_| Error::VertexWriteLock)?
@@ -167,22 +166,20 @@ impl DAG {
         // Update the conflict set for each transaction input
         let mut preferred = true;
         for input in vertex.block.inputs.iter() {
-            if let Some(set) = self.conflicts.get_mut(&input.into()) {
+            if let Some(conflict_set) = self.conflicts.get_mut(&input.into()) {
                 // A conflict set exists. Add this vertex to the set.
-                let mut conflicts = set.write().map_err(|_| Error::ConflictSetWriteLock)?;
                 if preferred
-                    && conflicts
+                    && conflict_set
                         .iter()
                         .any(|h| self.vertices.get(&h).unwrap().read().unwrap().preferred == true)
                 {
                     // One of the conflicts is preferred. This vertex cannot be preferred.
                     preferred = false;
                 }
-                conflicts.push(hash);
+                conflict_set.push(hash);
             } else {
                 // Create a new conflict set for this transaction input
-                self.conflicts
-                    .insert(hash, Arc::new(TracingRwLock::new(vec![hash])));
+                self.conflicts.insert(hash, vec![hash]);
             }
         }
         vertex.preferred = preferred;
@@ -220,7 +217,8 @@ impl DAG {
     }
 
     /// Fill out parent links if the parents are present in the DAG
-    fn link_parents(&mut self, vertex: &mut Vertex) -> Result<()> {
+    fn link_parents(&mut self, arc_vertex: Arc<TracingRwLock<Vertex>>) -> Result<()> {
+        let mut vertex = arc_vertex.write().map_err(|_| Error::VertexWriteLock)?;
         Ok(vertex.parents = vertex
             .block
             .parents
@@ -344,15 +342,21 @@ impl WaitList {
     }
 
     /// Inserts a new vertex into the waitlist.
-    fn insert(&mut self, arc_vertex: Arc<TracingRwLock<Vertex>>) -> Result<()> {
-        let vertex = arc_vertex.read().map_err(|_| Error::VertexReadLock)?;
-        for parent_hash in vertex.block.parents.iter().map(|h| h.into()) {
+    fn insert(&mut self, vertex: Arc<TracingRwLock<Vertex>>) -> Result<()> {
+        for parent_hash in vertex
+            .read()
+            .map_err(|_| Error::VertexReadLock)?
+            .block
+            .parents
+            .iter()
+            .map(|h| h.into())
+        {
             if let Some(parent_queue) = self.0.get_mut(&parent_hash) {
                 // Add this vertex as a descendent in the parent's queue
-                parent_queue.push(arc_vertex.clone());
+                parent_queue.push(vertex.clone());
             } else {
                 // Insert a new entry
-                let evicted = self.0.put(parent_hash, vec![arc_vertex.clone()]);
+                let evicted = self.0.put(parent_hash, vec![vertex.clone()]);
 
                 // If an existing entry was evicted, demote all the descendents in its queue
                 if let Some(queue) = evicted {

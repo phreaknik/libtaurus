@@ -10,15 +10,14 @@ pub use block::*;
 use chrono::{DateTime, Utc};
 use libp2p::multihash::Multihash;
 use libp2p::PeerId;
-
 use randomx_rs::RandomXFlag;
-
 use std::path::PathBuf;
 use std::result;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 use tokio::{select, sync::broadcast};
 use tracing::{debug, error, info, warn};
+use tracing_mutex::stdsync::TracingRwLock;
 
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
 /// [`tokio::sync::broadcast`] for more information.
@@ -44,6 +43,8 @@ pub enum Error {
     Avalanche(#[from] avalanche::Error),
     #[error(transparent)]
     Block(#[from] block::Error),
+    #[error("error acquiring write lock on Avalanche DAG")]
+    DAGWriteLock,
     #[error(transparent)]
     SerdeCbor(#[from] serde_cbor::error::Error),
     #[error(transparent)]
@@ -127,7 +128,7 @@ pub struct Runtime {
     _config: Config,
     peer_id: Option<PeerId>,
     randomx_vm: RandomXVMInstance,
-    dag: avalanche::DAG,
+    dag: TracingRwLock<avalanche::DAG>,
     actions_in: UnboundedReceiver<Action>,
     events_out: broadcast::Sender<Event>,
     p2p_action_ch: UnboundedSender<p2p::Action>,
@@ -151,7 +152,7 @@ impl Runtime {
         // Instantiate the runtime
         Ok(Runtime {
             _config: config.clone(),
-            dag: DAG::new(config.avalanche, events_out.clone()),
+            dag: TracingRwLock::new(DAG::new(config.avalanche, events_out.clone())),
             peer_id: None,
             randomx_vm,
             actions_in,
@@ -172,7 +173,11 @@ impl Runtime {
 
         // Wait until the events channel has listeners, before initializing the DAG
         while self.events_out.receiver_count() == 0 {}
-        self.dag.init().expect("failed to initialize the DAG");
+        self.dag
+            .write()
+            .unwrap()
+            .init()
+            .expect("failed to initialize the DAG");
 
         // Handle consensus events
         loop {
@@ -226,7 +231,13 @@ impl Runtime {
         block
             .verify_pow(&self.randomx_vm)
             .map_err(Error::from)
-            .and_then(|_| self.dag.try_insert(block).map_err(Error::from))
+            .and_then(|_| {
+                self.dag
+                    .write()
+                    .map_err(|_| Error::DAGWriteLock)?
+                    .try_insert(block)
+                    .map_err(Error::from)
+            })
             .or_else(|e| {
                 if let Error::Avalanche(avalanche::Error::MissingParents(parents)) = &e {
                     // Look for missing parents block in P2P network
@@ -254,7 +265,7 @@ impl Runtime {
                 match request {
                     avalanche_rpc::Request::GetBlock(height, hash) => {
                         // Generate a response with the requested block, if we have it
-                        let resp = match self.dag.get_block(height, &hash.into()) {
+                        let resp = match self.dag.write().unwrap().get_block(height, &hash.into()) {
                             Ok(block) => avalanche_rpc::Response::Block(block),
                             Err(_) => avalanche_rpc::Response::Error(
                                 avalanche_rpc::proto::mod_Response::Error::NOT_FOUND,
