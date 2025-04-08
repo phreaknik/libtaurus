@@ -91,7 +91,7 @@ impl<'a> Behaviour {
     pub fn publish(&mut self, message: MessageData) -> crate::p2p::Result<MessageId> {
         self.inner
             .gossipsub
-            .publish(Sha256Topic::from(&message), serde_cbor::to_vec(&message)?)
+            .publish(Sha256Topic::from(&message), rmp_serde::to_vec(&message)?)
             .map_err(crate::p2p::Error::from)
     }
 

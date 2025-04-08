@@ -45,20 +45,22 @@ pub enum Error {
     Block(#[from] block::Error),
     #[error("error acquiring write lock on Avalanche DAG")]
     DAGWriteLock,
-    #[error(transparent)]
-    SerdeCbor(#[from] serde_cbor::error::Error),
+    #[error("consensus event channel error")]
+    EventsOutCh(#[from] tokio::sync::broadcast::error::SendError<Event>),
     #[error(transparent)]
     Heed(#[from] heed::Error),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
-    RandomX(#[from] randomx::Error),
+    MsgPackDecode(#[from] rmp_serde::decode::Error),
+    #[error(transparent)]
+    MsgPackEncode(#[from] rmp_serde::encode::Error),
     #[error("new block channel error")]
     NewBlockCh(#[from] tokio::sync::mpsc::error::SendError<Block>),
     #[error("p2p action channel error")]
     P2pActionCh(#[from] tokio::sync::mpsc::error::SendError<p2p::Action>),
-    #[error("consensus event channel error")]
-    EventsOutCh(#[from] tokio::sync::broadcast::error::SendError<Event>),
+    #[error(transparent)]
+    RandomX(#[from] randomx::Error),
 }
 
 /// Result type for consensus errors
@@ -266,7 +268,11 @@ impl Runtime {
                     avalanche_rpc::Request::GetBlock(height, hash) => {
                         // Generate a response with the requested block, if we have it
                         let resp = match self.dag.write().unwrap().get_block(height, &hash.into()) {
-                            Ok(block) => avalanche_rpc::Response::Block(block),
+                            Ok(block) => {
+                                let hash = block.hash().unwrap();
+                                debug!("sending block response {hash}={block:?}");
+                                avalanche_rpc::Response::Block(block)
+                            }
                             Err(_) => avalanche_rpc::Response::Error(
                                 avalanche_rpc::proto::mod_Response::Error::NOT_FOUND,
                             ),
@@ -289,7 +295,6 @@ impl Runtime {
 
             // Handle responses to avalanche requests we sent out
             avalanche_rpc::Event::Responded(peer, response) => {
-                debug!("Received response: {response:?}");
                 match response {
                     // TODO: if the peer didn't have the requested data, what do we do?
                     // Do we ban the peer for not having data that they should?
@@ -297,6 +302,7 @@ impl Runtime {
                     avalanche_rpc::Response::Error(_) => todo!(),
                     avalanche_rpc::Response::Block(block) => {
                         if let Ok(hash) = block.hash() {
+                            debug!("received block response {hash}={block:?}");
                             if let Err(e) = self.try_insert_block(block, Some(peer)) {
                                 debug!("unable to insert requested block {hash}: {e}");
                             }

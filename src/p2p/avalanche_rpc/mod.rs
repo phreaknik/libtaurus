@@ -32,12 +32,14 @@ pub enum Event {
 pub enum Error {
     #[error(transparent)]
     Block(#[from] consensus::block::Error),
-    #[error(transparent)]
-    Cbor(#[from] serde_cbor::Error),
     #[error("request message is missing data")]
     IncompleteRequest,
     #[error("response message is missing data")]
     IncompleteResponse,
+    #[error(transparent)]
+    MsgPackDecode(#[from] rmp_serde::decode::Error),
+    #[error(transparent)]
+    MsgPackEncode(#[from] rmp_serde::encode::Error),
 }
 
 /// [`NetworkBehaviour`] to implement the peer RPC message routing

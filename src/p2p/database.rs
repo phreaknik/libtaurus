@@ -44,7 +44,7 @@ impl<'a> BytesEncode<'a> for PeerDbKey {
     fn bytes_encode(
         item: &'a Self::EItem,
     ) -> std::result::Result<std::borrow::Cow<'a, [u8]>, Box<dyn std::error::Error>> {
-        Ok(serde_cbor::to_vec(item)?.into())
+        Ok(rmp_serde::to_vec(item)?.into())
     }
 }
 
@@ -54,7 +54,7 @@ impl<'a> BytesDecode<'a> for PeerDbKey {
     fn bytes_decode(
         bytes: &'a [u8],
     ) -> std::result::Result<Self::DItem, Box<dyn std::error::Error>> {
-        Ok(serde_cbor::from_slice(bytes)?)
+        Ok(rmp_serde::from_slice(bytes)?)
     }
 }
 
@@ -89,7 +89,7 @@ impl<'a> BytesEncode<'a> for PeerInfo {
     fn bytes_encode(
         item: &'a Self::EItem,
     ) -> std::result::Result<std::borrow::Cow<'a, [u8]>, Box<dyn std::error::Error>> {
-        Ok(serde_cbor::to_vec(item)?.into())
+        Ok(rmp_serde::to_vec(item)?.into())
     }
 }
 
@@ -99,7 +99,7 @@ impl<'a> BytesDecode<'a> for PeerInfo {
     fn bytes_decode(
         bytes: &'a [u8],
     ) -> std::result::Result<Self::DItem, Box<dyn std::error::Error>> {
-        Ok(serde_cbor::from_slice(bytes)?)
+        Ok(rmp_serde::from_slice(bytes)?)
     }
 }
 

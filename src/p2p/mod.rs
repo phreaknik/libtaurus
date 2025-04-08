@@ -54,9 +54,11 @@ pub enum Error {
     #[error(transparent)]
     Dial(#[from] libp2p::swarm::DialError),
     #[error(transparent)]
-    Cbor(#[from] serde_cbor::Error),
-    #[error(transparent)]
     Heed(#[from] heed::Error),
+    #[error(transparent)]
+    MsgPackDecode(#[from] rmp_serde::decode::Error),
+    #[error(transparent)]
+    MsgPackEncode(#[from] rmp_serde::encode::Error),
     #[error(transparent)]
     Multiaddr(#[from] libp2p::multiaddr::Error),
     #[error(transparent)]

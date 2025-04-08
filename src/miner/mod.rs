@@ -176,7 +176,7 @@ fn mine(
     loop {
         let loop_count = 1_000;
         for i in 0..loop_count {
-            let hash = randomx_vm.calculate_hash(&serde_cbor::to_vec(&block).unwrap())?;
+            let hash = randomx_vm.calculate_hash(&rmp_serde::to_vec(&block).unwrap())?;
             if BigUint::from_bytes_be(&hash) < target {
                 results_ch.send(block.clone())?;
                 sols_count_ch.send(i).unwrap();

@@ -6,7 +6,7 @@ use libp2p::request_response::ProtocolName;
 use quick_protobuf::{BytesReader, MessageRead, MessageWrite, Writer};
 use std::io;
 use thiserror::Error;
-use tracing::error;
+use tracing::{error, warn};
 
 pub const PROTOCOL_NAME: &[u8] = b"/cordelia/avalanche_rpc/0.1.0";
 
@@ -122,6 +122,10 @@ impl request_response::Codec for AvalancheRpcCodec {
     where
         T: AsyncWrite + Send + Unpin,
     {
+        if let Response::Block(block) = &data {
+            let hash = block.hash().unwrap();
+            warn!("encoded {hash}={block:?}");
+        }
         let mut bytes = Vec::new();
         let mut writer = Writer::new(&mut bytes);
         let protobuf = data.to_protobuf().map_err(|_| {
@@ -136,6 +140,14 @@ impl request_response::Codec for AvalancheRpcCodec {
                 "unable to write response message",
             )
         })?;
+        let mut protobuf = BytesReader::from_bytes(&bytes);
+        if let Ok(protobuf) = proto::Response::from_reader(&mut protobuf, &bytes) {
+            if let Ok(Response::Block(block)) = Response::from_protobuf(protobuf) {
+                let hash = block.hash().unwrap();
+                warn!("decoded {hash}={block:?}");
+            }
+        }
+
         io.write_all(bytes.as_slice()).await?;
         io.close().await
     }

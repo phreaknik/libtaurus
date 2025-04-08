@@ -58,7 +58,7 @@ impl TryFrom<gossipsub::Event> for Message {
             } => Ok(Message {
                 msg_source: propagation_source,
                 msg_id: message_id,
-                data: serde_cbor::from_slice(&message.data)?,
+                data: rmp_serde::from_slice(&message.data)?,
             }),
             _ => Err(Error::NotAMessage),
         }

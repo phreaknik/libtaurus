@@ -15,18 +15,20 @@ use std::result;
 pub enum Error {
     #[error(transparent)]
     Chrono(#[from] chrono::ParseError),
-    #[error(transparent)]
-    Multihash(#[from] libp2p::multihash::Error),
-    #[error(transparent)]
-    SerdeCbor(#[from] serde_cbor::error::Error),
-    #[error(transparent)]
-    Utf8(#[from] std::string::FromUtf8Error),
-    #[error(transparent)]
-    RandomX(#[from] randomx::Error),
     #[error("invalid difficulty")]
     InvalidDifficulty,
     #[error("invalid proof-of-work")]
     InvalidPoW,
+    #[error(transparent)]
+    MsgPackDecode(#[from] rmp_serde::decode::Error),
+    #[error(transparent)]
+    MsgPackEncode(#[from] rmp_serde::encode::Error),
+    #[error(transparent)]
+    Multihash(#[from] libp2p::multihash::Error),
+    #[error(transparent)]
+    RandomX(#[from] randomx::Error),
+    #[error(transparent)]
+    Utf8(#[from] std::string::FromUtf8Error),
 }
 
 /// Result type for block errors
@@ -48,7 +50,7 @@ pub struct Block {
 impl Block {
     /// Compute the hash of the vertex
     pub fn hash(&self) -> Result<Hash> {
-        Ok(blake3::hash(&serde_cbor::to_vec(self)?))
+        Ok(blake3::hash(&rmp_serde::to_vec(self)?))
     }
 
     /// Compute the mining target from the given difficulty
@@ -65,7 +67,7 @@ impl Block {
 
     /// Check if the block has valid proof-of-work
     pub fn verify_pow(&self, randomx: &RandomXVMInstance) -> Result<()> {
-        if BigUint::from_bytes_be(&randomx.calculate_hash(&serde_cbor::to_vec(self)?)?)
+        if BigUint::from_bytes_be(&randomx.calculate_hash(&rmp_serde::to_vec(self)?)?)
             < self.mining_target()?
         {
             Ok(())
@@ -115,19 +117,19 @@ impl TryFrom<p2p::avalanche_rpc::proto::Block> for Block {
             parents: block
                 .parents
                 .iter()
-                .map(|bytes| serde_cbor::from_slice(bytes))
+                .map(|bytes| rmp_serde::from_slice(bytes))
                 .try_collect()?,
             inputs: block
                 .inputs
                 .iter()
-                .map(|bytes| serde_cbor::from_slice(bytes))
+                .map(|bytes| rmp_serde::from_slice(bytes))
                 .try_collect()?,
             outputs: block
                 .outputs
                 .iter()
-                .map(|bytes| serde_cbor::from_slice(bytes))
+                .map(|bytes| rmp_serde::from_slice(bytes))
                 .try_collect()?,
-            time: serde_cbor::from_slice(&block.time)?,
+            time: rmp_serde::from_slice(&block.time)?,
             nonce: block.nonce,
         })
     }
@@ -145,19 +147,19 @@ impl TryInto<p2p::avalanche_rpc::proto::Block> for Block {
             parents: self
                 .parents
                 .iter()
-                .map(|p| serde_cbor::to_vec(p))
+                .map(|p| rmp_serde::to_vec(p))
                 .try_collect()?,
             inputs: self
                 .inputs
                 .iter()
-                .map(|i| serde_cbor::to_vec(i))
+                .map(|i| rmp_serde::to_vec(i))
                 .try_collect()?,
             outputs: self
                 .parents
                 .iter()
-                .map(|o| serde_cbor::to_vec(o))
+                .map(|o| rmp_serde::to_vec(o))
                 .try_collect()?,
-            time: serde_cbor::to_vec(&self.time)?,
+            time: rmp_serde::to_vec(&self.time)?,
             nonce: self.nonce,
         })
     }
@@ -191,7 +193,7 @@ impl<'a> BytesEncode<'a> for SerdeHash {
     fn bytes_encode(
         item: &'a Self::EItem,
     ) -> std::result::Result<std::borrow::Cow<'a, [u8]>, Box<dyn std::error::Error>> {
-        Ok(serde_cbor::to_vec(item)?.into())
+        Ok(rmp_serde::to_vec(item)?.into())
     }
 }
 
@@ -201,7 +203,7 @@ impl<'a> BytesDecode<'a> for SerdeHash {
     fn bytes_decode(
         bytes: &'a [u8],
     ) -> std::result::Result<Self::DItem, Box<dyn std::error::Error>> {
-        Ok(serde_cbor::from_slice(bytes)?)
+        Ok(rmp_serde::from_slice(bytes)?)
     }
 }
 
@@ -215,9 +217,11 @@ impl Default for SerdeHash {
 struct PrettyBlock {
     version: u32,
     height: u64,
-    parents: Vec<String>,
     difficulty: u64,
     miner: PeerId,
+    parents: Vec<String>,
+    inputs: Vec<String>,
+    outputs: Vec<String>,
     time: DateTime<Utc>,
     nonce: u64,
 }
@@ -229,6 +233,16 @@ impl From<&Block> for PrettyBlock {
             height: block.height,
             parents: block
                 .parents
+                .iter()
+                .map(|p| p.0.iter().map(|b| format!("{b:02x}")).collect())
+                .collect(),
+            inputs: block
+                .inputs
+                .iter()
+                .map(|p| p.0.iter().map(|b| format!("{b:02x}")).collect())
+                .collect(),
+            outputs: block
+                .outputs
                 .iter()
                 .map(|p| p.0.iter().map(|b| format!("{b:02x}")).collect())
                 .collect(),

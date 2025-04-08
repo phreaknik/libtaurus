@@ -19,13 +19,13 @@ impl Request {
                 Request::GetBlock(height, hash) => {
                     proto::mod_Request::OneOfRequestData::get_block(proto::BlockID {
                         height,
-                        hash: serde_cbor::to_vec(&hash)?,
+                        hash: rmp_serde::to_vec(&hash)?,
                     })
                 }
                 Request::GetPreference(height, hash) => {
                     proto::mod_Request::OneOfRequestData::get_preference(proto::BlockID {
                         height,
-                        hash: serde_cbor::to_vec(&hash)?,
+                        hash: rmp_serde::to_vec(&hash)?,
                     })
                 }
             },
@@ -37,12 +37,12 @@ impl Request {
         match req.RequestData {
             proto::mod_Request::OneOfRequestData::get_block(message) => Ok(Request::GetBlock(
                 message.height,
-                serde_cbor::from_slice(message.hash.as_slice())?,
+                rmp_serde::from_slice(message.hash.as_slice())?,
             )),
             proto::mod_Request::OneOfRequestData::get_preference(message) => {
                 Ok(Request::GetPreference(
                     message.height,
-                    serde_cbor::from_slice(message.hash.as_slice())?,
+                    rmp_serde::from_slice(message.hash.as_slice())?,
                 ))
             }
             proto::mod_Request::OneOfRequestData::None => Err(super::Error::IncompleteRequest),

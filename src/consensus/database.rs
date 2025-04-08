@@ -13,11 +13,13 @@ pub enum Error {
     #[error(transparent)]
     Block(#[from] super::block::Error),
     #[error(transparent)]
-    SerdeCbor(#[from] serde_cbor::error::Error),
-    #[error(transparent)]
     Heed(#[from] heed::Error),
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    #[error(transparent)]
+    MsgPackDecode(#[from] rmp_serde::decode::Error),
+    #[error(transparent)]
+    MsgPackEncode(#[from] rmp_serde::encode::Error),
 }
 
 /// Result type for consensus errors
@@ -113,7 +115,7 @@ impl<'a> BytesEncode<'a> for BlockEntry {
     fn bytes_encode(
         item: &'a Self::EItem,
     ) -> std::result::Result<std::borrow::Cow<'a, [u8]>, Box<dyn std::error::Error>> {
-        Ok(serde_cbor::to_vec(item)?.into())
+        Ok(rmp_serde::to_vec(item)?.into())
     }
 }
 
@@ -123,6 +125,6 @@ impl<'a> BytesDecode<'a> for BlockEntry {
     fn bytes_decode(
         bytes: &'a [u8],
     ) -> std::result::Result<Self::DItem, Box<dyn std::error::Error>> {
-        Ok(serde_cbor::from_slice(bytes)?)
+        Ok(rmp_serde::from_slice(bytes)?)
     }
 }

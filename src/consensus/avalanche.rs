@@ -19,7 +19,9 @@ pub enum Error {
     #[error(transparent)]
     Block(#[from] super::block::Error),
     #[error(transparent)]
-    Cbor(#[from] serde_cbor::error::Error),
+    MsgPackDecode(#[from] rmp_serde::decode::Error),
+    #[error(transparent)]
+    MsgPackEncode(#[from] rmp_serde::encode::Error),
     #[error(transparent)]
     Database(#[from] super::database::Error),
     #[error("consensus event channel error")]
