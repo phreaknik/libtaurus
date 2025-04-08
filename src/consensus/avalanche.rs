@@ -7,7 +7,7 @@ use lru::LruCache;
 //TODO: use RC instead of ARC. Don't need thread safety
 use std::{collections::HashMap, num::NonZeroUsize, path::PathBuf, result, sync::Arc};
 use tokio::sync::broadcast;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use tracing_mutex::stdsync::TracingRwLock;
 
 /// Path to the peer database, from within the peer data directory
@@ -151,11 +151,6 @@ impl DAG {
         let mut vertex = arc_vertex.write().map_err(|_| Error::VertexWriteLock)?;
         let hash = vertex.block.hash()?;
 
-        // Write it to the database
-        let wtxn = self
-            .database
-            .write_block(None, vertex.block.clone(), false)?;
-
         // Update each parent
         for parent in &vertex.parents {
             parent
@@ -166,25 +161,18 @@ impl DAG {
         }
 
         // Update the conflict set for each transaction input
-        let mut preferred = true;
         for input in vertex.block.inputs.iter() {
+            // Make sure conflict sets exist for each tx input
             if let Some(conflict_set) = self.conflicts.get_mut(&input.into()) {
-                // A conflict set exists. Add this vertex to the set.
-                if preferred
-                    && conflict_set
-                        .iter()
-                        .any(|h| self.vertices.get(&h).unwrap().read().unwrap().preferred == true)
-                {
-                    // One of the conflicts is preferred. This vertex cannot be preferred.
-                    preferred = false;
-                }
                 conflict_set.push(hash);
             } else {
                 // Create a new conflict set for this transaction input
                 self.conflicts.insert(hash, vec![hash]);
             }
         }
-        vertex.preferred = preferred;
+
+        // Set the vertex preference
+        vertex.preferred = self.is_vertex_preferred(arc_vertex.clone())?;
 
         // Add it to the collection of vertices
         self.vertices.insert(hash, arc_vertex.clone());
@@ -203,9 +191,6 @@ impl DAG {
         )))?;
 
         info!("Inserted block: {hash}");
-
-        // Commit the block to the database only now that it has passed all validation
-        wtxn.commit().map_err(Error::from)?;
 
         // Retry vertices in the waitlist
         self.remove_and_retry_waitlist(hash);
@@ -244,18 +229,97 @@ impl DAG {
     }
 
     /// Look up a block from the DAG
-    pub fn get_block(&mut self, _height: u64, hash: &Hash) -> Result<Block> {
+    pub fn get_block(&mut self, hash: &Hash) -> Result<Block> {
         match self.vertices.get(hash) {
+            // Look for the vertex in the in-memory DAG
             Some(vertex) => Ok(vertex
                 .read()
                 .map_err(|_| Error::VertexReadLock)?
                 .block
                 .clone()),
+            // If its not in the in-memory DAG, check the database.
             None => self
                 .database
                 .read_block(hash.clone())?
                 .ok_or(Error::NotFound),
         }
+    }
+
+    /// Determine if the specified vertex is strongly preferred, as described in the Avalanche
+    /// consensus paper.
+    pub fn is_strongly_preferred(&mut self, hash: &Hash) -> Result<bool> {
+        Ok(match self.vertices.get(hash) {
+            // Look for the vertex in the in-memory DAG
+            Some(vertex) => Ok(vertex
+                .read()
+                .map_err(|_| Error::VertexReadLock)?
+                .block
+                .clone()),
+            // If its not in the in-memory DAG, check the database.
+            None => self
+                .database
+                .read_block(hash.clone())?
+                .ok_or(Error::NotFound),
+        }?
+        .parents
+        .iter()
+        .all(|p| {
+            self.is_preferred(&p.into()).unwrap_or_else(|e| {
+                // This condition should never occur, because the block should not even be present
+                // in the DAG or database without known parents
+                warn!(
+                    "Failed to determine preference for parent {}: {e}",
+                    Into::<blake3::Hash>::into(p)
+                );
+                false
+            })
+        }))
+    }
+
+    /// Determine if the vertex corresponding to the given hash is preferred, as described in the
+    /// Avalanche consensus paper.
+    pub fn is_preferred(&mut self, hash: &Hash) -> Result<bool> {
+        Ok(match self.vertices.get(hash) {
+            // Look for the vertex in the in-memory DAG
+            Some(vertex) => vertex
+                .read()
+                .map_err(|_| Error::VertexReadLock)?
+                .block
+                .inputs
+                .iter()
+                .all(|input| {
+                    match self.conflicts.get(&input.into()) {
+                        Some(cs) => !cs.into_iter().any(|h| {
+                            // If a conflict set exists, and any other vertex in the conflict set is
+                            // preferred, this vertex cannot be preferred
+                            h != hash
+                                && self.vertices.get(&h).unwrap().read().unwrap().preferred == true
+                        }),
+                        None => true,
+                    }
+                }),
+            // If its not in the in-memory DAG, check the database. If it exists, then the block is
+            // preferred.
+            // TODO: Here we assume a block is preferred if it exists in the database. Make sure we
+            // only write blocks to db once finalized.
+            None => self.database.read_block(hash.clone())?.is_some(),
+        })
+    }
+
+    /// Determine if the given vertex is preferred, as described in the Avalanche consensus paper.
+    fn is_vertex_preferred(&self, arc_vertex: Arc<TracingRwLock<Vertex>>) -> Result<bool> {
+        let vertex = arc_vertex.read().map_err(|_| Error::VertexReadLock)?;
+        let hash = vertex.block.hash()?;
+        Ok(vertex.block.inputs.iter().all(|input| {
+            match self.conflicts.get(&input.into()) {
+                Some(cs) => !cs.into_iter().any(|h| {
+                    // If a conflict set exists, and any other vertex in the conflict set is
+                    // preferred, this vertex cannot be preferred
+                    h != &hash && self.vertices.get(&h).unwrap().read().unwrap().preferred == true
+                }),
+                None => true,
+            }
+        }))
     }
 }
 

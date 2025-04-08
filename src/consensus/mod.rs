@@ -16,7 +16,7 @@ use std::result;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 use tokio::{select, sync::broadcast};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 use tracing_mutex::stdsync::TracingRwLock;
 
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
@@ -211,7 +211,6 @@ impl Runtime {
                                 error!("Stopping due to p2p_action channel error: {e}");
                                 return;
                             }
-
                             // Validate the block and insert it into the DAG
                             let hash = block.hash().unwrap();
                             if let Err(e) = self.try_insert_block(block, None) {
@@ -263,31 +262,42 @@ impl Runtime {
             // Handle inbound avalanche requests from other peers
             avalanche_rpc::Event::Requested(request_id, request) => {
                 debug!("Handling request: {request}");
-                match request {
-                    avalanche_rpc::Request::GetBlock(height, hash) => {
+                if let Some(resp) = match request {
+                    avalanche_rpc::Request::GetBlock(_height, hash) => {
                         // Generate a response with the requested block, if we have it
-                        let resp = match self.dag.write().unwrap().get_block(height, &hash.into()) {
+                        let hash: blake3::Hash = hash.into();
+                        match self.dag.write().unwrap().get_block(&hash) {
                             Ok(block) => {
-                                let hash = block.hash().unwrap();
-                                debug!("sending block response {hash}={block:?}");
-                                avalanche_rpc::Response::Block(block)
+                                trace!("sending block response {hash}={block:?}");
+                                Some(avalanche_rpc::Response::Block(block))
                             }
-                            Err(_) => avalanche_rpc::Response::Error(
-                                avalanche_rpc::proto::mod_Response::Error::NOT_FOUND,
-                            ),
-                        };
-                        // Send the response
-                        if let Err(e) = self
-                            .p2p_action_ch
-                            .send(p2p::Action::AvalancheResponse(request_id, resp))
-                        {
-                            error!("Stopping due to p2p_action channel error: {e}");
-                            return;
+                            Err(avalanche::Error::NotFound) => {
+                                debug!("unable to find requested block: {hash}");
+                                Some(avalanche_rpc::Response::Error(
+                                    avalanche_rpc::proto::mod_Response::Error::NOT_FOUND,
+                                ))
+                            }
+                            _ => None,
                         }
                     }
-                    avalanche_rpc::Request::GetPreference(_height, _hash) => {
-                        // Query if the specified block is preferred in the Avalanche DAG.
-                        todo!()
+                    avalanche_rpc::Request::GetPreference(_height, hash) => {
+                        let hash: blake3::Hash = hash.into();
+                        match self.dag.write().unwrap().is_strongly_preferred(&hash) {
+                            Ok(query) => Some(avalanche_rpc::Response::Preference(query)),
+                            Err(e) => {
+                                debug!("unable to determine preference for {hash}: {e}");
+                                None
+                            }
+                        }
+                    }
+                } {
+                    // Send the response
+                    if let Err(e) = self
+                        .p2p_action_ch
+                        .send(p2p::Action::AvalancheResponse(request_id, resp))
+                    {
+                        error!("Stopping due to p2p_action channel error: {e}");
+                        return;
                     }
                 }
             }
