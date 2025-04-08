@@ -23,7 +23,7 @@ use tracing::{error, trace, warn};
 /// Event produced by [`Behaviour`].
 #[derive(Debug, Clone)]
 pub enum Event {
-    Requested(RequestId, Request),
+    Requested(PeerId, RequestId, Request),
     Responded(PeerId, Response),
 }
 
@@ -88,7 +88,7 @@ impl<'a> Behaviour {
                 // Save the response channel, so we can forward the response later
                 self.pending.insert(request_id, channel);
                 Poll::Ready(ToSwarm::GenerateEvent(Event::Requested(
-                    request_id, request,
+                    peer_id, request_id, request,
                 )))
             }
             request_response::Message::Response { response, .. } => {

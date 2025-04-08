@@ -260,7 +260,7 @@ impl Runtime {
     fn handle_avalanche_event(&mut self, event: avalanche_rpc::Event) {
         match event {
             // Handle inbound avalanche requests from other peers
-            avalanche_rpc::Event::Requested(request_id, request) => {
+            avalanche_rpc::Event::Requested(requester, request_id, request) => {
                 debug!("Handling request: {request}");
                 if let Some(resp) = match request {
                     avalanche_rpc::Request::GetBlock(_height, hash) => {
@@ -280,10 +280,23 @@ impl Runtime {
                             _ => None,
                         }
                     }
-                    avalanche_rpc::Request::GetPreference(_height, hash) => {
+                    avalanche_rpc::Request::GetPreference(height, hash) => {
                         let hash: blake3::Hash = hash.into();
                         match self.dag.write().unwrap().is_strongly_preferred(&hash) {
                             Ok(query) => Some(avalanche_rpc::Response::Preference(query)),
+                            Err(avalanche::Error::NotFound) => {
+                                debug!("no preference for unknown block {hash}");
+                                if let Err(e) =
+                                    self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
+                                        requester,
+                                        avalanche_rpc::Request::GetBlock(height, hash.into()),
+                                    ))
+                                {
+                                    error!("Stopping due to p2p_action channel error: {e}");
+                                    return;
+                                }
+                                None
+                            }
                             Err(e) => {
                                 debug!("unable to determine preference for {hash}: {e}");
                                 None
