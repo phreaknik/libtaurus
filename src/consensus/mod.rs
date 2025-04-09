@@ -2,7 +2,6 @@ pub mod avalanche;
 pub mod block;
 mod database;
 
-use crate::p2p::avalanche_rpc;
 use crate::randomx::RandomXVMInstance;
 use crate::{p2p, randomx};
 pub use avalanche::*;
@@ -16,7 +15,7 @@ use std::result;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 use tokio::{select, sync::broadcast};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{error, info, trace, warn};
 use tracing_mutex::stdsync::TracingRwLock;
 
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
@@ -153,7 +152,11 @@ impl Runtime {
         // Instantiate the runtime
         Ok(Runtime {
             _config: config.clone(),
-            dag: TracingRwLock::new(DAG::new(config.avalanche, events_out.clone())),
+            dag: TracingRwLock::new(DAG::new(
+                config.avalanche,
+                p2p_action_ch.clone(),
+                events_out.clone(),
+            )),
             peer_id: None,
             randomx_vm,
             actions_in,
@@ -196,19 +199,13 @@ impl Runtime {
                                 return error!("Stopping due to p2p_action channel error: {e}");
                             }
                         },
-                        Ok(p2p::Event::Avalanche(avalanche_rpc::Event::Requested(peer, request_id, request))) => {
-                            match self.handle_avalanche_request(peer, request)
-                                .and_then(|response| self.p2p_action_ch.send(p2p::Action::AvalancheResponse(request_id, response)).map_err(Error::from)) {
-                                Ok(_) => {},
-                                Err(Error::P2pActionCh(e)) => return error!("Stopping due to p2p_action channel error: {e}"),
-                                Err(e) => error!("Error while handling Avalanche request: {e}"),
+                        Ok(p2p::Event::Avalanche(message)) => {
+                            match self.dag.write().map_err(|_| Error::DAGWriteLock).unwrap().handle_avalanche_message(message) {
+                                Ok(()) => trace!("Handled avalanche message"),
+                                Err(avalanche::Error::P2pActionCh(e)) => return error!("Stopping due to p2p_action channel error: {e}"),
+                                Err(e) => error!("Error while handling Avalanche message: {e}"),
                             }
-                        },
-                        Ok(p2p::Event::Avalanche(avalanche_rpc::Event::Responded(peer, response))) => {
-                            if let Err(e) = self.handle_avalanche_response(peer, response) {
-                                 error!("Error while handline Avalanche request: {e}");
-                            }
-                        },
+                        }
                         Err(e) => return error!("Stopping due to p2p_action channel error: {e}"),
                     }
                 },
@@ -220,7 +217,7 @@ impl Runtime {
                             match self.p2p_action_ch
                                 .send(p2p::Action::Broadcast(p2p::MessageData::Block(block.clone())))
                                 .map_err(Error::from)
-                                .and_then(|_| self.try_insert_block(block, None)) {
+                                .and_then(|_| self.check_and_insert_block(block, None)) {
                                 Ok(_) => {},
                                 Err(Error::P2pActionCh(e)) => return error!("Stopping due to p2p_action channel error: {e}"),
                                 Err(e) => error!("Failed to insert mined block {hash}: {e}"),
@@ -234,114 +231,18 @@ impl Runtime {
 
     /// Try to insert a block as a new vertex in the DAG. Returns true if the vertex is considered
     /// strongly preffered, according to Avalanche consensus.
-    fn try_insert_block(&mut self, block: Block, sender: Option<PeerId>) -> Result<bool> {
-        let hash = block.hash()?;
-        let height = block.height;
+    fn check_and_insert_block(&mut self, block: Block, sender: Option<PeerId>) -> Result<bool> {
         block
             .verify_pow(&self.randomx_vm)
             .map_err(Error::from)
             .and_then(|_| {
+                // Insert the vertex into the DAG
                 self.dag
                     .write()
                     .map_err(|_| Error::DAGWriteLock)?
-                    .try_insert(block)
+                    .try_insert_block(block, sender)
                     .map_err(Error::from)
             })
-            .or_else(|e| {
-                if let Error::Avalanche(avalanche::Error::MissingParents(parents)) = &e {
-                    // Look for missing parents block in P2P network
-                    if let Some(peer) = sender {
-                        // TODO: Batch these into one request for parents?
-                        for &parent in parents {
-                            self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
-                                peer,
-                                avalanche_rpc::Request::GetBlock(height - 1, parent.into()),
-                            ))?;
-                        }
-                    }
-                } else {
-                    warn!("Unable to insert block {hash}: {e:?}");
-                }
-                Err(e)
-            })
-    }
-
-    /// Handle a received avalanche request message from one of our peers
-    fn handle_avalanche_request(
-        &mut self,
-        from_peer: PeerId,
-        request: avalanche_rpc::Request,
-    ) -> Result<avalanche_rpc::Response> {
-        debug!("Handling request: {request}");
-        match request {
-            avalanche_rpc::Request::GetBlock(_height, hash) => {
-                let hash: blake3::Hash = hash.into();
-                match self
-                    .dag
-                    .write()
-                    .map_err(|_| Error::DAGWriteLock)?
-                    .get_block(&hash)
-                {
-                    Ok(block) => {
-                        trace!("sending block response {hash}={block:?}");
-                        Ok(avalanche_rpc::Response::Block(block))
-                    }
-                    Err(avalanche::Error::NotFound) => {
-                        debug!("unable to find requested block: {hash}");
-                        Ok(avalanche_rpc::Response::Error(
-                            avalanche_rpc::proto::mod_Response::Error::NOT_FOUND,
-                        ))
-                    }
-                    Err(e) => {
-                        error!("Unexpected error while looking for block {hash}: {e}");
-                        Err(e.into())
-                    }
-                }
-            }
-            avalanche_rpc::Request::GetPreference(height, hash) => {
-                let hash: blake3::Hash = hash.into();
-                match self.dag.write().unwrap().is_strongly_preferred(&hash) {
-                    Ok(query) => Ok(avalanche_rpc::Response::Preference(query)),
-                    Err(error @ avalanche::Error::NotFound) => {
-                        debug!("no preference for unknown block {hash}");
-                        if let Err(e) = self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
-                            from_peer,
-                            avalanche_rpc::Request::GetBlock(height, hash.into()),
-                        )) {
-                            error!("Stopping due to p2p_action channel error: {e}");
-                        }
-                        Err(error.into())
-                    }
-                    Err(e) => {
-                        debug!("unable to determine preference for {hash}: {e}");
-                        Err(e.into())
-                    }
-                }
-            }
-        }
-    }
-
-    /// Handle a response message corresponding to an avalanche request
-    fn handle_avalanche_response(
-        &mut self,
-        from_peer: PeerId,
-        response: avalanche_rpc::Response,
-    ) -> Result<()> {
-        Ok(match response {
-            // TODO: if the peer didn't have the requested data, what do we do?
-            // Do we ban the peer for not having data that they should?
-            // Do we try to find the requested data on the DHT instead?
-            avalanche_rpc::Response::Error(_) => todo!(),
-            avalanche_rpc::Response::Block(block) => {
-                if let Ok(hash) = block.hash() {
-                    debug!("received block response {hash}={block:?}");
-                    if let Err(e) = self.try_insert_block(block, Some(from_peer)) {
-                        debug!("unable to insert requested block {hash}: {e}");
-                    }
-                }
-            }
-            avalanche_rpc::Response::Preference(_) => todo!(),
-        })
     }
 
     /// Handle a message from the peer to peer network, and generate a validation report back to the
@@ -352,7 +253,7 @@ impl Runtime {
         let reject = msg.reject();
         match msg.data {
             p2p::MessageData::Block(block) => {
-                match self.try_insert_block(block, Some(msg.msg_source)) {
+                match self.check_and_insert_block(block, Some(msg.msg_source)) {
                     Err(Error::Avalanche(avalanche::Error::MissingParents(_))) => Ok(ignore),
                     Err(_) => Ok(reject),
                     Ok(_) => Ok(accept),

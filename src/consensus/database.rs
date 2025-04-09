@@ -84,8 +84,7 @@ impl BlocksDatabase {
         let rtxn = self.env.read_txn().unwrap();
         let selected = self
             .db
-            .iter(&rtxn)
-            .unwrap()
+            .iter(&rtxn)?
             .take(age)
             .filter_map(|element| {
                 if let Ok((_hash, block_entry)) = element {
