@@ -148,8 +148,12 @@ impl DAG {
     fn try_insert_vertex(&mut self, arc_vertex: Arc<TracingRwLock<Vertex>>) -> Result<bool> {
         // TODO: validate block (has parents, valid height, valid difficulty, etc...)
 
+        // Determine vertex preference
+        let preference = self.is_vertex_preferred(arc_vertex.clone())?;
+
         let mut vertex = arc_vertex.write().map_err(|_| Error::VertexWriteLock)?;
         let hash = vertex.block.hash()?;
+        vertex.preferred = preference;
 
         // Update each parent
         for parent in &vertex.parents {
@@ -173,9 +177,6 @@ impl DAG {
 
         // Add it to the collection of vertices
         self.vertices.insert(hash, arc_vertex.clone());
-
-        // Set the vertex preference
-        vertex.preferred = self.is_vertex_preferred(arc_vertex.clone())?;
 
         if vertex.preferred {
             // Add it to the frontier
