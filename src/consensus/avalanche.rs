@@ -1,14 +1,22 @@
 use super::{database::BlocksDatabase, Block, BlockHash, Event};
 use crate::{
     p2p::{self, avalanche_rpc},
-    params::{self, QUORUM_MINER_AGE, QUORUM_SIZE},
+    params::{
+        self, AVALANCHE_QUERY_COUNT, AVALANCHE_QUORUM, MAX_QUERY_MINER_AGE, QUERY_TIMEOUT_SEC,
+    },
 };
-use blake3::Hash;
+use cached::{Cached, TimedCache};
 use chrono::Utc;
 use libp2p::PeerId;
 use lru::LruCache;
 //TODO: use RC instead of ARC. Don't need thread safety
-use std::{collections::HashMap, num::NonZeroUsize, path::PathBuf, result, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    num::NonZeroUsize,
+    path::PathBuf,
+    result,
+    sync::Arc,
+};
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::{debug, error, info, trace, warn};
 use tracing_mutex::stdsync::TracingRwLock;
@@ -36,7 +44,7 @@ pub enum Error {
     #[error("missing data")]
     MissingData,
     #[error("missing parent")]
-    MissingParents(Vec<Hash>),
+    MissingParents(Vec<BlockHash>),
     #[error("new block channel error")]
     NewBlockCh(#[from] tokio::sync::mpsc::error::SendError<Block>),
     #[error("data not found")]
@@ -88,6 +96,9 @@ pub struct DAG {
     /// Hash of the genesis block
     genesis_hash: BlockHash,
 
+    /// Collection of pending queries.
+    queries: TimedCache<BlockHash, HashSet<PeerId>>,
+
     /// Channel to make requests of the P2P network
     p2p_action_ch: UnboundedSender<p2p::Action>,
 
@@ -105,7 +116,7 @@ impl DAG {
         let genesis_hash = config.genesis.hash().unwrap();
 
         // Create DAG instance, initialized with genesis block in the frontier
-        let dag = DAG {
+        let mut dag = DAG {
             vertices: HashMap::new(),
             conflicts: HashMap::new(),
             waitlist: WaitList::new(config.waitlist_cap),
@@ -116,10 +127,12 @@ impl DAG {
             database: BlocksDatabase::open(&config.data_dir.join(DATABASE_DIR), true)
                 .expect("Failed to open blocks database"),
             genesis_hash,
+            queries: TimedCache::with_lifespan(QUERY_TIMEOUT_SEC),
             p2p_action_ch,
             events_ch,
             config,
         };
+        dag.queries.set_refresh(false);
 
         // Return the dag
         dag
@@ -149,15 +162,20 @@ impl DAG {
         }
 
         // Query peers for their preference, according to the avalanche consensus protocol
-        for peer in self
+        let pending_queries = self
             .database
-            .select_random_miners(QUORUM_SIZE, QUORUM_MINER_AGE)?
-        {
-            self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
-                peer,
-                avalanche_rpc::Request::GetPreference(hash.into()),
-            ))?;
-        }
+            .select_random_miners(AVALANCHE_QUERY_COUNT, MAX_QUERY_MINER_AGE)?
+            .into_iter()
+            .map(|peer| {
+                self.p2p_action_ch
+                    .send(p2p::Action::AvalancheRequest(
+                        peer,
+                        avalanche_rpc::Request::GetPreference(hash),
+                    ))
+                    .map(|_| peer)
+            })
+            .try_collect()?;
+        self.queries.cache_set(hash, pending_queries);
 
         // Create a new vertex from this block, and link to its parents if we have them
         let vertex = Arc::new(TracingRwLock::new(Vertex::new(block.clone())));
@@ -254,10 +272,10 @@ impl DAG {
             .block
             .parents
             .iter()
-            .map(|hash| {
+            .map(|&hash| {
                 self.vertices
                     .get(&hash)
-                    .ok_or(Error::MissingParents(vec![hash.into()]))
+                    .ok_or(Error::MissingParents(vec![hash]))
                     .map(|val| val.clone())
             })
             .try_collect()?)
@@ -278,10 +296,12 @@ impl DAG {
             avalanche_rpc::Event::Requested(peer, request_id, request) => {
                 // Handle the request and respond to the requester
                 self.handle_avalanche_request(peer, request)
-                    .and_then(|response| {
-                        self.p2p_action_ch
+                    .and_then(|opt_response| match opt_response {
+                        Some(response) => self
+                            .p2p_action_ch
                             .send(p2p::Action::AvalancheResponse(request_id, response))
-                            .map_err(Error::from)
+                            .map_err(Error::from),
+                        None => Ok(()),
                     })
             }
             avalanche_rpc::Event::Responded(peer, response) => {
@@ -295,19 +315,19 @@ impl DAG {
         &mut self,
         from_peer: PeerId,
         request: avalanche_rpc::Request,
-    ) -> Result<avalanche_rpc::Response> {
+    ) -> Result<Option<avalanche_rpc::Response>> {
         debug!("Handling request: {request}");
         match request {
             avalanche_rpc::Request::GetBlock(hash) => match self.get_block(&hash) {
                 Ok(block) => {
                     trace!("Sending block response {hash}={block:?}");
-                    Ok(avalanche_rpc::Response::Block(block))
+                    Ok(Some(avalanche_rpc::Response::Block(block)))
                 }
                 Err(Error::NotFound) => {
                     debug!("Unable to find requested block: {hash}");
-                    Ok(avalanche_rpc::Response::Error(
+                    Ok(Some(avalanche_rpc::Response::Error(
                         avalanche_rpc::proto::mod_Response::Error::NOT_FOUND,
-                    ))
+                    )))
                 }
                 Err(e) => {
                     error!("Unexpected error while looking for block {hash}: {e}");
@@ -316,13 +336,16 @@ impl DAG {
             },
             avalanche_rpc::Request::GetPreference(hash) => {
                 self.is_strongly_preferred(&hash)
-                    .map(|preference| avalanche_rpc::Response::Preference(preference))
+                    .map(|preferred| match preferred {
+                        true => Some(avalanche_rpc::Response::Preferred(hash)),
+                        false => None,
+                    })
                     .map_err(|error| {
                         debug!("Unable to determine preference for {hash}: {error}");
                         if let Error::NotFound = error {
                             match self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
                                 from_peer,
-                                avalanche_rpc::Request::GetBlock(hash.into()),
+                                avalanche_rpc::Request::GetBlock(hash),
                             )) {
                                 Ok(_) => error, // Bubble up the NotFound error
                                 Err(e) => e.into(),
@@ -355,7 +378,27 @@ impl DAG {
                     }
                 }
             }
-            avalanche_rpc::Response::Preference(_) => todo!(),
+            avalanche_rpc::Response::Preferred(hash) => {
+                self.queries
+                    .cache_get_mut(&hash)
+                    .and_then(|peers_waiting| {
+                        // Count this peer's vote towards the quorum
+                        peers_waiting.remove(&from_peer);
+                        Some(peers_waiting)
+                    })
+                    .and_then(|peers_waiting| {
+                        // See if quorum has been reached
+                        if peers_waiting.len() + AVALANCHE_QUORUM < AVALANCHE_QUERY_COUNT {
+                            // Quorum has been reached. Award a chit.
+                            self.vertices.get(&hash).and_then(|v| {
+                                v.write().map_err(|_| Error::VertexWriteLock).unwrap().chit = 1;
+                                Some(v)
+                            });
+                        }
+                        Some(peers_waiting)
+                    });
+                self.queries.flush();
+            }
         })
     }
 

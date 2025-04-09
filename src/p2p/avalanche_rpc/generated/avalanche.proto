@@ -19,7 +19,7 @@ message Response {
 	oneof ResponseData {
 		Error error = 0;
 		Block block = 1;
-		bool preference = 2;
+		BlockID preferred  = 2;
 	}
 }
 

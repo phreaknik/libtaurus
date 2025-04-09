@@ -50,6 +50,7 @@ impl fmt::Display for Request {
             Request::GetBlock(serde_hash) => {
                 write!(f, "GetBlock({})", Into::<blake3::Hash>::into(serde_hash))
             }
+            // TODO: Need to get rid of old references to serde_hash
             Request::GetPreference(serde_hash) => {
                 write!(
                     f,
@@ -66,7 +67,7 @@ impl fmt::Display for Request {
 pub enum Response {
     Error(proto::mod_Response::Error),
     Block(Block),
-    Preference(bool),
+    Preferred(BlockHash),
 }
 
 impl Response {
@@ -76,7 +77,11 @@ impl Response {
             ResponseData: match self {
                 Response::Error(e) => proto::mod_Response::OneOfResponseData::error(e),
                 Response::Block(b) => proto::mod_Response::OneOfResponseData::block(b.try_into()?),
-                Response::Preference(p) => proto::mod_Response::OneOfResponseData::preference(p),
+                Response::Preferred(h) => {
+                    proto::mod_Response::OneOfResponseData::preferred(proto::BlockID {
+                        hash: rmp_serde::to_vec(&h)?,
+                    })
+                }
             },
         })
     }
@@ -86,7 +91,9 @@ impl Response {
         match resp.ResponseData {
             proto::mod_Response::OneOfResponseData::error(e) => Ok(Response::Error(e)),
             proto::mod_Response::OneOfResponseData::block(b) => Ok(Response::Block(b.try_into()?)),
-            proto::mod_Response::OneOfResponseData::preference(p) => Ok(Response::Preference(p)),
+            proto::mod_Response::OneOfResponseData::preferred(h) => {
+                Ok(Response::Preferred(rmp_serde::from_slice(&h.hash)?))
+            }
             proto::mod_Response::OneOfResponseData::None => Err(super::Error::IncompleteResponse),
         }
     }

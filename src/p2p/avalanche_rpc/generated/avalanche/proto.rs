@@ -83,7 +83,7 @@ impl<'a> MessageRead<'a> for Response {
             match r.next_tag(bytes) {
                 Ok(0) => msg.ResponseData = avalanche::proto::mod_Response::OneOfResponseData::error(r.read_enum(bytes)?),
                 Ok(10) => msg.ResponseData = avalanche::proto::mod_Response::OneOfResponseData::block(r.read_message::<avalanche::proto::Block>(bytes)?),
-                Ok(16) => msg.ResponseData = avalanche::proto::mod_Response::OneOfResponseData::preference(r.read_bool(bytes)?),
+                Ok(18) => msg.ResponseData = avalanche::proto::mod_Response::OneOfResponseData::preferred(r.read_message::<avalanche::proto::BlockID>(bytes)?),
                 Ok(t) => { r.read_unknown(bytes, t)?; }
                 Err(e) => return Err(e),
             }
@@ -98,14 +98,14 @@ impl MessageWrite for Response {
         + match self.ResponseData {
             avalanche::proto::mod_Response::OneOfResponseData::error(ref m) => 1 + sizeof_varint(*(m) as u64),
             avalanche::proto::mod_Response::OneOfResponseData::block(ref m) => 1 + sizeof_len((m).get_size()),
-            avalanche::proto::mod_Response::OneOfResponseData::preference(ref m) => 1 + sizeof_varint(*(m) as u64),
+            avalanche::proto::mod_Response::OneOfResponseData::preferred(ref m) => 1 + sizeof_len((m).get_size()),
             avalanche::proto::mod_Response::OneOfResponseData::None => 0,
     }    }
 
     fn write_message<W: WriterBackend>(&self, w: &mut Writer<W>) -> Result<()> {
         match self.ResponseData {            avalanche::proto::mod_Response::OneOfResponseData::error(ref m) => { w.write_with_tag(0, |w| w.write_enum(*m as i32))? },
             avalanche::proto::mod_Response::OneOfResponseData::block(ref m) => { w.write_with_tag(10, |w| w.write_message(m))? },
-            avalanche::proto::mod_Response::OneOfResponseData::preference(ref m) => { w.write_with_tag(16, |w| w.write_bool(*m))? },
+            avalanche::proto::mod_Response::OneOfResponseData::preferred(ref m) => { w.write_with_tag(18, |w| w.write_message(m))? },
             avalanche::proto::mod_Response::OneOfResponseData::None => {},
     }        Ok(())
     }
@@ -148,7 +148,7 @@ impl<'a> From<&'a str> for Error {
 pub enum OneOfResponseData {
     error(avalanche::proto::mod_Response::Error),
     block(avalanche::proto::Block),
-    preference(bool),
+    preferred(avalanche::proto::BlockID),
     None,
 }
 

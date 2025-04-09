@@ -70,10 +70,7 @@ impl BlocksDatabase {
         // TODO: this hash->copy->serdehash nonsense has to stop. Maybe serdehash should go and
         // just pass byte arrays?
         let mut rtxn = self.env.read_txn().unwrap();
-        Ok(self
-            .db
-            .get(&mut rtxn, &hash.into())?
-            .map(|entry| entry.block))
+        Ok(self.db.get(&mut rtxn, &hash)?.map(|entry| entry.block))
     }
 
     /// Select a random quorum of miners from the list of recently mined blocks. Will return a set
