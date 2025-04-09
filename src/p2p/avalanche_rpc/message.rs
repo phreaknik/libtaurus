@@ -7,8 +7,8 @@ use strum_macros::EnumIter;
 /// Message type defining the peer RPC request messages
 #[derive(Debug, Clone, PartialEq, Eq, EnumIter)]
 pub enum Request {
-    GetBlock(u64, SerdeHash),
-    GetPreference(u64, SerdeHash),
+    GetBlock(SerdeHash),
+    GetPreference(SerdeHash),
 }
 
 impl Request {
@@ -16,15 +16,13 @@ impl Request {
     pub fn to_protobuf(self) -> Result<proto::Request, Error> {
         Ok(proto::Request {
             RequestData: match self {
-                Request::GetBlock(height, hash) => {
+                Request::GetBlock(hash) => {
                     proto::mod_Request::OneOfRequestData::get_block(proto::BlockID {
-                        height,
                         hash: rmp_serde::to_vec(&hash)?,
                     })
                 }
-                Request::GetPreference(height, hash) => {
+                Request::GetPreference(hash) => {
                     proto::mod_Request::OneOfRequestData::get_preference(proto::BlockID {
-                        height,
                         hash: rmp_serde::to_vec(&hash)?,
                     })
                 }
@@ -36,15 +34,11 @@ impl Request {
     pub fn from_protobuf(req: proto::Request) -> Result<Self, Error> {
         match req.RequestData {
             proto::mod_Request::OneOfRequestData::get_block(message) => Ok(Request::GetBlock(
-                message.height,
                 rmp_serde::from_slice(message.hash.as_slice())?,
             )),
-            proto::mod_Request::OneOfRequestData::get_preference(message) => {
-                Ok(Request::GetPreference(
-                    message.height,
-                    rmp_serde::from_slice(message.hash.as_slice())?,
-                ))
-            }
+            proto::mod_Request::OneOfRequestData::get_preference(message) => Ok(
+                Request::GetPreference(rmp_serde::from_slice(message.hash.as_slice())?),
+            ),
             proto::mod_Request::OneOfRequestData::None => Err(super::Error::IncompleteRequest),
         }
     }
@@ -53,17 +47,13 @@ impl Request {
 impl fmt::Display for Request {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Request::GetBlock(height, serde_hash) => {
-                write!(
-                    f,
-                    "GetBlock({height}, {})",
-                    Into::<blake3::Hash>::into(serde_hash)
-                )
+            Request::GetBlock(serde_hash) => {
+                write!(f, "GetBlock({})", Into::<blake3::Hash>::into(serde_hash))
             }
-            Request::GetPreference(height, serde_hash) => {
+            Request::GetPreference(serde_hash) => {
                 write!(
                     f,
-                    "GetPreference({height}, {})",
+                    "GetPreference({})",
                     Into::<blake3::Hash>::into(serde_hash)
                 )
             }

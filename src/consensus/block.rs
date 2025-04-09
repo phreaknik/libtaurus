@@ -37,7 +37,6 @@ pub type Result<T> = result::Result<T, Error>;
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Block {
     pub version: u32,
-    pub height: u64,
     pub difficulty: u64,
     pub miner: PeerId,
     pub parents: Vec<SerdeHash>,
@@ -92,7 +91,6 @@ impl Default for Block {
     fn default() -> Self {
         Block {
             version: 0,
-            height: 0,
             difficulty: 0,
             miner: PeerId::from_multihash(Multihash::default()).unwrap(),
             parents: Vec::new(),
@@ -109,7 +107,6 @@ impl TryFrom<p2p::avalanche_rpc::proto::Block> for Block {
     fn try_from(block: p2p::avalanche_rpc::proto::Block) -> result::Result<Self, Self::Error> {
         Ok(Block {
             version: block.version,
-            height: block.height,
             difficulty: block.difficulty,
             miner: PeerId::from_bytes(&block.miner)?,
             parents: block
@@ -134,7 +131,6 @@ impl TryInto<p2p::avalanche_rpc::proto::Block> for Block {
     fn try_into(self) -> result::Result<p2p::avalanche_rpc::proto::Block, Self::Error> {
         Ok(p2p::avalanche_rpc::proto::Block {
             version: self.version,
-            height: self.height,
             difficulty: self.difficulty,
             miner: self.miner.to_bytes(),
             parents: self
@@ -204,7 +200,6 @@ impl Default for SerdeHash {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct PrettyBlock {
     version: u32,
-    height: u64,
     difficulty: u64,
     miner: PeerId,
     parents: Vec<String>,
@@ -217,7 +212,6 @@ impl From<&Block> for PrettyBlock {
     fn from(block: &Block) -> Self {
         PrettyBlock {
             version: block.version,
-            height: block.height,
             parents: block
                 .parents
                 .iter()

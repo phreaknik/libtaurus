@@ -163,7 +163,6 @@ impl Default for OneOfResponseData {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct BlockID {
-    pub height: u64,
     pub hash: Vec<u8>,
 }
 
@@ -172,8 +171,7 @@ impl<'a> MessageRead<'a> for BlockID {
         let mut msg = Self::default();
         while !r.is_eof() {
             match r.next_tag(bytes) {
-                Ok(0) => msg.height = r.read_uint64(bytes)?,
-                Ok(10) => msg.hash = r.read_bytes(bytes)?.to_owned(),
+                Ok(2) => msg.hash = r.read_bytes(bytes)?.to_owned(),
                 Ok(t) => { r.read_unknown(bytes, t)?; }
                 Err(e) => return Err(e),
             }
@@ -185,13 +183,11 @@ impl<'a> MessageRead<'a> for BlockID {
 impl MessageWrite for BlockID {
     fn get_size(&self) -> usize {
         0
-        + if self.height == 0u64 { 0 } else { 1 + sizeof_varint(*(&self.height) as u64) }
         + if self.hash.is_empty() { 0 } else { 1 + sizeof_len((&self.hash).len()) }
     }
 
     fn write_message<W: WriterBackend>(&self, w: &mut Writer<W>) -> Result<()> {
-        if self.height != 0u64 { w.write_with_tag(0, |w| w.write_uint64(*&self.height))?; }
-        if !self.hash.is_empty() { w.write_with_tag(10, |w| w.write_bytes(&**&self.hash))?; }
+        if !self.hash.is_empty() { w.write_with_tag(2, |w| w.write_bytes(&**&self.hash))?; }
         Ok(())
     }
 }
@@ -200,7 +196,6 @@ impl MessageWrite for BlockID {
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct Block {
     pub version: u32,
-    pub height: u64,
     pub difficulty: u64,
     pub miner: Vec<u8>,
     pub parents: Vec<Vec<u8>>,
@@ -215,13 +210,12 @@ impl<'a> MessageRead<'a> for Block {
         while !r.is_eof() {
             match r.next_tag(bytes) {
                 Ok(0) => msg.version = r.read_uint32(bytes)?,
-                Ok(8) => msg.height = r.read_uint64(bytes)?,
-                Ok(16) => msg.difficulty = r.read_uint64(bytes)?,
-                Ok(26) => msg.miner = r.read_bytes(bytes)?.to_owned(),
-                Ok(34) => msg.parents.push(r.read_bytes(bytes)?.to_owned()),
-                Ok(42) => msg.inputs.push(r.read_bytes(bytes)?.to_owned()),
-                Ok(58) => msg.time = r.read_bytes(bytes)?.to_owned(),
-                Ok(64) => msg.nonce = r.read_uint64(bytes)?,
+                Ok(8) => msg.difficulty = r.read_uint64(bytes)?,
+                Ok(18) => msg.miner = r.read_bytes(bytes)?.to_owned(),
+                Ok(26) => msg.parents.push(r.read_bytes(bytes)?.to_owned()),
+                Ok(34) => msg.inputs.push(r.read_bytes(bytes)?.to_owned()),
+                Ok(42) => msg.time = r.read_bytes(bytes)?.to_owned(),
+                Ok(48) => msg.nonce = r.read_uint64(bytes)?,
                 Ok(t) => { r.read_unknown(bytes, t)?; }
                 Err(e) => return Err(e),
             }
@@ -234,7 +228,6 @@ impl MessageWrite for Block {
     fn get_size(&self) -> usize {
         0
         + if self.version == 0u32 { 0 } else { 1 + sizeof_varint(*(&self.version) as u64) }
-        + if self.height == 0u64 { 0 } else { 1 + sizeof_varint(*(&self.height) as u64) }
         + if self.difficulty == 0u64 { 0 } else { 1 + sizeof_varint(*(&self.difficulty) as u64) }
         + if self.miner.is_empty() { 0 } else { 1 + sizeof_len((&self.miner).len()) }
         + self.parents.iter().map(|s| 1 + sizeof_len((s).len())).sum::<usize>()
@@ -245,13 +238,12 @@ impl MessageWrite for Block {
 
     fn write_message<W: WriterBackend>(&self, w: &mut Writer<W>) -> Result<()> {
         if self.version != 0u32 { w.write_with_tag(0, |w| w.write_uint32(*&self.version))?; }
-        if self.height != 0u64 { w.write_with_tag(8, |w| w.write_uint64(*&self.height))?; }
-        if self.difficulty != 0u64 { w.write_with_tag(16, |w| w.write_uint64(*&self.difficulty))?; }
-        if !self.miner.is_empty() { w.write_with_tag(26, |w| w.write_bytes(&**&self.miner))?; }
-        for s in &self.parents { w.write_with_tag(34, |w| w.write_bytes(&**s))?; }
-        for s in &self.inputs { w.write_with_tag(42, |w| w.write_bytes(&**s))?; }
-        if !self.time.is_empty() { w.write_with_tag(58, |w| w.write_bytes(&**&self.time))?; }
-        if self.nonce != 0u64 { w.write_with_tag(64, |w| w.write_uint64(*&self.nonce))?; }
+        if self.difficulty != 0u64 { w.write_with_tag(8, |w| w.write_uint64(*&self.difficulty))?; }
+        if !self.miner.is_empty() { w.write_with_tag(18, |w| w.write_bytes(&**&self.miner))?; }
+        for s in &self.parents { w.write_with_tag(26, |w| w.write_bytes(&**s))?; }
+        for s in &self.inputs { w.write_with_tag(34, |w| w.write_bytes(&**s))?; }
+        if !self.time.is_empty() { w.write_with_tag(42, |w| w.write_bytes(&**&self.time))?; }
+        if self.nonce != 0u64 { w.write_with_tag(48, |w| w.write_uint64(*&self.nonce))?; }
         Ok(())
     }
 }

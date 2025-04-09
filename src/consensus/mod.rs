@@ -88,7 +88,6 @@ impl GenesisConfig {
     pub fn to_block(&self) -> Block {
         Block {
             version: 0,
-            height: 0,
             difficulty: self.difficulty,
             miner: PeerId::from_multihash(Multihash::default()).unwrap(),
             parents: Vec::new(),

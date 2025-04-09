@@ -136,7 +136,11 @@ impl DAG {
     /// Try to insert a block as a new vertex in the DAG. Returns true if the block is preferred
     /// over all possible conflicts, according to the Avalanche consensus protocol.
     pub fn try_insert_block(&mut self, block: Block, sender: Option<PeerId>) -> Result<bool> {
+        // See if this is a new block
         let hash = block.hash()?;
+        if self.vertices.contains_key(&hash) {
+            return self.is_preferred(&hash);
+        }
 
         // Make sure this block has parents to attach to the DAG
         if block.parents.len() == 0 && hash != self.genesis_hash {
@@ -151,7 +155,7 @@ impl DAG {
         {
             self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
                 peer,
-                avalanche_rpc::Request::GetPreference(block.height, hash.into()),
+                avalanche_rpc::Request::GetPreference(hash.into()),
             ))?;
         }
 
@@ -165,10 +169,9 @@ impl DAG {
                 // TODO: Lookup should fail over to another mechanism if this peer fails
                 if let Some(peer) = sender {
                     for parent in block.parents {
-                        // TODO: we just assume parent is height-1, but this may not be true!
                         self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
                             peer,
-                            avalanche_rpc::Request::GetBlock(block.height - 1, parent.into()),
+                            avalanche_rpc::Request::GetBlock(parent.into()),
                         ))?;
                     }
                 }
@@ -295,7 +298,7 @@ impl DAG {
     ) -> Result<avalanche_rpc::Response> {
         debug!("Handling request: {request}");
         match request {
-            avalanche_rpc::Request::GetBlock(_height, hash) => {
+            avalanche_rpc::Request::GetBlock(hash) => {
                 let hash: blake3::Hash = hash.into();
                 match self.get_block(&hash) {
                     Ok(block) => {
@@ -314,7 +317,7 @@ impl DAG {
                     }
                 }
             }
-            avalanche_rpc::Request::GetPreference(height, hash) => {
+            avalanche_rpc::Request::GetPreference(hash) => {
                 let hash: blake3::Hash = hash.into();
                 self.is_strongly_preferred(&hash)
                     .map(|preference| avalanche_rpc::Response::Preference(preference))
@@ -323,7 +326,7 @@ impl DAG {
                         if let Error::NotFound = error {
                             match self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
                                 from_peer,
-                                avalanche_rpc::Request::GetBlock(height, hash.into()),
+                                avalanche_rpc::Request::GetBlock(hash.into()),
                             )) {
                                 Ok(_) => error, // Bubble up the NotFound error
                                 Err(e) => e.into(),
@@ -477,6 +480,7 @@ impl Into<Block> for Vertex {
 }
 
 /// The frontier describes the highest vertices in the DAG
+// TODO: Frontier should be a vector of Arc<Rw<Vertex>>
 #[derive(Debug, Clone)]
 pub struct Frontier(pub Vec<Block>);
 
@@ -490,7 +494,6 @@ impl Frontier {
     pub fn to_candidate(&self, miner: PeerId) -> Block {
         Block {
             version: params::PROTOCOL_VERSION,
-            height: self.height() + 1,
             difficulty: self.next_difficulty(),
             miner,
             parents: self.0.iter().map(|v| v.hash().unwrap().into()).collect(),
@@ -498,11 +501,6 @@ impl Frontier {
             time: Utc::now(),
             nonce: 0,
         }
-    }
-
-    /// This vertex's height in the DAG
-    pub fn height(&self) -> u64 {
-        self.0.iter().map(|b| b.height).max().unwrap()
     }
 }
 

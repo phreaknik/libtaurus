@@ -25,17 +25,15 @@ message Response {
 
 // Inner message types
 message BlockID {
-  uint64 height = 0;
-  bytes hash = 1;
+  bytes hash = 0;
 }
 
 message Block {
   uint32 version = 0;
-  uint64 height = 1;
-	uint64 difficulty = 2;
-	bytes miner = 3;
-	repeated bytes parents = 4;
-  repeated bytes inputs = 5;
-	bytes time = 7;
-	uint64 nonce = 8;
+	uint64 difficulty = 1;
+	bytes miner = 2;
+	repeated bytes parents = 3;
+  repeated bytes inputs = 4;
+	bytes time = 5;
+	uint64 nonce = 6;
 }
