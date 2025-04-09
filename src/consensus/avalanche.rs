@@ -349,6 +349,7 @@ impl DAG {
             avalanche_rpc::Response::Block(block) => {
                 if let Ok(hash) = block.hash() {
                     debug!("received block response {hash}={block:?}");
+                    // TODO: need to check POW here
                     if let Err(e) = self.try_insert_block(block, Some(from_peer)) {
                         debug!("unable to insert requested block {hash}: {e}");
                     }
