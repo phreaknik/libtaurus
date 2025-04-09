@@ -171,26 +171,30 @@ impl DAG {
             }
         }
 
-        // Set the vertex preference
-        vertex.preferred = self.is_vertex_preferred(arc_vertex.clone())?;
-
         // Add it to the collection of vertices
         self.vertices.insert(hash, arc_vertex.clone());
 
-        // Add it to the frontier
-        self.frontier.insert(hash, vertex.block.clone());
+        // Set the vertex preference
+        vertex.preferred = self.is_vertex_preferred(arc_vertex.clone())?;
 
-        // Remove its parents from the frontier, as they are no longer the youngest
-        for parent in vertex.block.parents.iter() {
-            self.frontier.remove(&parent.into());
+        if vertex.preferred {
+            // Add it to the frontier
+            self.frontier.insert(hash, vertex.block.clone());
+
+            // Remove its parents from the frontier, as they are no longer the youngest
+            for parent in vertex.block.parents.iter() {
+                self.frontier.remove(&parent.into());
+            }
+
+            // Announce the new frontier
+            self.events_ch.send(Event::NewFrontier(Frontier(
+                self.frontier.values().cloned().collect(),
+            )))?;
+
+            info!("Accepted block: {hash}");
+        } else {
+            info!("Received non-preferred block: {hash}");
         }
-
-        // Announce the new frontier
-        self.events_ch.send(Event::NewFrontier(Frontier(
-            self.frontier.values().cloned().collect(),
-        )))?;
-
-        info!("Inserted block: {hash}");
 
         // Retry vertices in the waitlist
         self.remove_and_retry_waitlist(hash);
@@ -281,27 +285,9 @@ impl DAG {
     pub fn is_preferred(&mut self, hash: &Hash) -> Result<bool> {
         Ok(match self.vertices.get(hash) {
             // Look for the vertex in the in-memory DAG
-            Some(vertex) => vertex
-                .read()
-                .map_err(|_| Error::VertexReadLock)?
-                .block
-                .inputs
-                .iter()
-                .all(|input| {
-                    match self.conflicts.get(&input.into()) {
-                        Some(cs) => !cs.into_iter().any(|h| {
-                            // If a conflict set exists, and any other vertex in the conflict set is
-                            // preferred, this vertex cannot be preferred
-                            h != hash
-                                && self.vertices.get(&h).unwrap().read().unwrap().preferred == true
-                        }),
-                        None => true,
-                    }
-                }),
+            Some(vertex) => self.is_vertex_preferred(vertex.clone())?,
             // If its not in the in-memory DAG, check the database. If it exists, then the block is
             // preferred.
-            // TODO: Here we assume a block is preferred if it exists in the database. Make sure we
-            // only write blocks to db once finalized.
             None => self.database.read_block(hash.clone())?.is_some(),
         })
     }
