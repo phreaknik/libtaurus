@@ -838,6 +838,7 @@ dependencies = [
  "etcetera",
  "futures",
  "heed",
+ "hex",
  "hyper",
  "itertools",
  "libp2p",

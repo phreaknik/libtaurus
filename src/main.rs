@@ -9,7 +9,7 @@ mod randomx;
 mod util;
 
 use clap::{arg, command, ArgMatches, Command};
-pub use consensus::Hash;
+pub use consensus::BlockHash;
 use consensus::{avalanche, GenesisConfig};
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
 use libp2p::identity::Keypair;

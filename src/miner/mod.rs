@@ -119,7 +119,7 @@ async fn task_fn(
             // Handle results from the mining threads
             Some(block) = results_receiver.recv() => {
                 if block.verify_pow(&randomx_vm).is_ok() {
-                    info!("Mined a new block: {}", block.hash().unwrap());
+                    info!("Mined a new block {}", block.hash().unwrap().to_hex());
                     if consensus_action_ch.send(consensus::Action::SubmitBlock(block)).is_err() {
                         error!("Stopping...");
                     }
@@ -138,7 +138,7 @@ fn spawn_mining_threads(
     block: Block,
     sols_count_ch: UnboundedSender<usize>,
 ) -> Result<UnboundedReceiver<Block>> {
-    info!("Mining parent of {:?}", block.parents);
+    info!("Mining parent of {}", block.format_parents());
     debug!("Block template:\n{block:?}");
 
     // Close the old channel to kill the old mining threads, and

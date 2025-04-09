@@ -1,4 +1,4 @@
-use super::{database::BlocksDatabase, Block, Event};
+use super::{database::BlocksDatabase, Block, BlockHash, Event};
 use crate::{
     p2p::{self, avalanche_rpc},
     params::{self, QUORUM_MINER_AGE, QUORUM_SIZE},
@@ -71,22 +71,22 @@ pub struct DAG {
     config: Config,
 
     /// Complete list of active vertices
-    vertices: HashMap<Hash, Arc<TracingRwLock<Vertex>>>,
+    vertices: HashMap<BlockHash, Arc<TracingRwLock<Vertex>>>,
 
     /// Conflict sets for each transaction input
-    conflicts: HashMap<Hash, Vec<Hash>>,
+    conflicts: HashMap<BlockHash, Vec<BlockHash>>,
 
     /// Waitlist for vertices that cannot be inserted yet
     waitlist: WaitList,
 
     /// The active edge of the DAG, i.e. the preferred vertices which don't yet have children
-    frontier: HashMap<Hash, Block>,
+    frontier: HashMap<BlockHash, Block>,
 
     /// Database for block storage
     database: BlocksDatabase,
 
     /// Hash of the genesis block
-    genesis_hash: Hash,
+    genesis_hash: BlockHash,
 
     /// Channel to make requests of the P2P network
     p2p_action_ch: UnboundedSender<p2p::Action>,
@@ -206,7 +206,7 @@ impl DAG {
         // Update the conflict set for each transaction input
         for input in vertex.block.inputs.iter() {
             // Make sure conflict sets exist for each tx input
-            if let Some(conflict_set) = self.conflicts.get_mut(&input.into()) {
+            if let Some(conflict_set) = self.conflicts.get_mut(&input) {
                 conflict_set.push(hash);
             } else {
                 // Create a new conflict set for this transaction input
@@ -223,7 +223,7 @@ impl DAG {
 
             // Remove its parents from the frontier, as they are no longer the youngest
             for parent in vertex.block.parents.iter() {
-                self.frontier.remove(&parent.into());
+                self.frontier.remove(&parent);
             }
 
             // Announce the new frontier
@@ -231,9 +231,9 @@ impl DAG {
                 self.frontier.values().cloned().collect(),
             )))?;
 
-            info!("Accepted block: {hash}");
+            info!("Accepted block {}", hash.to_hex());
         } else {
-            info!("Received non-preferred block: {hash}");
+            info!("Received non-preferred block {}", hash.to_hex());
         }
 
         // Retry vertices in the waitlist
@@ -256,7 +256,7 @@ impl DAG {
             .iter()
             .map(|hash| {
                 self.vertices
-                    .get(&hash.into())
+                    .get(&hash)
                     .ok_or(Error::MissingParents(vec![hash.into()]))
                     .map(|val| val.clone())
             })
@@ -264,7 +264,7 @@ impl DAG {
     }
 
     /// Remove the specified entry from the waitlist, and retry inserting any of is descendents
-    fn remove_and_retry_waitlist(&mut self, hash: Hash) {
+    fn remove_and_retry_waitlist(&mut self, hash: BlockHash) {
         if let Some(descendents) = self.waitlist.remove(&hash) {
             for descendent in descendents {
                 let _ = self.try_insert_vertex(descendent);
@@ -298,27 +298,23 @@ impl DAG {
     ) -> Result<avalanche_rpc::Response> {
         debug!("Handling request: {request}");
         match request {
-            avalanche_rpc::Request::GetBlock(hash) => {
-                let hash: blake3::Hash = hash.into();
-                match self.get_block(&hash) {
-                    Ok(block) => {
-                        trace!("Sending block response {hash}={block:?}");
-                        Ok(avalanche_rpc::Response::Block(block))
-                    }
-                    Err(Error::NotFound) => {
-                        debug!("Unable to find requested block: {hash}");
-                        Ok(avalanche_rpc::Response::Error(
-                            avalanche_rpc::proto::mod_Response::Error::NOT_FOUND,
-                        ))
-                    }
-                    Err(e) => {
-                        error!("Unexpected error while looking for block {hash}: {e}");
-                        Err(e.into())
-                    }
+            avalanche_rpc::Request::GetBlock(hash) => match self.get_block(&hash) {
+                Ok(block) => {
+                    trace!("Sending block response {hash}={block:?}");
+                    Ok(avalanche_rpc::Response::Block(block))
                 }
-            }
+                Err(Error::NotFound) => {
+                    debug!("Unable to find requested block: {hash}");
+                    Ok(avalanche_rpc::Response::Error(
+                        avalanche_rpc::proto::mod_Response::Error::NOT_FOUND,
+                    ))
+                }
+                Err(e) => {
+                    error!("Unexpected error while looking for block {hash}: {e}");
+                    Err(e.into())
+                }
+            },
             avalanche_rpc::Request::GetPreference(hash) => {
-                let hash: blake3::Hash = hash.into();
                 self.is_strongly_preferred(&hash)
                     .map(|preference| avalanche_rpc::Response::Preference(preference))
                     .map_err(|error| {
@@ -363,7 +359,7 @@ impl DAG {
     }
 
     /// Look up a block from the DAG
-    pub fn get_block(&mut self, hash: &Hash) -> Result<Block> {
+    pub fn get_block(&mut self, hash: &BlockHash) -> Result<Block> {
         match self.vertices.get(hash) {
             // Look for the vertex in the in-memory DAG
             Some(vertex) => Ok(vertex
@@ -381,7 +377,7 @@ impl DAG {
 
     /// Determine if the specified vertex is strongly preferred, as described in the Avalanche
     /// consensus paper.
-    fn is_strongly_preferred(&mut self, hash: &Hash) -> Result<bool> {
+    fn is_strongly_preferred(&mut self, hash: &BlockHash) -> Result<bool> {
         Ok(match self.vertices.get(hash) {
             // Look for the vertex in the in-memory DAG
             Some(vertex) => Ok(vertex
@@ -397,14 +393,11 @@ impl DAG {
         }?
         .parents
         .iter()
-        .all(|p| {
-            self.is_preferred(&p.into()).unwrap_or_else(|e| {
+        .all(|parent| {
+            self.is_preferred(&parent).unwrap_or_else(|e| {
                 // This condition should never occur, because the block should not even be present
                 // in the DAG or database without known parents
-                warn!(
-                    "Failed to determine preference for parent {}: {e}",
-                    Into::<blake3::Hash>::into(p)
-                );
+                warn!("Failed to determine preference for parent {parent}: {e}",);
                 false
             })
         }))
@@ -412,7 +405,7 @@ impl DAG {
 
     /// Determine if the vertex corresponding to the given hash is preferred, as described in the
     /// Avalanche consensus paper.
-    pub fn is_preferred(&mut self, hash: &Hash) -> Result<bool> {
+    pub fn is_preferred(&mut self, hash: &BlockHash) -> Result<bool> {
         Ok(match self.vertices.get(hash) {
             // Look for the vertex in the in-memory DAG
             Some(vertex) => self.is_vertex_preferred(vertex.clone())?,
@@ -427,7 +420,7 @@ impl DAG {
         let vertex = arc_vertex.read().map_err(|_| Error::VertexReadLock)?;
         let hash = vertex.block.hash()?;
         Ok(vertex.block.inputs.iter().all(|input| {
-            match self.conflicts.get(&input.into()) {
+            match self.conflicts.get(&input) {
                 Some(cs) => !cs.into_iter().any(|h| {
                     // If a conflict set exists, and any other vertex in the conflict set is
                     // preferred, this vertex cannot be preferred
@@ -509,7 +502,7 @@ impl Frontier {
 ///
 /// The list is constructed as a map of <K, V>, where K is the hash of a block, and V is a list
 /// child blocks which depend on that block.
-struct WaitList(LruCache<Hash, Vec<Arc<TracingRwLock<Vertex>>>>);
+struct WaitList(LruCache<BlockHash, Vec<Arc<TracingRwLock<Vertex>>>>);
 
 impl WaitList {
     /// Create a new waitlist
@@ -519,20 +512,18 @@ impl WaitList {
 
     /// Inserts a new vertex into the waitlist.
     fn insert(&mut self, vertex: Arc<TracingRwLock<Vertex>>) -> Result<()> {
-        for parent_hash in vertex
+        for parent_hash in &vertex
             .read()
             .map_err(|_| Error::VertexReadLock)?
             .block
             .parents
-            .iter()
-            .map(|h| h.into())
         {
             if let Some(parent_queue) = self.0.get_mut(&parent_hash) {
                 // Add this vertex as a descendent in the parent's queue
                 parent_queue.push(vertex.clone());
             } else {
                 // Insert a new entry
-                let evicted = self.0.put(parent_hash, vec![vertex.clone()]);
+                let evicted = self.0.put(*parent_hash, vec![vertex.clone()]);
 
                 // If an existing entry was evicted, demote all the descendents in its queue
                 if let Some(queue) = evicted {
@@ -552,7 +543,7 @@ impl WaitList {
     }
 
     /// Remove an entry from the list, and return the vertices which were waiting on it
-    fn remove(&mut self, hash: &Hash) -> Option<Vec<Arc<TracingRwLock<Vertex>>>> {
+    fn remove(&mut self, hash: &BlockHash) -> Option<Vec<Arc<TracingRwLock<Vertex>>>> {
         self.0.pop(hash)
     }
 }

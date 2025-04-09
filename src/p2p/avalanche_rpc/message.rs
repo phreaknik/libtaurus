@@ -1,14 +1,14 @@
 use super::proto;
 use super::Error;
-use crate::consensus::{Block, SerdeHash};
+use crate::consensus::{Block, BlockHash};
 use std::fmt;
 use strum_macros::EnumIter;
 
 /// Message type defining the peer RPC request messages
 #[derive(Debug, Clone, PartialEq, Eq, EnumIter)]
 pub enum Request {
-    GetBlock(SerdeHash),
-    GetPreference(SerdeHash),
+    GetBlock(BlockHash),
+    GetPreference(BlockHash),
 }
 
 impl Request {

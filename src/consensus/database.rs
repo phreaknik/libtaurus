@@ -1,5 +1,4 @@
-use super::{Block, SerdeHash};
-use blake3::Hash;
+use super::{Block, BlockHash};
 use heed::{BytesDecode, BytesEncode, Database, Env, EnvOpenOptions, RwTxn};
 use itertools::Itertools;
 use libp2p::PeerId;
@@ -29,7 +28,7 @@ pub type Result<T> = result::Result<T, Error>;
 #[derive(Clone)]
 pub struct BlocksDatabase {
     pub env: Env,
-    pub db: Database<SerdeHash, BlockEntry>,
+    pub db: Database<BlockHash, BlockEntry>,
 }
 
 impl BlocksDatabase {
@@ -67,7 +66,7 @@ impl BlocksDatabase {
     }
 
     /// Read a block from the database
-    pub fn read_block<'a>(&'a mut self, hash: Hash) -> Result<Option<Block>> {
+    pub fn read_block<'a>(&'a mut self, hash: BlockHash) -> Result<Option<Block>> {
         // TODO: this hash->copy->serdehash nonsense has to stop. Maybe serdehash should go and
         // just pass byte arrays?
         let mut rtxn = self.env.read_txn().unwrap();

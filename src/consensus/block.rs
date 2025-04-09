@@ -2,13 +2,12 @@ use crate::{
     p2p, params,
     randomx::{self, RandomXVMInstance},
 };
-pub use blake3::{Hash, OUT_LEN};
 use chrono::{DateTime, Utc};
 use heed::{BytesDecode, BytesEncode};
 use libp2p::{multihash::Multihash, PeerId};
 use num::{BigUint, FromPrimitive};
 use serde_derive::{Deserialize, Serialize};
-use std::result;
+use std::{fmt, hash::Hash, result};
 
 /// Error type for block errors
 #[derive(thiserror::Error, Debug)]
@@ -39,16 +38,16 @@ pub struct Block {
     pub version: u32,
     pub difficulty: u64,
     pub miner: PeerId,
-    pub parents: Vec<SerdeHash>,
-    pub inputs: Vec<SerdeHash>, // TODO: define real UTXOs
+    pub parents: Vec<BlockHash>,
+    pub inputs: Vec<BlockHash>, // TODO: define real UTXOs
     pub time: DateTime<Utc>,
     pub nonce: u64,
 }
 
 impl Block {
     /// Compute the hash of the vertex
-    pub fn hash(&self) -> Result<Hash> {
-        Ok(blake3::hash(&rmp_serde::to_vec(self)?))
+    pub fn hash(&self) -> Result<BlockHash> {
+        Ok(blake3::hash(&rmp_serde::to_vec(self)?).into())
     }
 
     /// Compute the mining target from the given difficulty
@@ -72,6 +71,16 @@ impl Block {
         } else {
             Err(Error::InvalidPoW)
         }
+    }
+
+    /// Print the parents into a formatted string
+    pub fn format_parents(&self) -> String {
+        let mut s = format!("[{}", self.parents[0]);
+        for p in &self.parents[1..] {
+            s += &format!(", {p}");
+        }
+        s += "]";
+        s
     }
 }
 
@@ -150,29 +159,48 @@ impl TryInto<p2p::avalanche_rpc::proto::Block> for Block {
 }
 
 /// Wrapper struct around blake3::Hash to facilitate serde implementation.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SerdeHash([u8; OUT_LEN]);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
+pub struct BlockHash([u8; blake3::OUT_LEN]);
 
-impl From<blake3::Hash> for SerdeHash {
+impl BlockHash {
+    /// Format the BlockHash as a hex string
+    pub fn to_hex(&self) -> String {
+        hex::encode(self.0)
+    }
+
+    /// Format the BlockHash as a short hex string, better for displaying BlockHashes in large
+    /// collections of data
+    pub fn to_short_hex(&self) -> String {
+        format!("{}..", hex::encode(&self.0[..4]))
+    }
+}
+
+impl fmt::Display for BlockHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.to_short_hex())
+    }
+}
+
+impl From<blake3::Hash> for BlockHash {
     fn from(hash: blake3::Hash) -> Self {
-        SerdeHash(*hash.as_bytes())
+        BlockHash(*hash.as_bytes())
     }
 }
 
-impl Into<blake3::Hash> for &SerdeHash {
+impl Into<blake3::Hash> for &BlockHash {
     fn into(self) -> blake3::Hash {
         blake3::Hash::from(self.0)
     }
 }
 
-impl Into<blake3::Hash> for SerdeHash {
+impl Into<blake3::Hash> for BlockHash {
     fn into(self) -> blake3::Hash {
         blake3::Hash::from(self.0)
     }
 }
 
-impl<'a> BytesEncode<'a> for SerdeHash {
-    type EItem = SerdeHash;
+impl<'a> BytesEncode<'a> for BlockHash {
+    type EItem = BlockHash;
 
     fn bytes_encode(
         item: &'a Self::EItem,
@@ -181,8 +209,8 @@ impl<'a> BytesEncode<'a> for SerdeHash {
     }
 }
 
-impl<'a> BytesDecode<'a> for SerdeHash {
-    type DItem = SerdeHash;
+impl<'a> BytesDecode<'a> for BlockHash {
+    type DItem = BlockHash;
 
     fn bytes_decode(
         bytes: &'a [u8],
@@ -191,9 +219,9 @@ impl<'a> BytesDecode<'a> for SerdeHash {
     }
 }
 
-impl Default for SerdeHash {
+impl Default for BlockHash {
     fn default() -> Self {
-        SerdeHash([0; OUT_LEN])
+        BlockHash([0; blake3::OUT_LEN])
     }
 }
 
