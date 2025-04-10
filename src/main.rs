@@ -34,7 +34,7 @@ mod util;
 
 use clap::{arg, command, ArgMatches, Command};
 use consensus::{avalanche, GenesisConfig};
-pub use consensus::{Block, BlockHash, VertexHash, SlimVertex};
+pub use consensus::{Block, BlockHash, SlimVertex, VertexHash};
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
 use libp2p::identity::Keypair;
 use p2p::PeerDatabase;

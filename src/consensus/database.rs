@@ -1,5 +1,5 @@
 use super::{block, vertex, Block, BlockHash};
-use crate::{VertexHash, SlimVertex};
+use crate::{SlimVertex, VertexHash};
 use heed::{Database, Env, EnvOpenOptions, RwTxn};
 use itertools::Itertools;
 use libp2p::PeerId;
@@ -111,6 +111,15 @@ impl ConsensusDb {
     pub fn read_block<'a>(&'a mut self, bhash: &BlockHash) -> Result<Option<Block>> {
         let mut rtxn = self.block_env.read_txn().unwrap();
         Ok(self.block_db.get(&mut rtxn, bhash)?)
+    }
+
+    /// Read a block from the database
+    pub fn lookup_vertex_for_block<'a>(
+        &'a mut self,
+        bhash: &BlockHash,
+    ) -> Result<Option<VertexHash>> {
+        let mut rtxn = self.links_env.read_txn().unwrap();
+        Ok(self.links_db.get(&mut rtxn, bhash)?)
     }
 
     /// Write a new vertex into the database

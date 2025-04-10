@@ -10,6 +10,8 @@ use num::{BigUint, FromPrimitive};
 use serde_derive::{Deserialize, Serialize};
 use std::{fmt, hash::Hash, result};
 
+use super::transaction::UtxoHash;
+
 /// Current version of the block structure
 pub const VERSION: u32 = 32;
 
@@ -48,8 +50,8 @@ pub struct Block {
     pub version: u32,
     pub difficulty: u64,
     pub miner: PeerId,
-    pub inputs: Vec<BlockHash>, // TODO: define real UTXOs with real UTXO hash
-    pub time: DateTime<Utc>,    // TODO: don't need a timestamp... might be nice in Vertex though
+    pub inputs: Vec<UtxoHash>,
+    pub time: DateTime<Utc>, // TODO: don't need a timestamp... might be nice in Vertex though
     pub nonce: u64,
 }
 

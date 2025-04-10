@@ -1,6 +1,7 @@
 pub mod avalanche;
 pub mod block;
 mod database;
+mod transaction;
 pub mod vertex;
 
 use crate::randomx::RandomXVMInstance;
@@ -243,12 +244,12 @@ impl Runtime {
         match msg.data {
             p2p::MessageData::Vertex(wire_vertex) => {
                 let mut dag = self.dag.write().map_err(|_| Error::DAGWriteLock)?;
-                let slim = SlimVertex::try_from(&wire_vertex)?;
+                let slim = wire_vertex.slim()?;
                 match dag
                     .submit_block(wire_vertex.block, false)
                     .and_then(|_| dag.try_insert_vertex(Arc::new(slim), Some(msg.msg_source)))
                 {
-                    Err(avalanche::Error::MissingParents(_)) => Ok(ignore),
+                    Err(avalanche::Error::MissingData) => Ok(ignore),
                     Err(_) => Ok(reject),
                     Ok(_) => Ok(accept),
                 }

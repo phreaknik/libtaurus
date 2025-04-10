@@ -1,11 +1,10 @@
 use super::block;
-use crate::params::AVALANCHE_ACCEPTANCE_THRESHOLD;
 use crate::{p2p, Block, BlockHash};
 use heed::{BytesDecode, BytesEncode};
 use serde_derive::{Deserialize, Serialize};
 use std::fmt;
 use std::{collections::HashMap, result, sync::Arc};
-use tracing_mutex::stdsync::{TracingRwLock, TracingRwLockGuard};
+use tracing_mutex::stdsync::TracingRwLock;
 
 /// Current revision of the vertex structure
 pub const VERSION: u32 = 32;
@@ -52,8 +51,9 @@ pub struct Vertex {
     /// acceptance.
     pub known_children: HashMap<VertexHash, Arc<TracingRwLock<Vertex>>>,
 
-    /// Is this vertex currently preferred?
-    pub preferred: bool,
+    /// A vertex is strongly preferred if it and its entire ancestry are preferred over all
+    /// conflicting vertices.
+    pub strongly_preferred: bool,
 
     /// Chit indicates if this vertex received quorum when we queried the network
     pub chit: usize,
@@ -63,58 +63,55 @@ pub struct Vertex {
 }
 
 impl Vertex {
-    /// Create a new vertex representing a block's position in the DAG
-    pub fn new(block: Arc<Block>, parents: Vec<VertexHash>) -> Vertex {
-        Vertex {
+    /// Create a new vertex representing a block's position in the DAG. If this vertex has no
+    /// existing preferred conflicts, and its parents are strongly preferred, then it too will be
+    /// marked as strongly preferred.
+    pub fn new(
+        block: Arc<Block>,
+        parents: Vec<VertexHash>,
+        undecided_vertices: &HashMap<VertexHash, Arc<TracingRwLock<Vertex>>>,
+        has_conflicts: bool,
+    ) -> Result<Vertex> {
+        let undecided_parents: HashMap<VertexHash, Arc<TracingRwLock<Vertex>>> = parents
+            .iter()
+            .filter_map(|&k| undecided_vertices.get(&k).map(|v| (k, v.clone())))
+            .collect();
+        // Strongly preferred if no conflicts and all undecided parents are also strongly preferred.
+        let strongly_preferred = !has_conflicts
+            && undecided_parents
+                .values()
+                .map(|p| {
+                    p.read()
+                        .map_err(|_| Error::VertexReadLock)
+                        .map(|p| p.strongly_preferred)
+                })
+                .try_fold(true, |all, strongly_preferred| {
+                    strongly_preferred.map(|sp| sp && all)
+                })?;
+        Ok(Vertex {
             version: VERSION,
-            parents,
             block,
-            undecided_parents: HashMap::new(),
+            undecided_parents,
+            parents,
             known_children: HashMap::new(),
-            preferred: false,
+            strongly_preferred,
             chit: 0,
             confidence: 0,
-        }
+        })
     }
 
     /// Compute the hash of the vertex
     pub fn hash(&self) -> Result<VertexHash> {
-        SlimVertex::try_from(self)?.hash()
+        self.slim()?.hash()
     }
 
-    /// Increase the confidences of this vertex and all undecided ancestors. Returns the hashes of
-    /// ancestors which can now be accepted
-    pub fn increase_confidence(&mut self) -> Vec<VertexHash> {
-        self.confidence += 1;
-        // Increase confidence of parents and collect any ancestors which can be accepted
-        let mut accepted = self
-            .undecided_parents
-            .values_mut()
-            .map(|parent| {
-                // TODO paralellize this walk
-                parent.write().unwrap().increase_confidence()
-            })
-            .reduce(|mut acc, mut new| {
-                acc.append(&mut new);
-                acc
-            })
-            .unwrap();
-        if self.undecided_parents.len() == 0 && self.confidence >= AVALANCHE_ACCEPTANCE_THRESHOLD {
-            // This vertex has reached the acceptance threshold.
-            accepted.push(self.hash().unwrap());
-        }
-        accepted
-    }
-
-    /// Reset the convidence of this vertex and any children
-    pub fn reset_confidence(&mut self) {
-        self.confidence = 0;
-        // TODO: According to avalanche, children of a non-virtuous transaction should be retried
-        // with new parents closer to genesis. Not doing so results in a liveness failure.
-        for child in self.known_children.values() {
-            // TODO paralellize this walk
-            child.write().unwrap().reset_confidence();
-        }
+    /// Convert into a ['SlimVertex']
+    pub fn slim(&self) -> Result<SlimVertex> {
+        Ok(SlimVertex {
+            version: self.version,
+            parents: self.parents.clone(),
+            block_hash: self.block.hash()?,
+        })
     }
 }
 
@@ -223,9 +220,18 @@ impl WireVertex {
         })
     }
 
+    /// Convert into a ['SlimVertex']
+    pub fn slim(&self) -> Result<SlimVertex> {
+        Ok(SlimVertex {
+            version: self.version,
+            parents: self.parents.clone(),
+            block_hash: self.block.hash()?,
+        })
+    }
+
     /// Compute the hash of the vertex
     pub fn hash(&self) -> Result<VertexHash> {
-        SlimVertex::try_from(self)?.hash()
+        self.slim()?.hash()
     }
 }
 
@@ -299,94 +305,6 @@ impl SlimVertex {
                 block,
             })
         }
-    }
-}
-
-impl TryFrom<WireVertex> for SlimVertex {
-    type Error = Error;
-
-    fn try_from(wv: WireVertex) -> result::Result<Self, Self::Error> {
-        SlimVertex::try_from(&wv)
-    }
-}
-
-impl TryFrom<&WireVertex> for SlimVertex {
-    type Error = Error;
-
-    fn try_from(wv: &WireVertex) -> result::Result<Self, Self::Error> {
-        Ok(SlimVertex {
-            version: wv.version,
-            parents: wv.parents.clone(),
-            block_hash: wv.block.hash()?,
-        })
-    }
-}
-
-impl TryFrom<TracingRwLockGuard<'_, std::sync::RwLockWriteGuard<'_, Vertex>>> for SlimVertex {
-    type Error = Error;
-
-    fn try_from(
-        vertex: TracingRwLockGuard<'_, std::sync::RwLockWriteGuard<'_, Vertex>>,
-    ) -> result::Result<Self, Self::Error> {
-        SlimVertex::try_from(&vertex)
-    }
-}
-
-impl TryFrom<&TracingRwLockGuard<'_, std::sync::RwLockWriteGuard<'_, Vertex>>> for SlimVertex {
-    type Error = Error;
-
-    fn try_from(
-        vertex: &TracingRwLockGuard<'_, std::sync::RwLockWriteGuard<'_, Vertex>>,
-    ) -> result::Result<Self, Self::Error> {
-        Ok(SlimVertex {
-            version: vertex.version,
-            parents: vertex.parents.clone(),
-            block_hash: vertex.block.hash()?,
-        })
-    }
-}
-
-impl TryFrom<TracingRwLockGuard<'_, std::sync::RwLockReadGuard<'_, Vertex>>> for SlimVertex {
-    type Error = Error;
-
-    fn try_from(
-        vertex: TracingRwLockGuard<'_, std::sync::RwLockReadGuard<'_, Vertex>>,
-    ) -> result::Result<Self, Self::Error> {
-        SlimVertex::try_from(&vertex)
-    }
-}
-
-impl TryFrom<&TracingRwLockGuard<'_, std::sync::RwLockReadGuard<'_, Vertex>>> for SlimVertex {
-    type Error = Error;
-
-    fn try_from(
-        vertex: &TracingRwLockGuard<'_, std::sync::RwLockReadGuard<'_, Vertex>>,
-    ) -> result::Result<Self, Self::Error> {
-        Ok(SlimVertex {
-            version: vertex.version,
-            parents: vertex.parents.clone(),
-            block_hash: vertex.block.hash()?,
-        })
-    }
-}
-
-impl TryFrom<Vertex> for SlimVertex {
-    type Error = Error;
-
-    fn try_from(vertex: Vertex) -> result::Result<Self, Self::Error> {
-        SlimVertex::try_from(&vertex)
-    }
-}
-
-impl TryFrom<&Vertex> for SlimVertex {
-    type Error = Error;
-
-    fn try_from(vertex: &Vertex) -> result::Result<Self, Self::Error> {
-        Ok(SlimVertex {
-            version: vertex.version,
-            parents: vertex.parents.clone(),
-            block_hash: vertex.block.hash()?,
-        })
     }
 }
 
