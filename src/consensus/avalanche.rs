@@ -96,8 +96,8 @@ pub struct DAG {
     /// Hash of the genesis block
     genesis_hash: BlockHash,
 
-    /// Collection of pending queries.
-    queries: TimedCache<BlockHash, HashSet<PeerId>>,
+    /// Collection of scorecards tracking the progress of pending queries
+    scorecards: TimedCache<BlockHash, Scorecard>,
 
     /// Channel to make requests of the P2P network
     p2p_action_ch: UnboundedSender<p2p::Action>,
@@ -127,12 +127,12 @@ impl DAG {
             database: BlocksDatabase::open(&config.data_dir.join(DATABASE_DIR), true)
                 .expect("Failed to open blocks database"),
             genesis_hash,
-            queries: TimedCache::with_lifespan(QUERY_TIMEOUT_SEC),
+            scorecards: TimedCache::with_lifespan(QUERY_TIMEOUT_SEC),
             p2p_action_ch,
             events_ch,
             config,
         };
-        dag.queries.set_refresh(false);
+        dag.scorecards.set_refresh(false);
 
         // Return the dag
         dag
@@ -162,7 +162,7 @@ impl DAG {
         }
 
         // Query peers for their preference, according to the avalanche consensus protocol
-        let pending_queries = self
+        let voters = self
             .database
             .select_random_miners(AVALANCHE_QUERY_COUNT, MAX_QUERY_MINER_AGE)?
             .into_iter()
@@ -175,7 +175,8 @@ impl DAG {
                     .map(|_| peer)
             })
             .try_collect()?;
-        self.queries.cache_set(hash, pending_queries);
+        self.scorecards
+            .cache_set(hash, Scorecard::new_with_voters(voters));
 
         // Create a new vertex from this block, and link to its parents if we have them
         let vertex = Arc::new(TracingRwLock::new(Vertex::new(block.clone())));
@@ -336,10 +337,7 @@ impl DAG {
             },
             avalanche_rpc::Request::GetPreference(hash) => {
                 self.is_strongly_preferred(&hash)
-                    .map(|preferred| match preferred {
-                        true => Some(avalanche_rpc::Response::Preferred(hash)),
-                        false => None,
-                    })
+                    .map(|preferred| Some(avalanche_rpc::Response::Preference(hash, preferred)))
                     .map_err(|error| {
                         debug!("Unable to determine preference for {hash}: {error}");
                         if let Error::NotFound = error {
@@ -378,26 +376,25 @@ impl DAG {
                     }
                 }
             }
-            avalanche_rpc::Response::Preferred(hash) => {
-                self.queries
-                    .cache_get_mut(&hash)
-                    .and_then(|peers_waiting| {
-                        // Count this peer's vote towards the quorum
-                        peers_waiting.remove(&from_peer);
-                        Some(peers_waiting)
-                    })
-                    .and_then(|peers_waiting| {
-                        // See if quorum has been reached
-                        if peers_waiting.len() + AVALANCHE_QUORUM < AVALANCHE_QUERY_COUNT {
-                            // Quorum has been reached. Award a chit.
-                            self.vertices.get(&hash).and_then(|v| {
-                                v.write().map_err(|_| Error::VertexWriteLock).unwrap().chit = 1;
-                                Some(v)
-                            });
-                        }
-                        Some(peers_waiting)
-                    });
-                self.queries.flush();
+            avalanche_rpc::Response::Preference(hash, preferred) => {
+                if let Some(scorecard) = self.scorecards.cache_get_mut(&hash) {
+                    // Make sure a peer's vote only gets counted once
+                    if scorecard.pending.remove(&from_peer) {
+                        scorecard.score += preferred as usize;
+                    }
+                    if scorecard.score >= AVALANCHE_QUORUM {
+                        // Quorum has been reached. Award a chit and cancel the vote.
+                        self.vertices.get(&hash).and_then(|v| {
+                            v.write().map_err(|_| Error::VertexWriteLock).unwrap().chit = 1;
+                            Some(v)
+                        });
+                        self.scorecards.cache_remove(&hash);
+                    } else if scorecard.score + scorecard.pending.len() < AVALANCHE_QUORUM {
+                        // Quorum is not possible. Cancel the vote.
+                        self.scorecards.cache_remove(&hash);
+                    }
+                }
+                self.scorecards.flush();
             }
         })
     }
@@ -589,5 +586,20 @@ impl WaitList {
     /// Remove an entry from the list, and return the vertices which were waiting on it
     fn remove(&mut self, hash: &BlockHash) -> Option<Vec<Arc<TracingRwLock<Vertex>>>> {
         self.0.pop(hash)
+    }
+}
+
+/// A scorecard to count votes received from peers during a round of queries
+struct Scorecard {
+    pending: HashSet<PeerId>, // Peers that still need to vote
+    score: usize,             // Total score from peers which have voted
+}
+
+impl Scorecard {
+    fn new_with_voters(voters: HashSet<PeerId>) -> Scorecard {
+        Scorecard {
+            pending: voters,
+            score: 0,
+        }
     }
 }

@@ -67,7 +67,7 @@ impl fmt::Display for Request {
 pub enum Response {
     Error(proto::mod_Response::Error),
     Block(Block),
-    Preferred(BlockHash),
+    Preference(BlockHash, bool),
 }
 
 impl Response {
@@ -77,9 +77,10 @@ impl Response {
             ResponseData: match self {
                 Response::Error(e) => proto::mod_Response::OneOfResponseData::error(e),
                 Response::Block(b) => proto::mod_Response::OneOfResponseData::block(b.try_into()?),
-                Response::Preferred(h) => {
-                    proto::mod_Response::OneOfResponseData::preferred(proto::BlockID {
-                        hash: rmp_serde::to_vec(&h)?,
+                Response::Preference(hash, preferred) => {
+                    proto::mod_Response::OneOfResponseData::preference(proto::Preference {
+                        hash: rmp_serde::to_vec(&hash)?,
+                        preferred,
                     })
                 }
             },
@@ -91,9 +92,10 @@ impl Response {
         match resp.ResponseData {
             proto::mod_Response::OneOfResponseData::error(e) => Ok(Response::Error(e)),
             proto::mod_Response::OneOfResponseData::block(b) => Ok(Response::Block(b.try_into()?)),
-            proto::mod_Response::OneOfResponseData::preferred(h) => {
-                Ok(Response::Preferred(rmp_serde::from_slice(&h.hash)?))
-            }
+            proto::mod_Response::OneOfResponseData::preference(h) => Ok(Response::Preference(
+                rmp_serde::from_slice(&h.hash)?,
+                h.preferred,
+            )),
             proto::mod_Response::OneOfResponseData::None => Err(super::Error::IncompleteResponse),
         }
     }

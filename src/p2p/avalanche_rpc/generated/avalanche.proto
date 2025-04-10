@@ -19,13 +19,18 @@ message Response {
 	oneof ResponseData {
 		Error error = 0;
 		Block block = 1;
-		BlockID preferred  = 2;
+		Preference preference = 2;
 	}
 }
 
 // Inner message types
 message BlockID {
   bytes hash = 0;
+}
+
+message Preference {
+  bytes hash = 0;
+  bool preferred = 1;
 }
 
 message Block {
