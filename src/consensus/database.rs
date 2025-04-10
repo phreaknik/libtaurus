@@ -1,16 +1,16 @@
-use super::{Block, BlockHash};
-use heed::{BytesDecode, BytesEncode, Database, Env, EnvOpenOptions, RwTxn};
+use super::{block, vertex, Block, BlockHash};
+use crate::{VertexHash, WireVertex};
+use heed::{Database, Env, EnvOpenOptions, RwTxn};
 use itertools::Itertools;
 use libp2p::PeerId;
 use rand::{seq::IteratorRandom, thread_rng};
-use serde_derive::{Deserialize, Serialize};
 use std::{fs, path::PathBuf, result};
 
 /// Error type for consensus errors
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error(transparent)]
-    Block(#[from] super::block::Error),
+    Block(#[from] block::Error),
     #[error(transparent)]
     Heed(#[from] heed::Error),
     #[error(transparent)]
@@ -19,6 +19,8 @@ pub enum Error {
     MsgPackDecode(#[from] rmp_serde::decode::Error),
     #[error(transparent)]
     MsgPackEncode(#[from] rmp_serde::encode::Error),
+    #[error(transparent)]
+    Vertex(#[from] vertex::Error),
 }
 
 /// Result type for consensus errors
@@ -26,24 +28,69 @@ pub type Result<T> = result::Result<T, Error>;
 
 /// Database to store consensus data, using the ['heed'] LMDB database wrapper.
 #[derive(Clone)]
-pub struct BlocksDatabase {
-    pub env: Env,
-    pub db: Database<BlockHash, BlockEntry>,
+pub struct ConsensusDb {
+    pub block_env: Env,
+    /// Database of blocks
+    pub block_db: Database<BlockHash, Block>,
+    pub vertex_env: Env,
+    /// Database of vertices
+    pub vertex_db: Database<VertexHash, WireVertex>,
+    pub links_env: Env,
+    /// Database of links between blocks and vertices
+    pub links_db: Database<BlockHash, VertexHash>,
 }
 
-impl BlocksDatabase {
+impl ConsensusDb {
     /// Open the database at the given path, or optionally create it if nonexistent
-    pub fn open(path: &PathBuf, create: bool) -> Result<BlocksDatabase> {
-        if create {
-            fs::create_dir_all(path.as_path())?;
-        }
-        let env = EnvOpenOptions::new().open(path)?;
-        let db = if create {
-            env.create_database(None)?
-        } else {
-            env.open_database(None)?.unwrap()
+    pub fn open(path: &PathBuf, create: bool) -> Result<ConsensusDb> {
+        // The consensus database consists of two LMDB databases: a block database, and a vertex
+        // database. We need to create or open both
+        // TODO: Having distinct DBs makes it possible to have non-atomic writes. i.e. a block gets
+        // written, but not its vertex. Or vice versa. Must use one DB and batch writes.
+        let (block_env, block_db) = {
+            let path = path.join("block_db/");
+            if create {
+                fs::create_dir_all(path.as_path())?;
+            }
+            let env = EnvOpenOptions::new().open(path)?;
+            if create {
+                (env.clone(), env.create_database(None)?)
+            } else {
+                (env.clone(), env.open_database(None)?.unwrap())
+            }
         };
-        Ok(BlocksDatabase { env, db })
+        let (vertex_env, vertex_db) = {
+            let path = path.join("vertex_db/");
+            if create {
+                fs::create_dir_all(path.as_path())?;
+            }
+            let env = EnvOpenOptions::new().open(path)?;
+            if create {
+                (env.clone(), env.create_database(None)?)
+            } else {
+                (env.clone(), env.open_database(None)?.unwrap())
+            }
+        };
+        let (links_env, links_db) = {
+            let path = path.join("links_db/");
+            if create {
+                fs::create_dir_all(path.as_path())?;
+            }
+            let env = EnvOpenOptions::new().open(path)?;
+            if create {
+                (env.clone(), env.create_database(None)?)
+            } else {
+                (env.clone(), env.open_database(None)?.unwrap())
+            }
+        };
+        Ok(ConsensusDb {
+            block_env,
+            block_db,
+            vertex_env,
+            vertex_db,
+            links_env,
+            links_db,
+        })
     }
 
     /// Write a new block into the database
@@ -53,38 +100,52 @@ impl BlocksDatabase {
     pub fn write_block<'a>(
         &'a mut self,
         wtxn: Option<RwTxn<'a, 'a>>,
-        block: Block,
-        canonical: bool,
+        block: &Block,
     ) -> Result<RwTxn<'a, 'a>> {
-        let mut wtxn = wtxn.unwrap_or(self.env.write_txn().unwrap());
-        self.db.put(
-            &mut wtxn,
-            &block.hash()?.into(),
-            &BlockEntry { block, canonical },
-        )?;
+        let mut wtxn = wtxn.unwrap_or(self.block_env.write_txn().unwrap());
+        self.block_db.put(&mut wtxn, &block.hash()?, block)?;
         Ok(wtxn)
     }
 
     /// Read a block from the database
-    pub fn read_block<'a>(&'a mut self, hash: BlockHash) -> Result<Option<Block>> {
-        // TODO: this hash->copy->serdehash nonsense has to stop. Maybe serdehash should go and
-        // just pass byte arrays?
-        let mut rtxn = self.env.read_txn().unwrap();
-        Ok(self.db.get(&mut rtxn, &hash)?.map(|entry| entry.block))
+    pub fn read_block<'a>(&'a mut self, bhash: &BlockHash) -> Result<Option<Block>> {
+        let mut rtxn = self.block_env.read_txn().unwrap();
+        Ok(self.block_db.get(&mut rtxn, bhash)?)
+    }
+
+    /// Write a new vertex into the database
+    /// May optionally pass in an existing write transaction, to add this to a batch of writes
+    /// Must call ['heed::RwTxn::commit'] on the resulting ['RwTxn'] for the database write to
+    /// complete.
+    pub fn write_vertex<'a>(&'a mut self, vertex: &WireVertex) -> Result<()> {
+        let vhash = vertex.hash()?;
+        let mut wtxn_l = self.links_env.write_txn().unwrap();
+        let mut wtxn_v = self.vertex_env.write_txn().unwrap();
+        self.vertex_db.put(&mut wtxn_v, &vertex.hash()?, vertex)?;
+        self.links_db.put(&mut wtxn_l, &vertex.block, &vhash)?;
+        Ok(())
+    }
+
+    /// Read a vertex from the database
+    pub fn read_vertex<'a>(&'a mut self, vhash: &VertexHash) -> Result<Option<WireVertex>> {
+        let mut rtxn = self.vertex_env.read_txn().unwrap();
+        Ok(self.vertex_db.get(&mut rtxn, vhash)?)
     }
 
     /// Select a random quorum of miners from the list of recently mined blocks. Will return a set
     /// of 'count' unique miners, where each miner's probability of selection is weighted
     /// proportionally to the number of blocks he has mined in the last 'age' blocks.
     pub fn select_random_miners(&mut self, count: usize, age: usize) -> Result<Vec<PeerId>> {
-        let rtxn = self.env.read_txn().unwrap();
+        // TODO: miner selection needs to come from _all_ blocks, not just blocks finalized and
+        // accepted into the database.
+        let rtxn = self.block_env.read_txn().unwrap();
         let selected = self
-            .db
+            .block_db
             .iter(&rtxn)?
-            .take(age)
+            .take(age) //TODO: this assumes db is sorted by age... is it?
             .filter_map(|element| {
-                if let Ok((_hash, block_entry)) = element {
-                    return Some(block_entry.block.miner);
+                if let Ok((_hash, block)) = element {
+                    return Some(block.miner);
                 } else {
                     None
                 }
@@ -93,33 +154,5 @@ impl BlocksDatabase {
             .choose_multiple(&mut thread_rng(), count);
         rtxn.commit().unwrap();
         Ok(selected)
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct BlockEntry {
-    /// The actual block data
-    block: Block,
-    /// Is this block considered canonical?
-    canonical: bool,
-}
-
-impl<'a> BytesEncode<'a> for BlockEntry {
-    type EItem = BlockEntry;
-
-    fn bytes_encode(
-        item: &'a Self::EItem,
-    ) -> std::result::Result<std::borrow::Cow<'a, [u8]>, Box<dyn std::error::Error>> {
-        Ok(rmp_serde::to_vec(item)?.into())
-    }
-}
-
-impl<'a> BytesDecode<'a> for BlockEntry {
-    type DItem = BlockEntry;
-
-    fn bytes_decode(
-        bytes: &'a [u8],
-    ) -> std::result::Result<Self::DItem, Box<dyn std::error::Error>> {
-        Ok(rmp_serde::from_slice(bytes)?)
     }
 }

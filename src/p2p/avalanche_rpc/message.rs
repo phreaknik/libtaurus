@@ -1,14 +1,18 @@
 use super::proto;
 use super::Error;
 use crate::consensus::{Block, BlockHash};
+use crate::VertexHash;
+use crate::WireVertex;
 use std::fmt;
+use std::sync::Arc;
 use strum_macros::EnumIter;
 
 /// Message type defining the peer RPC request messages
 #[derive(Debug, Clone, PartialEq, Eq, EnumIter)]
 pub enum Request {
     GetBlock(BlockHash),
-    GetPreference(BlockHash),
+    GetVertex(VertexHash),
+    GetPreference(VertexHash),
 }
 
 impl Request {
@@ -17,12 +21,17 @@ impl Request {
         Ok(proto::Request {
             RequestData: match self {
                 Request::GetBlock(hash) => {
-                    proto::mod_Request::OneOfRequestData::get_block(proto::BlockID {
+                    proto::mod_Request::OneOfRequestData::get_block(proto::Hash {
+                        hash: rmp_serde::to_vec(&hash)?,
+                    })
+                }
+                Request::GetVertex(hash) => {
+                    proto::mod_Request::OneOfRequestData::get_vertex(proto::Hash {
                         hash: rmp_serde::to_vec(&hash)?,
                     })
                 }
                 Request::GetPreference(hash) => {
-                    proto::mod_Request::OneOfRequestData::get_preference(proto::BlockID {
+                    proto::mod_Request::OneOfRequestData::get_preference(proto::Hash {
                         hash: rmp_serde::to_vec(&hash)?,
                     })
                 }
@@ -36,6 +45,9 @@ impl Request {
             proto::mod_Request::OneOfRequestData::get_block(message) => Ok(Request::GetBlock(
                 rmp_serde::from_slice(message.hash.as_slice())?,
             )),
+            proto::mod_Request::OneOfRequestData::get_vertex(message) => Ok(Request::GetVertex(
+                rmp_serde::from_slice(message.hash.as_slice())?,
+            )),
             proto::mod_Request::OneOfRequestData::get_preference(message) => Ok(
                 Request::GetPreference(rmp_serde::from_slice(message.hash.as_slice())?),
             ),
@@ -47,17 +59,9 @@ impl Request {
 impl fmt::Display for Request {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Request::GetBlock(serde_hash) => {
-                write!(f, "GetBlock({})", Into::<blake3::Hash>::into(serde_hash))
-            }
-            // TODO: Need to get rid of old references to serde_hash
-            Request::GetPreference(serde_hash) => {
-                write!(
-                    f,
-                    "GetPreference({})",
-                    Into::<blake3::Hash>::into(serde_hash)
-                )
-            }
+            Request::GetBlock(hash) => write!(f, "GetBlock({})", hash.to_short_hex()),
+            Request::GetVertex(hash) => write!(f, "GetVertex({})", hash.to_short_hex()),
+            Request::GetPreference(hash) => write!(f, "GetPreference({})", hash.to_short_hex()),
         }
     }
 }
@@ -66,8 +70,9 @@ impl fmt::Display for Request {
 #[derive(Debug, Clone)]
 pub enum Response {
     Error(proto::mod_Response::Error),
-    Block(Block),
-    Preference(BlockHash, bool),
+    Block(Arc<Block>),
+    Vertex(Arc<WireVertex>),
+    Preference(VertexHash, bool),
 }
 
 impl Response {
@@ -76,7 +81,12 @@ impl Response {
         Ok(proto::Response {
             ResponseData: match self {
                 Response::Error(e) => proto::mod_Response::OneOfResponseData::error(e),
-                Response::Block(b) => proto::mod_Response::OneOfResponseData::block(b.try_into()?),
+                Response::Block(b) => {
+                    proto::mod_Response::OneOfResponseData::block(b.to_protobuf()?)
+                }
+                Response::Vertex(v) => {
+                    proto::mod_Response::OneOfResponseData::vertex(v.to_protobuf()?)
+                }
                 Response::Preference(hash, preferred) => {
                     proto::mod_Response::OneOfResponseData::preference(proto::Preference {
                         hash: rmp_serde::to_vec(&hash)?,
@@ -91,7 +101,12 @@ impl Response {
     pub fn from_protobuf(resp: proto::Response) -> Result<Self, Error> {
         match resp.ResponseData {
             proto::mod_Response::OneOfResponseData::error(e) => Ok(Response::Error(e)),
-            proto::mod_Response::OneOfResponseData::block(b) => Ok(Response::Block(b.try_into()?)),
+            proto::mod_Response::OneOfResponseData::block(b) => {
+                Ok(Response::Block(Arc::new(Block::from_protobuf(b)?)))
+            }
+            proto::mod_Response::OneOfResponseData::vertex(v) => {
+                Ok(Response::Vertex(Arc::new(WireVertex::from_protobuf(v)?)))
+            }
             proto::mod_Response::OneOfResponseData::preference(h) => Ok(Response::Preference(
                 rmp_serde::from_slice(&h.hash)?,
                 h.preferred,

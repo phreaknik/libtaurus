@@ -33,8 +33,8 @@ mod randomx;
 mod util;
 
 use clap::{arg, command, ArgMatches, Command};
-pub use consensus::BlockHash;
 use consensus::{avalanche, GenesisConfig};
+pub use consensus::{Block, BlockHash, VertexHash, WireVertex};
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
 use libp2p::identity::Keypair;
 use p2p::PeerDatabase;

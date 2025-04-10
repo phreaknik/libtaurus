@@ -86,12 +86,19 @@ async fn task_fn(
     consensus_action_ch: UnboundedSender<consensus::Action>,
     mut consensus_event_ch: broadcast::Receiver<consensus::Event>,
 ) {
-    info!("Starting miner...");
-    let (_, mut results_receiver) = mpsc::unbounded_channel();
     let sols_count_sender = start_stats();
     let randomx_vm =
         RandomXVMInstance::new(b"cordelia-randomx", RandomXFlag::get_recommended_flags()).unwrap();
-    let miner_id = PeerId::from(config.identity_key.public());
+    let _miner_id = PeerId::from(config.identity_key.public()); // TODO: need to set miner ID
+    info!("Starting miner...");
+    let mut results_receiver = spawn_mining_threads(
+        config.num_threads,
+        randomx_vm.clone(),
+        Block::default(),
+        sols_count_sender.clone(),
+    )
+    .expect("Failed to start miner.");
+    // Event loop
     loop {
         select! {
             // Handle consensus events
@@ -101,9 +108,9 @@ async fn task_fn(
                     Ok(event) => {
                         match event {
                             // Restart mining threads to mine on new frontier
-                            consensus::Event::NewFrontier(f) => {
+                            consensus::Event::NewFrontier(_) => {
                                 results_receiver.close(); // Kill previous mining threads
-                                results_receiver = match spawn_mining_threads(config.num_threads, randomx_vm.clone(), f.to_candidate(miner_id), sols_count_sender.clone()) {
+                                results_receiver = match spawn_mining_threads(config.num_threads, randomx_vm.clone(), Block::default(), sols_count_sender.clone()) {
                                     Ok(ch) => ch,
                                     Err(e) => {
                                         error!("Failed to start miners: {e}");
@@ -138,7 +145,6 @@ fn spawn_mining_threads(
     block: Block,
     sols_count_ch: UnboundedSender<usize>,
 ) -> Result<UnboundedReceiver<Block>> {
-    info!("Mining parent of {}", block.format_parents());
     debug!("Block template:\n{block:?}");
 
     // Close the old channel to kill the old mining threads, and

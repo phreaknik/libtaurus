@@ -24,8 +24,9 @@ impl<'a> MessageRead<'a> for Request {
         let mut msg = Self::default();
         while !r.is_eof() {
             match r.next_tag(bytes) {
-                Ok(2) => msg.RequestData = avalanche::proto::mod_Request::OneOfRequestData::get_block(r.read_message::<avalanche::proto::BlockID>(bytes)?),
-                Ok(10) => msg.RequestData = avalanche::proto::mod_Request::OneOfRequestData::get_preference(r.read_message::<avalanche::proto::BlockID>(bytes)?),
+                Ok(2) => msg.RequestData = avalanche::proto::mod_Request::OneOfRequestData::get_block(r.read_message::<avalanche::proto::Hash>(bytes)?),
+                Ok(10) => msg.RequestData = avalanche::proto::mod_Request::OneOfRequestData::get_vertex(r.read_message::<avalanche::proto::Hash>(bytes)?),
+                Ok(18) => msg.RequestData = avalanche::proto::mod_Request::OneOfRequestData::get_preference(r.read_message::<avalanche::proto::Hash>(bytes)?),
                 Ok(t) => { r.read_unknown(bytes, t)?; }
                 Err(e) => return Err(e),
             }
@@ -39,13 +40,15 @@ impl MessageWrite for Request {
         0
         + match self.RequestData {
             avalanche::proto::mod_Request::OneOfRequestData::get_block(ref m) => 1 + sizeof_len((m).get_size()),
+            avalanche::proto::mod_Request::OneOfRequestData::get_vertex(ref m) => 1 + sizeof_len((m).get_size()),
             avalanche::proto::mod_Request::OneOfRequestData::get_preference(ref m) => 1 + sizeof_len((m).get_size()),
             avalanche::proto::mod_Request::OneOfRequestData::None => 0,
     }    }
 
     fn write_message<W: WriterBackend>(&self, w: &mut Writer<W>) -> Result<()> {
         match self.RequestData {            avalanche::proto::mod_Request::OneOfRequestData::get_block(ref m) => { w.write_with_tag(2, |w| w.write_message(m))? },
-            avalanche::proto::mod_Request::OneOfRequestData::get_preference(ref m) => { w.write_with_tag(10, |w| w.write_message(m))? },
+            avalanche::proto::mod_Request::OneOfRequestData::get_vertex(ref m) => { w.write_with_tag(10, |w| w.write_message(m))? },
+            avalanche::proto::mod_Request::OneOfRequestData::get_preference(ref m) => { w.write_with_tag(18, |w| w.write_message(m))? },
             avalanche::proto::mod_Request::OneOfRequestData::None => {},
     }        Ok(())
     }
@@ -57,8 +60,9 @@ use super::*;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum OneOfRequestData {
-    get_block(avalanche::proto::BlockID),
-    get_preference(avalanche::proto::BlockID),
+    get_block(avalanche::proto::Hash),
+    get_vertex(avalanche::proto::Hash),
+    get_preference(avalanche::proto::Hash),
     None,
 }
 
@@ -83,7 +87,8 @@ impl<'a> MessageRead<'a> for Response {
             match r.next_tag(bytes) {
                 Ok(0) => msg.ResponseData = avalanche::proto::mod_Response::OneOfResponseData::error(r.read_enum(bytes)?),
                 Ok(10) => msg.ResponseData = avalanche::proto::mod_Response::OneOfResponseData::block(r.read_message::<avalanche::proto::Block>(bytes)?),
-                Ok(18) => msg.ResponseData = avalanche::proto::mod_Response::OneOfResponseData::preference(r.read_message::<avalanche::proto::Preference>(bytes)?),
+                Ok(18) => msg.ResponseData = avalanche::proto::mod_Response::OneOfResponseData::vertex(r.read_message::<avalanche::proto::Vertex>(bytes)?),
+                Ok(26) => msg.ResponseData = avalanche::proto::mod_Response::OneOfResponseData::preference(r.read_message::<avalanche::proto::Preference>(bytes)?),
                 Ok(t) => { r.read_unknown(bytes, t)?; }
                 Err(e) => return Err(e),
             }
@@ -98,6 +103,7 @@ impl MessageWrite for Response {
         + match self.ResponseData {
             avalanche::proto::mod_Response::OneOfResponseData::error(ref m) => 1 + sizeof_varint(*(m) as u64),
             avalanche::proto::mod_Response::OneOfResponseData::block(ref m) => 1 + sizeof_len((m).get_size()),
+            avalanche::proto::mod_Response::OneOfResponseData::vertex(ref m) => 1 + sizeof_len((m).get_size()),
             avalanche::proto::mod_Response::OneOfResponseData::preference(ref m) => 1 + sizeof_len((m).get_size()),
             avalanche::proto::mod_Response::OneOfResponseData::None => 0,
     }    }
@@ -105,7 +111,8 @@ impl MessageWrite for Response {
     fn write_message<W: WriterBackend>(&self, w: &mut Writer<W>) -> Result<()> {
         match self.ResponseData {            avalanche::proto::mod_Response::OneOfResponseData::error(ref m) => { w.write_with_tag(0, |w| w.write_enum(*m as i32))? },
             avalanche::proto::mod_Response::OneOfResponseData::block(ref m) => { w.write_with_tag(10, |w| w.write_message(m))? },
-            avalanche::proto::mod_Response::OneOfResponseData::preference(ref m) => { w.write_with_tag(18, |w| w.write_message(m))? },
+            avalanche::proto::mod_Response::OneOfResponseData::vertex(ref m) => { w.write_with_tag(18, |w| w.write_message(m))? },
+            avalanche::proto::mod_Response::OneOfResponseData::preference(ref m) => { w.write_with_tag(26, |w| w.write_message(m))? },
             avalanche::proto::mod_Response::OneOfResponseData::None => {},
     }        Ok(())
     }
@@ -148,6 +155,7 @@ impl<'a> From<&'a str> for Error {
 pub enum OneOfResponseData {
     error(avalanche::proto::mod_Response::Error),
     block(avalanche::proto::Block),
+    vertex(avalanche::proto::Vertex),
     preference(avalanche::proto::Preference),
     None,
 }
@@ -162,11 +170,11 @@ impl Default for OneOfResponseData {
 
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Debug, Default, PartialEq, Clone)]
-pub struct BlockID {
+pub struct Hash {
     pub hash: Vec<u8>,
 }
 
-impl<'a> MessageRead<'a> for BlockID {
+impl<'a> MessageRead<'a> for Hash {
     fn from_reader(r: &mut BytesReader, bytes: &'a [u8]) -> Result<Self> {
         let mut msg = Self::default();
         while !r.is_eof() {
@@ -180,7 +188,7 @@ impl<'a> MessageRead<'a> for BlockID {
     }
 }
 
-impl MessageWrite for BlockID {
+impl MessageWrite for Hash {
     fn get_size(&self) -> usize {
         0
         + if self.hash.is_empty() { 0 } else { 1 + sizeof_len((&self.hash).len()) }
@@ -234,7 +242,6 @@ pub struct Block {
     pub version: u32,
     pub difficulty: u64,
     pub miner: Vec<u8>,
-    pub parents: Vec<Vec<u8>>,
     pub inputs: Vec<Vec<u8>>,
     pub time: Vec<u8>,
     pub nonce: u64,
@@ -248,10 +255,9 @@ impl<'a> MessageRead<'a> for Block {
                 Ok(0) => msg.version = r.read_uint32(bytes)?,
                 Ok(8) => msg.difficulty = r.read_uint64(bytes)?,
                 Ok(18) => msg.miner = r.read_bytes(bytes)?.to_owned(),
-                Ok(26) => msg.parents.push(r.read_bytes(bytes)?.to_owned()),
-                Ok(34) => msg.inputs.push(r.read_bytes(bytes)?.to_owned()),
-                Ok(42) => msg.time = r.read_bytes(bytes)?.to_owned(),
-                Ok(48) => msg.nonce = r.read_uint64(bytes)?,
+                Ok(26) => msg.inputs.push(r.read_bytes(bytes)?.to_owned()),
+                Ok(34) => msg.time = r.read_bytes(bytes)?.to_owned(),
+                Ok(40) => msg.nonce = r.read_uint64(bytes)?,
                 Ok(t) => { r.read_unknown(bytes, t)?; }
                 Err(e) => return Err(e),
             }
@@ -266,7 +272,6 @@ impl MessageWrite for Block {
         + if self.version == 0u32 { 0 } else { 1 + sizeof_varint(*(&self.version) as u64) }
         + if self.difficulty == 0u64 { 0 } else { 1 + sizeof_varint(*(&self.difficulty) as u64) }
         + if self.miner.is_empty() { 0 } else { 1 + sizeof_len((&self.miner).len()) }
-        + self.parents.iter().map(|s| 1 + sizeof_len((s).len())).sum::<usize>()
         + self.inputs.iter().map(|s| 1 + sizeof_len((s).len())).sum::<usize>()
         + if self.time.is_empty() { 0 } else { 1 + sizeof_len((&self.time).len()) }
         + if self.nonce == 0u64 { 0 } else { 1 + sizeof_varint(*(&self.nonce) as u64) }
@@ -276,10 +281,49 @@ impl MessageWrite for Block {
         if self.version != 0u32 { w.write_with_tag(0, |w| w.write_uint32(*&self.version))?; }
         if self.difficulty != 0u64 { w.write_with_tag(8, |w| w.write_uint64(*&self.difficulty))?; }
         if !self.miner.is_empty() { w.write_with_tag(18, |w| w.write_bytes(&**&self.miner))?; }
-        for s in &self.parents { w.write_with_tag(26, |w| w.write_bytes(&**s))?; }
-        for s in &self.inputs { w.write_with_tag(34, |w| w.write_bytes(&**s))?; }
-        if !self.time.is_empty() { w.write_with_tag(42, |w| w.write_bytes(&**&self.time))?; }
-        if self.nonce != 0u64 { w.write_with_tag(48, |w| w.write_uint64(*&self.nonce))?; }
+        for s in &self.inputs { w.write_with_tag(26, |w| w.write_bytes(&**s))?; }
+        if !self.time.is_empty() { w.write_with_tag(34, |w| w.write_bytes(&**&self.time))?; }
+        if self.nonce != 0u64 { w.write_with_tag(40, |w| w.write_uint64(*&self.nonce))?; }
+        Ok(())
+    }
+}
+
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Debug, Default, PartialEq, Clone)]
+pub struct Vertex {
+    pub version: u32,
+    pub parents: Vec<Vec<u8>>,
+    pub block_hash: Vec<u8>,
+}
+
+impl<'a> MessageRead<'a> for Vertex {
+    fn from_reader(r: &mut BytesReader, bytes: &'a [u8]) -> Result<Self> {
+        let mut msg = Self::default();
+        while !r.is_eof() {
+            match r.next_tag(bytes) {
+                Ok(0) => msg.version = r.read_uint32(bytes)?,
+                Ok(10) => msg.parents.push(r.read_bytes(bytes)?.to_owned()),
+                Ok(18) => msg.block_hash = r.read_bytes(bytes)?.to_owned(),
+                Ok(t) => { r.read_unknown(bytes, t)?; }
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(msg)
+    }
+}
+
+impl MessageWrite for Vertex {
+    fn get_size(&self) -> usize {
+        0
+        + if self.version == 0u32 { 0 } else { 1 + sizeof_varint(*(&self.version) as u64) }
+        + self.parents.iter().map(|s| 1 + sizeof_len((s).len())).sum::<usize>()
+        + if self.block_hash.is_empty() { 0 } else { 1 + sizeof_len((&self.block_hash).len()) }
+    }
+
+    fn write_message<W: WriterBackend>(&self, w: &mut Writer<W>) -> Result<()> {
+        if self.version != 0u32 { w.write_with_tag(0, |w| w.write_uint32(*&self.version))?; }
+        for s in &self.parents { w.write_with_tag(10, |w| w.write_bytes(&**s))?; }
+        if !self.block_hash.is_empty() { w.write_with_tag(18, |w| w.write_bytes(&**&self.block_hash))?; }
         Ok(())
     }
 }

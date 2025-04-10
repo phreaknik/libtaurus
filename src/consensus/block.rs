@@ -1,5 +1,6 @@
 use crate::{
-    p2p, params,
+    p2p,
+    params::{self, GENESIS_DIFFICULTY},
     randomx::{self, RandomXVMInstance},
 };
 use chrono::{DateTime, Utc};
@@ -8,6 +9,9 @@ use libp2p::{multihash::Multihash, PeerId};
 use num::{BigUint, FromPrimitive};
 use serde_derive::{Deserialize, Serialize};
 use std::{fmt, hash::Hash, result};
+
+/// Current version of the block structure
+pub const VERSION: u32 = 32;
 
 /// Error type for block errors
 #[derive(thiserror::Error, Debug)]
@@ -35,17 +39,22 @@ pub type Result<T> = result::Result<T, Error>;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Block {
+    /// TODO: Need block validation rules. Not much though:
+    ///    * version must match
+    ///    * difficulty must be valid (maybe DAA control average DAG width, not production time?)
+    ///        * ^ this is actually very interesting. Feedback loop regulates for network
+    ///        efficiency, instead of for block production time as a proxy for efficiency.
+    ///    * time must be relatively recent and not future
     pub version: u32,
     pub difficulty: u64,
     pub miner: PeerId,
-    pub parents: Vec<BlockHash>,
-    pub inputs: Vec<BlockHash>, // TODO: define real UTXOs
-    pub time: DateTime<Utc>,
+    pub inputs: Vec<BlockHash>, // TODO: define real UTXOs with real UTXO hash
+    pub time: DateTime<Utc>,    // TODO: don't need a timestamp... might be nice in Vertex though
     pub nonce: u64,
 }
 
 impl Block {
-    /// Compute the hash of the vertex
+    /// Compute the hash of the block
     pub fn hash(&self) -> Result<BlockHash> {
         Ok(blake3::hash(&rmp_serde::to_vec(self)?).into())
     }
@@ -73,14 +82,36 @@ impl Block {
         }
     }
 
-    /// Print the parents into a formatted string
-    pub fn format_parents(&self) -> String {
-        let mut s = format!("[{}", self.parents[0]);
-        for p in &self.parents[1..] {
-            s += &format!(", {p}");
-        }
-        s += "]";
-        s
+    /// Deserialize from protobuf format
+    pub fn from_protobuf(block: p2p::avalanche_rpc::proto::Block) -> Result<Block> {
+        Ok(Block {
+            version: block.version,
+            difficulty: block.difficulty,
+            miner: PeerId::from_bytes(&block.miner)?,
+            inputs: block
+                .inputs
+                .iter()
+                .map(|bytes| rmp_serde::from_slice(bytes))
+                .try_collect()?,
+            time: rmp_serde::from_slice(&block.time)?,
+            nonce: block.nonce,
+        })
+    }
+
+    /// Serialize into protobuf format
+    pub fn to_protobuf(&self) -> Result<p2p::avalanche_rpc::proto::Block> {
+        Ok(p2p::avalanche_rpc::proto::Block {
+            version: self.version,
+            difficulty: self.difficulty,
+            miner: self.miner.to_bytes(),
+            inputs: self
+                .inputs
+                .iter()
+                .map(|i| rmp_serde::to_vec(i))
+                .try_collect()?,
+            time: rmp_serde::to_vec(&self.time)?,
+            nonce: self.nonce,
+        })
     }
 }
 
@@ -99,10 +130,9 @@ impl std::fmt::Debug for Block {
 impl Default for Block {
     fn default() -> Self {
         Block {
-            version: 0,
-            difficulty: 0,
+            version: VERSION,
+            difficulty: GENESIS_DIFFICULTY,
             miner: PeerId::from_multihash(Multihash::default()).unwrap(),
-            parents: Vec::new(),
             inputs: Vec::new(),
             time: Utc::now(),
             nonce: 0,
@@ -110,57 +140,28 @@ impl Default for Block {
     }
 }
 
-impl TryFrom<p2p::avalanche_rpc::proto::Block> for Block {
-    type Error = Error;
+impl<'a> BytesEncode<'a> for Block {
+    type EItem = Block;
 
-    fn try_from(block: p2p::avalanche_rpc::proto::Block) -> result::Result<Self, Self::Error> {
-        Ok(Block {
-            version: block.version,
-            difficulty: block.difficulty,
-            miner: PeerId::from_bytes(&block.miner)?,
-            parents: block
-                .parents
-                .iter()
-                .map(|bytes| rmp_serde::from_slice(bytes))
-                .try_collect()?,
-            inputs: block
-                .inputs
-                .iter()
-                .map(|bytes| rmp_serde::from_slice(bytes))
-                .try_collect()?,
-            time: rmp_serde::from_slice(&block.time)?,
-            nonce: block.nonce,
-        })
+    fn bytes_encode(
+        item: &'a Self::EItem,
+    ) -> std::result::Result<std::borrow::Cow<'a, [u8]>, Box<dyn std::error::Error>> {
+        Ok(rmp_serde::to_vec(item)?.into())
     }
 }
 
-impl TryInto<p2p::avalanche_rpc::proto::Block> for Block {
-    type Error = Error;
+impl<'a> BytesDecode<'a> for Block {
+    type DItem = Block;
 
-    fn try_into(self) -> result::Result<p2p::avalanche_rpc::proto::Block, Self::Error> {
-        Ok(p2p::avalanche_rpc::proto::Block {
-            version: self.version,
-            difficulty: self.difficulty,
-            miner: self.miner.to_bytes(),
-            parents: self
-                .parents
-                .iter()
-                .map(|p| rmp_serde::to_vec(p))
-                .try_collect()?,
-            inputs: self
-                .inputs
-                .iter()
-                .map(|i| rmp_serde::to_vec(i))
-                .try_collect()?,
-            time: rmp_serde::to_vec(&self.time)?,
-            nonce: self.nonce,
-        })
+    fn bytes_decode(
+        bytes: &'a [u8],
+    ) -> std::result::Result<Self::DItem, Box<dyn std::error::Error>> {
+        Ok(rmp_serde::from_slice(bytes)?)
     }
 }
 
-/// Wrapper struct around blake3::Hash to facilitate serde implementation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
-pub struct BlockHash([u8; blake3::OUT_LEN]);
+pub struct BlockHash(pub [u8; blake3::OUT_LEN]);
 
 impl BlockHash {
     /// Format the BlockHash as a hex string
@@ -230,7 +231,6 @@ struct PrettyBlock {
     version: u32,
     difficulty: u64,
     miner: PeerId,
-    parents: Vec<String>,
     inputs: Vec<String>,
     time: DateTime<Utc>,
     nonce: u64,
@@ -240,11 +240,6 @@ impl From<&Block> for PrettyBlock {
     fn from(block: &Block) -> Self {
         PrettyBlock {
             version: block.version,
-            parents: block
-                .parents
-                .iter()
-                .map(|p| p.0.iter().map(|b| format!("{b:02x}")).collect())
-                .collect(),
             inputs: block
                 .inputs
                 .iter()

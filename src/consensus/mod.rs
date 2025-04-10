@@ -1,6 +1,7 @@
 pub mod avalanche;
 pub mod block;
 mod database;
+pub mod vertex;
 
 use crate::randomx::RandomXVMInstance;
 use crate::{p2p, randomx};
@@ -12,11 +13,13 @@ use libp2p::PeerId;
 use randomx_rs::RandomXFlag;
 use std::path::PathBuf;
 use std::result;
+use std::sync::Arc;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 use tokio::{select, sync::broadcast};
 use tracing::{error, info, trace, warn};
 use tracing_mutex::stdsync::TracingRwLock;
+pub use vertex::*;
 
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
 /// [`tokio::sync::broadcast`] for more information.
@@ -26,7 +29,7 @@ pub const CONSENSUS_EVENT_CHAN_CAPACITY: usize = 32;
 #[derive(Debug, Clone)]
 pub enum Event {
     /// The DAG frontier has updated
-    NewFrontier(Frontier),
+    NewFrontier(Vec<VertexHash>),
 }
 
 /// Actions that can be performed by the consensus process
@@ -90,7 +93,6 @@ impl GenesisConfig {
             version: 0,
             difficulty: self.difficulty,
             miner: PeerId::from_multihash(Multihash::default()).unwrap(),
-            parents: Vec::new(),
             inputs: Vec::new(),
             time: self.time,
             nonce: 0,
@@ -176,11 +178,6 @@ impl Runtime {
 
         // Wait until the events channel has listeners, before initializing the DAG
         while self.events_out.receiver_count() == 0 {}
-        self.dag
-            .write()
-            .unwrap()
-            .init()
-            .expect("failed to initialize the DAG");
 
         // Handle consensus events
         loop {
@@ -216,7 +213,7 @@ impl Runtime {
                             match self.p2p_action_ch
                                 .send(p2p::Action::Broadcast(p2p::MessageData::Block(block.clone())))
                                 .map_err(Error::from)
-                                .and_then(|_| self.check_and_insert_block(block, None)) {
+                                .and_then(|_| self.try_register_block(Arc::new(block), true)) {
                                 Ok(_) => {},
                                 Err(Error::P2pActionCh(e)) => return error!("Stopping due to p2p_action channel error: {e}"),
                                 Err(e) => error!("Failed to insert mined block {hash}: {e}"),
@@ -228,9 +225,8 @@ impl Runtime {
         }
     }
 
-    /// Try to insert a block as a new vertex in the DAG. Returns true if the vertex is considered
-    /// strongly preffered, according to Avalanche consensus.
-    fn check_and_insert_block(&mut self, block: Block, sender: Option<PeerId>) -> Result<bool> {
+    /// Try to registera block with the DAG as available for insertion.
+    fn try_register_block(&mut self, block: Arc<Block>, build_vertex: bool) -> Result<()> {
         block
             .verify_pow(&self.randomx_vm)
             .map_err(Error::from)
@@ -239,7 +235,7 @@ impl Runtime {
                 self.dag
                     .write()
                     .map_err(|_| Error::DAGWriteLock)?
-                    .try_insert_block(block, sender)
+                    .register_block(block, build_vertex)
                     .map_err(Error::from)
             })
     }
@@ -251,13 +247,22 @@ impl Runtime {
         let ignore = msg.ignore();
         let reject = msg.reject();
         match msg.data {
-            p2p::MessageData::Block(block) => {
-                match self.check_and_insert_block(block, Some(msg.msg_source)) {
-                    Err(Error::Avalanche(avalanche::Error::MissingParents(_))) => Ok(ignore),
-                    Err(_) => Ok(reject),
-                    Ok(_) => Ok(accept),
-                }
-            }
+            p2p::MessageData::Block(block) => match self.try_register_block(Arc::new(block), false)
+            {
+                Err(Error::Avalanche(avalanche::Error::MissingParents(_))) => Ok(ignore),
+                Err(_) => Ok(reject),
+                Ok(_) => Ok(accept),
+            },
+            p2p::MessageData::Vertex(vertex) => match self
+                .dag
+                .write()
+                .map_err(|_| Error::DAGWriteLock)?
+                .try_insert_vertex(Arc::new(vertex), Some(msg.msg_source))
+            {
+                Err(avalanche::Error::MissingParents(_)) => Ok(ignore),
+                Err(_) => Ok(reject),
+                Ok(_) => Ok(accept),
+            },
         }
     }
 }

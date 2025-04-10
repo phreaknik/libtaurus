@@ -4,8 +4,9 @@ package avalanche.proto;
 // Request message type
 message Request {
 	oneof RequestData {
-		BlockID get_block = 0;
-		BlockID get_preference = 1;
+		Hash get_block = 0;
+		Hash get_vertex = 1;
+		Hash get_preference = 2;
 	}
 }
 
@@ -19,12 +20,13 @@ message Response {
 	oneof ResponseData {
 		Error error = 0;
 		Block block = 1;
-		Preference preference = 2;
+		Vertex vertex = 2;
+		Preference preference = 3;
 	}
 }
 
 // Inner message types
-message BlockID {
+message Hash {
   bytes hash = 0;
 }
 
@@ -37,8 +39,13 @@ message Block {
   uint32 version = 0;
 	uint64 difficulty = 1;
 	bytes miner = 2;
-	repeated bytes parents = 3;
-  repeated bytes inputs = 4;
-	bytes time = 5;
-	uint64 nonce = 6;
+  repeated bytes inputs = 3;
+	bytes time = 4;
+	uint64 nonce = 5;
+}
+
+message Vertex {
+  uint32 version = 0;
+	repeated bytes parents = 1;
+  bytes block_hash = 2;
 }
