@@ -1,5 +1,5 @@
 use super::Error;
-use crate::{consensus::Block, WireVertex};
+use crate::consensus::WireVertex;
 use libp2p::{
     gossipsub::{self, MessageAcceptance, MessageId, Sha256Topic, TopicHash},
     PeerId,
@@ -76,7 +76,6 @@ pub struct MessageValidationReport {
 
 #[derive(Clone, Debug, Serialize, Deserialize, EnumIter, AsRefStr)]
 pub enum MessageData {
-    Block(Block),
     Vertex(WireVertex),
 }
 

@@ -1,8 +1,8 @@
 use super::proto;
 use super::Error;
 use crate::consensus::{Block, BlockHash};
+use crate::SlimVertex;
 use crate::VertexHash;
-use crate::WireVertex;
 use std::fmt;
 use std::sync::Arc;
 use strum_macros::EnumIter;
@@ -64,8 +64,8 @@ impl fmt::Display for Request {
 #[derive(Debug, Clone)]
 pub enum Response {
     Error(proto::mod_Response::Error),
-    Block(Arc<Block>),
-    Vertex(Arc<WireVertex>),
+    Block(Block),
+    Vertex(Arc<SlimVertex>),
     Preference(VertexHash, bool),
 }
 
@@ -96,10 +96,10 @@ impl Response {
         match resp.ResponseData {
             proto::mod_Response::OneOfResponseData::error(e) => Ok(Response::Error(e)),
             proto::mod_Response::OneOfResponseData::block(b) => {
-                Ok(Response::Block(Arc::new(Block::from_protobuf(b)?)))
+                Ok(Response::Block(Block::from_protobuf(b)?))
             }
             proto::mod_Response::OneOfResponseData::vertex(v) => {
-                Ok(Response::Vertex(Arc::new(WireVertex::from_protobuf(v)?)))
+                Ok(Response::Vertex(Arc::new(SlimVertex::from_protobuf(v)?)))
             }
             proto::mod_Response::OneOfResponseData::preference(h) => Ok(Response::Preference(
                 VertexHash::from_protobuf(&h.hash.ok_or(Error::IncompleteResponse)?)?,

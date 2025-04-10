@@ -1,5 +1,5 @@
 use super::{block, vertex, Block, BlockHash};
-use crate::{VertexHash, WireVertex};
+use crate::{VertexHash, SlimVertex};
 use heed::{Database, Env, EnvOpenOptions, RwTxn};
 use itertools::Itertools;
 use libp2p::PeerId;
@@ -34,7 +34,7 @@ pub struct ConsensusDb {
     pub block_db: Database<BlockHash, Block>,
     pub vertex_env: Env,
     /// Database of vertices
-    pub vertex_db: Database<VertexHash, WireVertex>,
+    pub vertex_db: Database<VertexHash, SlimVertex>,
     pub links_env: Env,
     /// Database of links between blocks and vertices
     pub links_db: Database<BlockHash, VertexHash>,
@@ -117,7 +117,7 @@ impl ConsensusDb {
     /// May optionally pass in an existing write transaction, to add this to a batch of writes
     /// Must call ['heed::RwTxn::commit'] on the resulting ['RwTxn'] for the database write to
     /// complete.
-    pub fn write_vertex<'a>(&'a mut self, vertex: &WireVertex) -> Result<()> {
+    pub fn write_vertex<'a>(&'a mut self, vertex: &SlimVertex) -> Result<()> {
         let vhash = vertex.hash()?;
         let mut wtxn_l = self.links_env.write_txn().unwrap();
         let mut wtxn_v = self.vertex_env.write_txn().unwrap();
@@ -127,7 +127,7 @@ impl ConsensusDb {
     }
 
     /// Read a vertex from the database
-    pub fn read_vertex<'a>(&'a mut self, vhash: &VertexHash) -> Result<Option<WireVertex>> {
+    pub fn read_vertex<'a>(&'a mut self, vhash: &VertexHash) -> Result<Option<SlimVertex>> {
         let mut rtxn = self.vertex_env.read_txn().unwrap();
         Ok(self.vertex_db.get(&mut rtxn, vhash)?)
     }

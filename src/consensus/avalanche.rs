@@ -1,4 +1,4 @@
-use super::{block, database::ConsensusDb, vertex, Block, BlockHash, Event, Vertex, WireVertex};
+use super::{block, database::ConsensusDb, vertex, Block, BlockHash, Event, SlimVertex, Vertex};
 use crate::{
     p2p::{self, avalanche_rpc},
     params::{AVALANCHE_QUERY_COUNT, AVALANCHE_QUORUM, MAX_QUERY_MINER_AGE, QUERY_TIMEOUT_SEC},
@@ -136,7 +136,7 @@ impl DAG {
 
     /// Register a block as available to be inserted into the DAG. This must occur before a vertex
     /// referencing this block can be inserted.
-    pub fn register_block(&mut self, block: Arc<Block>, build_vertex: bool) -> Result<()> {
+    pub fn submit_block(&mut self, block: Block, build_vertex: bool) -> Result<()> {
         // TODO: need to check pow, difficulty, block validity, etc
         let bhash = block.hash()?;
         if let Ok(Some(_)) = self.database.read_block(&bhash) {
@@ -145,14 +145,14 @@ impl DAG {
         } else {
             // Otherwise add it to the list of undecided blocks
             info!("Registered new block {}", bhash.to_hex());
-            self.undecided_blocks.insert(bhash, block);
+            self.undecided_blocks.insert(bhash, Arc::new(block.clone()));
             if build_vertex {
-                let wire_vertex =
-                    Arc::new(WireVertex::new(bhash, self.frontier.values().cloned())?);
-                self.try_insert_vertex(wire_vertex.clone(), None)?;
+                let slim_vertex =
+                    Arc::new(SlimVertex::new(bhash, self.frontier.values().cloned())?);
+                self.try_insert_vertex(slim_vertex.clone(), None)?;
                 self.p2p_action_ch
                     .send(p2p::Action::Broadcast(p2p::MessageData::Vertex(
-                        (*wire_vertex).clone(),
+                        slim_vertex.to_wire(block)?,
                     )))?;
             }
             Ok(())
@@ -163,11 +163,11 @@ impl DAG {
     /// indicating if the vertex is currently preferred.
     pub fn try_insert_vertex(
         &mut self,
-        wire_vertex: Arc<WireVertex>,
+        slim_vertex: Arc<SlimVertex>,
         sender: Option<PeerId>,
     ) -> Result<bool> {
         // First see if we already have this vertex
-        let vhash = wire_vertex.hash()?;
+        let vhash = slim_vertex.hash()?;
         if let Ok((_vertex, preferred)) = self.get_vertex(&vhash) {
             return Ok(preferred);
         }
@@ -194,14 +194,14 @@ impl DAG {
             .cache_set(vhash, Scorecard::new_with_voters(voters));
 
         // Create a new undecided vertex object and insert it into the DAG
-        let rw_vertex = match self.create_undecided_vertex(wire_vertex.clone()) {
+        let rw_vertex = match self.create_undecided_vertex(slim_vertex.clone()) {
             Err(Error::NotFound) | Err(Error::MissingParents(_)) => {
                 debug!("Vertex {vhash} is missing block or parents");
-                self.waitlist.insert(wire_vertex.clone())?;
+                self.waitlist.insert(slim_vertex.clone())?;
                 if let Some(peer) = sender {
                     // Initiate lookup for missing data
                     // TODO: Lookup should fail over to another mechanism if this peer fails
-                    self.request_missing_data(wire_vertex, peer)?;
+                    self.request_missing_data(slim_vertex, peer)?;
                 }
                 Err(Error::MissingData)
             }
@@ -264,16 +264,16 @@ impl DAG {
         self.is_strongly_preferred(&vhash)
     }
 
-    fn request_missing_data(&mut self, wire_vertex: Arc<WireVertex>, peer: PeerId) -> Result<()> {
+    fn request_missing_data(&mut self, slim_vertex: Arc<SlimVertex>, peer: PeerId) -> Result<()> {
         // Look up block if missing
-        if let Err(Error::NotFound) = self.get_block(&wire_vertex.block_hash) {
+        if let Err(Error::NotFound) = self.get_block(&slim_vertex.block_hash) {
             self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
                 peer,
-                avalanche_rpc::Request::GetBlock(wire_vertex.block_hash),
+                avalanche_rpc::Request::GetBlock(slim_vertex.block_hash),
             ))?;
         }
         // Lookup any missing parents
-        for &parent in wire_vertex
+        for &parent in slim_vertex
             .parents
             .iter()
             .filter(|vhash| {
@@ -296,20 +296,20 @@ impl DAG {
         Ok(())
     }
 
-    /// Build a ['Vertex'] from a ['WireVertex'] and link it to the other vertices in the DAG
+    /// Build a ['Vertex'] from a ['SlimVertex'] and link it to the other vertices in the DAG
     fn create_undecided_vertex(
         &mut self,
-        wire_vertex: Arc<WireVertex>,
+        slim_vertex: Arc<SlimVertex>,
     ) -> Result<Arc<TracingRwLock<Vertex>>> {
         // Only create undecided vertices from undecided blocks. If a block is not known or has
         // already been finalized, there is no need to create a vertex object.
         let block = self
             .undecided_blocks
-            .get(&wire_vertex.block_hash)
+            .get(&slim_vertex.block_hash)
             .ok_or(Error::NotFound)?;
         let rw_vertex = Arc::new(TracingRwLock::new(Vertex::new(
             block.clone(),
-            wire_vertex.parents.clone(),
+            slim_vertex.parents.clone(),
         )));
         self.fill_undecided_parents(rw_vertex.clone())?;
         Ok(rw_vertex)
@@ -349,7 +349,7 @@ impl DAG {
     }
 
     /// Look up a block from the DAG
-    pub fn get_vertex(&mut self, vhash: &VertexHash) -> Result<(Arc<WireVertex>, bool)> {
+    pub fn get_vertex(&mut self, vhash: &VertexHash) -> Result<(Arc<SlimVertex>, bool)> {
         match self.vertices.get(vhash) {
             Some(vertex) => Ok((
                 Arc::new(
@@ -407,7 +407,7 @@ impl DAG {
             avalanche_rpc::Request::GetBlock(bhash) => match self.get_block(&bhash) {
                 Ok(block) => {
                     trace!("Sending block response {bhash}={block:?}");
-                    Ok(Some(avalanche_rpc::Response::Block(block)))
+                    Ok(Some(avalanche_rpc::Response::Block((*block).clone())))
                 }
                 Err(Error::NotFound) => {
                     debug!("Unable to find requested block: {bhash}");
@@ -472,16 +472,16 @@ impl DAG {
                 if let Ok(bhash) = block.hash() {
                     debug!("received block response {bhash}={block:?}");
                     // TODO: need to check POW here
-                    if let Err(e) = self.register_block(block, false) {
+                    if let Err(e) = self.submit_block(block, false) {
                         debug!("unable to insert requested block {bhash}: {e}");
                     }
                 }
             }
-            avalanche_rpc::Response::Vertex(wire_vertex) => {
-                if let Ok(vhash) = wire_vertex.hash() {
-                    debug!("received vertex response {vhash}={wire_vertex:?}");
+            avalanche_rpc::Response::Vertex(slim_vertex) => {
+                if let Ok(vhash) = slim_vertex.hash() {
+                    debug!("received vertex response {vhash}={slim_vertex:?}");
                     // TODO: need to check POW here
-                    if let Err(e) = self.try_insert_vertex(wire_vertex, Some(from_peer)) {
+                    if let Err(e) = self.try_insert_vertex(slim_vertex, Some(from_peer)) {
                         debug!("unable to insert requested vertex {vhash}: {e}");
                     }
                 }
@@ -614,7 +614,7 @@ impl DAG {
 ///
 /// The list is constructed as a map of <K, V>, where K is the hash of a vertex, and V is a list
 /// child vertices which depend on that vertex.
-struct WaitList(TracingRwLock<LruCache<VertexHash, Vec<Arc<WireVertex>>>>);
+struct WaitList(TracingRwLock<LruCache<VertexHash, Vec<Arc<SlimVertex>>>>);
 
 impl WaitList {
     /// Create a new waitlist
@@ -623,15 +623,15 @@ impl WaitList {
     }
 
     /// Inserts a new vertex into the waitlist.
-    fn insert(&mut self, wire_vertex: Arc<WireVertex>) -> Result<()> {
+    fn insert(&mut self, slim_vertex: Arc<SlimVertex>) -> Result<()> {
         let mut cache = self.0.write().map_err(|_| Error::WaitlistWriteLock)?;
-        for &parent_hash in wire_vertex.clone().parents.iter() {
+        for &parent_hash in slim_vertex.clone().parents.iter() {
             if let Some(parent_queue) = cache.get_mut(&parent_hash) {
                 // Add this vertex as a descendent in the parent's queue
-                parent_queue.push(wire_vertex.clone());
+                parent_queue.push(slim_vertex.clone());
             } else {
                 // Insert a new entry
-                if let Some(evicted) = cache.put(parent_hash, vec![wire_vertex.clone()]) {
+                if let Some(evicted) = cache.put(parent_hash, vec![slim_vertex.clone()]) {
                     warn!("Waitlist unexpectedly evicted vertices: {evicted:?}")
                 }
             }
@@ -640,7 +640,7 @@ impl WaitList {
     }
 
     /// Remove an entry from the list, and return the vertices which were waiting on it
-    fn remove(&mut self, vhash: &VertexHash) -> Result<Option<Vec<Arc<WireVertex>>>> {
+    fn remove(&mut self, vhash: &VertexHash) -> Result<Option<Vec<Arc<SlimVertex>>>> {
         Ok(self
             .0
             .write()

@@ -63,6 +63,8 @@ pub enum Error {
     P2pActionCh(#[from] tokio::sync::mpsc::error::SendError<p2p::Action>),
     #[error(transparent)]
     RandomX(#[from] randomx::Error),
+    #[error(transparent)]
+    Vertex(#[from] vertex::Error),
 }
 
 /// Result type for consensus errors
@@ -210,34 +212,26 @@ impl Runtime {
                         Action::SubmitBlock(block) => {
                             // Immediately forward the block on to our peers
                             let hash = block.hash().unwrap();
-                            match self.p2p_action_ch
-                                .send(p2p::Action::Broadcast(p2p::MessageData::Block(block.clone())))
+                            match block
+                                .verify_pow(&self.randomx_vm)
                                 .map_err(Error::from)
-                                .and_then(|_| self.try_register_block(Arc::new(block), true)) {
+                                .and_then(|_| {
+                                    // Insert the vertex into the DAG
+                                    self.dag
+                                        .write()
+                                        .map_err(|_| Error::DAGWriteLock)?
+                                        .submit_block(block, true)
+                                        .map_err(Error::from)
+                                }) {
                                 Ok(_) => {},
                                 Err(Error::P2pActionCh(e)) => return error!("Stopping due to p2p_action channel error: {e}"),
-                                Err(e) => error!("Failed to insert mined block {hash}: {e}"),
+                                Err(e) => error!("Failed to submit mined block {hash}: {e}"),
                             }
                         }
                     }
                 },
             }
         }
-    }
-
-    /// Try to registera block with the DAG as available for insertion.
-    fn try_register_block(&mut self, block: Arc<Block>, build_vertex: bool) -> Result<()> {
-        block
-            .verify_pow(&self.randomx_vm)
-            .map_err(Error::from)
-            .and_then(|_| {
-                // Insert the vertex into the DAG
-                self.dag
-                    .write()
-                    .map_err(|_| Error::DAGWriteLock)?
-                    .register_block(block, build_vertex)
-                    .map_err(Error::from)
-            })
     }
 
     /// Handle a message from the peer to peer network, and generate a validation report back to the
@@ -247,22 +241,18 @@ impl Runtime {
         let ignore = msg.ignore();
         let reject = msg.reject();
         match msg.data {
-            p2p::MessageData::Block(block) => match self.try_register_block(Arc::new(block), false)
-            {
-                Err(Error::Avalanche(avalanche::Error::MissingParents(_))) => Ok(ignore),
-                Err(_) => Ok(reject),
-                Ok(_) => Ok(accept),
-            },
-            p2p::MessageData::Vertex(vertex) => match self
-                .dag
-                .write()
-                .map_err(|_| Error::DAGWriteLock)?
-                .try_insert_vertex(Arc::new(vertex), Some(msg.msg_source))
-            {
-                Err(avalanche::Error::MissingParents(_)) => Ok(ignore),
-                Err(_) => Ok(reject),
-                Ok(_) => Ok(accept),
-            },
+            p2p::MessageData::Vertex(wire_vertex) => {
+                let mut dag = self.dag.write().map_err(|_| Error::DAGWriteLock)?;
+                let slim = SlimVertex::try_from(&wire_vertex)?;
+                match dag
+                    .submit_block(wire_vertex.block, false)
+                    .and_then(|_| dag.try_insert_vertex(Arc::new(slim), Some(msg.msg_source)))
+                {
+                    Err(avalanche::Error::MissingParents(_)) => Ok(ignore),
+                    Err(_) => Ok(reject),
+                    Ok(_) => Ok(accept),
+                }
+            }
         }
     }
 }

@@ -13,6 +13,8 @@ pub const VERSION: u32 = 32;
 /// Error type for vertex errors
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    #[error("bad hash")]
+    BadHash,
     #[error(transparent)]
     Block(#[from] block::Error),
     #[error(transparent)]
@@ -77,7 +79,7 @@ impl Vertex {
 
     /// Compute the hash of the vertex
     pub fn hash(&self) -> Result<VertexHash> {
-        WireVertex::try_from(self)?.hash()
+        SlimVertex::try_from(self)?.hash()
     }
 
     /// Increase the confidences of this vertex and all undecided ancestors. Returns the hashes of
@@ -194,21 +196,54 @@ impl Default for VertexHash {
     }
 }
 
-/// A reduced representation of a vertex, suitable for encoding for wire transmision.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct WireVertex {
+    pub version: u32,
+    pub parents: Vec<VertexHash>,
+    pub block: Block,
+}
+
+impl WireVertex {
+    /// Construct a new vertex for a block at the given frontire
+    pub fn new<F>(block: Block, frontier: F) -> Result<WireVertex>
+    where
+        F: Iterator<Item = Arc<TracingRwLock<Vertex>>>,
+    {
+        Ok(WireVertex {
+            version: VERSION,
+            parents: frontier
+                .map(|rw_vertex| {
+                    rw_vertex
+                        .read()
+                        .map_err(|_| Error::VertexReadLock)
+                        .and_then(|v| v.hash())
+                })
+                .try_collect()?,
+            block,
+        })
+    }
+
+    /// Compute the hash of the vertex
+    pub fn hash(&self) -> Result<VertexHash> {
+        SlimVertex::try_from(self)?.hash()
+    }
+}
+
+/// A reduced representation of a vertex, suitable for encoding for wire transmision.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct SlimVertex {
     pub version: u32,
     pub parents: Vec<VertexHash>,
     pub block_hash: BlockHash,
 }
 
-impl WireVertex {
+impl SlimVertex {
     /// Construct a new vertex for a block at the given frontire
-    pub fn new<F>(block_hash: BlockHash, frontier: F) -> Result<WireVertex>
+    pub fn new<F>(block_hash: BlockHash, frontier: F) -> Result<SlimVertex>
     where
         F: Iterator<Item = Arc<TracingRwLock<Vertex>>>,
     {
-        Ok(WireVertex {
+        Ok(SlimVertex {
             version: VERSION,
             parents: frontier
                 .map(|rw_vertex| {
@@ -228,8 +263,8 @@ impl WireVertex {
     }
 
     /// Deserialize from protobuf format
-    pub fn from_protobuf(vertex: p2p::avalanche_rpc::proto::Vertex) -> Result<WireVertex> {
-        Ok(WireVertex {
+    pub fn from_protobuf(vertex: p2p::avalanche_rpc::proto::Vertex) -> Result<SlimVertex> {
+        Ok(SlimVertex {
             version: vertex.version,
             parents: vertex
                 .parents
@@ -252,25 +287,58 @@ impl WireVertex {
             block_hash: Some(self.block_hash.to_protobuf()?),
         })
     }
+
+    /// Inflate the SlimVertex into a ['WireVertex']
+    pub fn to_wire(&self, block: Block) -> Result<WireVertex> {
+        if self.block_hash != block.hash()? {
+            Err(Error::BadHash)
+        } else {
+            Ok(WireVertex {
+                version: self.version,
+                parents: self.parents.clone(),
+                block,
+            })
+        }
+    }
 }
 
-impl TryFrom<TracingRwLockGuard<'_, std::sync::RwLockWriteGuard<'_, Vertex>>> for WireVertex {
+impl TryFrom<WireVertex> for SlimVertex {
+    type Error = Error;
+
+    fn try_from(wv: WireVertex) -> result::Result<Self, Self::Error> {
+        SlimVertex::try_from(&wv)
+    }
+}
+
+impl TryFrom<&WireVertex> for SlimVertex {
+    type Error = Error;
+
+    fn try_from(wv: &WireVertex) -> result::Result<Self, Self::Error> {
+        Ok(SlimVertex {
+            version: wv.version,
+            parents: wv.parents.clone(),
+            block_hash: wv.block.hash()?,
+        })
+    }
+}
+
+impl TryFrom<TracingRwLockGuard<'_, std::sync::RwLockWriteGuard<'_, Vertex>>> for SlimVertex {
     type Error = Error;
 
     fn try_from(
         vertex: TracingRwLockGuard<'_, std::sync::RwLockWriteGuard<'_, Vertex>>,
     ) -> result::Result<Self, Self::Error> {
-        WireVertex::try_from(&vertex)
+        SlimVertex::try_from(&vertex)
     }
 }
 
-impl TryFrom<&TracingRwLockGuard<'_, std::sync::RwLockWriteGuard<'_, Vertex>>> for WireVertex {
+impl TryFrom<&TracingRwLockGuard<'_, std::sync::RwLockWriteGuard<'_, Vertex>>> for SlimVertex {
     type Error = Error;
 
     fn try_from(
         vertex: &TracingRwLockGuard<'_, std::sync::RwLockWriteGuard<'_, Vertex>>,
     ) -> result::Result<Self, Self::Error> {
-        Ok(WireVertex {
+        Ok(SlimVertex {
             version: vertex.version,
             parents: vertex.parents.clone(),
             block_hash: vertex.block.hash()?,
@@ -278,23 +346,23 @@ impl TryFrom<&TracingRwLockGuard<'_, std::sync::RwLockWriteGuard<'_, Vertex>>> f
     }
 }
 
-impl TryFrom<TracingRwLockGuard<'_, std::sync::RwLockReadGuard<'_, Vertex>>> for WireVertex {
+impl TryFrom<TracingRwLockGuard<'_, std::sync::RwLockReadGuard<'_, Vertex>>> for SlimVertex {
     type Error = Error;
 
     fn try_from(
         vertex: TracingRwLockGuard<'_, std::sync::RwLockReadGuard<'_, Vertex>>,
     ) -> result::Result<Self, Self::Error> {
-        WireVertex::try_from(&vertex)
+        SlimVertex::try_from(&vertex)
     }
 }
 
-impl TryFrom<&TracingRwLockGuard<'_, std::sync::RwLockReadGuard<'_, Vertex>>> for WireVertex {
+impl TryFrom<&TracingRwLockGuard<'_, std::sync::RwLockReadGuard<'_, Vertex>>> for SlimVertex {
     type Error = Error;
 
     fn try_from(
         vertex: &TracingRwLockGuard<'_, std::sync::RwLockReadGuard<'_, Vertex>>,
     ) -> result::Result<Self, Self::Error> {
-        Ok(WireVertex {
+        Ok(SlimVertex {
             version: vertex.version,
             parents: vertex.parents.clone(),
             block_hash: vertex.block.hash()?,
@@ -302,19 +370,19 @@ impl TryFrom<&TracingRwLockGuard<'_, std::sync::RwLockReadGuard<'_, Vertex>>> fo
     }
 }
 
-impl TryFrom<Vertex> for WireVertex {
+impl TryFrom<Vertex> for SlimVertex {
     type Error = Error;
 
     fn try_from(vertex: Vertex) -> result::Result<Self, Self::Error> {
-        WireVertex::try_from(&vertex)
+        SlimVertex::try_from(&vertex)
     }
 }
 
-impl TryFrom<&Vertex> for WireVertex {
+impl TryFrom<&Vertex> for SlimVertex {
     type Error = Error;
 
     fn try_from(vertex: &Vertex) -> result::Result<Self, Self::Error> {
-        Ok(WireVertex {
+        Ok(SlimVertex {
             version: vertex.version,
             parents: vertex.parents.clone(),
             block_hash: vertex.block.hash()?,
@@ -322,8 +390,8 @@ impl TryFrom<&Vertex> for WireVertex {
     }
 }
 
-impl<'a> BytesEncode<'a> for WireVertex {
-    type EItem = WireVertex;
+impl<'a> BytesEncode<'a> for SlimVertex {
+    type EItem = SlimVertex;
 
     fn bytes_encode(
         item: &'a Self::EItem,
@@ -332,8 +400,8 @@ impl<'a> BytesEncode<'a> for WireVertex {
     }
 }
 
-impl<'a> BytesDecode<'a> for WireVertex {
-    type DItem = WireVertex;
+impl<'a> BytesDecode<'a> for SlimVertex {
+    type DItem = SlimVertex;
 
     fn bytes_decode(
         bytes: &'a [u8],
