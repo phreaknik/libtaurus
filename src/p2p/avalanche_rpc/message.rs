@@ -21,19 +21,13 @@ impl Request {
         Ok(proto::Request {
             RequestData: match self {
                 Request::GetBlock(hash) => {
-                    proto::mod_Request::OneOfRequestData::get_block(proto::Hash {
-                        hash: rmp_serde::to_vec(&hash)?,
-                    })
+                    proto::mod_Request::OneOfRequestData::get_block(hash.to_protobuf()?)
                 }
                 Request::GetVertex(hash) => {
-                    proto::mod_Request::OneOfRequestData::get_vertex(proto::Hash {
-                        hash: rmp_serde::to_vec(&hash)?,
-                    })
+                    proto::mod_Request::OneOfRequestData::get_vertex(hash.to_protobuf()?)
                 }
                 Request::GetPreference(hash) => {
-                    proto::mod_Request::OneOfRequestData::get_preference(proto::Hash {
-                        hash: rmp_serde::to_vec(&hash)?,
-                    })
+                    proto::mod_Request::OneOfRequestData::get_preference(hash.to_protobuf()?)
                 }
             },
         })
@@ -42,15 +36,15 @@ impl Request {
     /// Convert a Request from protobuf format
     pub fn from_protobuf(req: proto::Request) -> Result<Self, Error> {
         match req.RequestData {
-            proto::mod_Request::OneOfRequestData::get_block(message) => Ok(Request::GetBlock(
-                rmp_serde::from_slice(message.hash.as_slice())?,
-            )),
-            proto::mod_Request::OneOfRequestData::get_vertex(message) => Ok(Request::GetVertex(
-                rmp_serde::from_slice(message.hash.as_slice())?,
-            )),
-            proto::mod_Request::OneOfRequestData::get_preference(message) => Ok(
-                Request::GetPreference(rmp_serde::from_slice(message.hash.as_slice())?),
-            ),
+            proto::mod_Request::OneOfRequestData::get_block(message) => {
+                Ok(Request::GetBlock(BlockHash::from_protobuf(&message)?))
+            }
+            proto::mod_Request::OneOfRequestData::get_vertex(message) => {
+                Ok(Request::GetVertex(VertexHash::from_protobuf(&message)?))
+            }
+            proto::mod_Request::OneOfRequestData::get_preference(message) => {
+                Ok(Request::GetPreference(VertexHash::from_protobuf(&message)?))
+            }
             proto::mod_Request::OneOfRequestData::None => Err(super::Error::IncompleteRequest),
         }
     }
@@ -89,7 +83,7 @@ impl Response {
                 }
                 Response::Preference(hash, preferred) => {
                     proto::mod_Response::OneOfResponseData::preference(proto::Preference {
-                        hash: rmp_serde::to_vec(&hash)?,
+                        hash: Some(hash.to_protobuf()?),
                         preferred,
                     })
                 }
@@ -108,7 +102,7 @@ impl Response {
                 Ok(Response::Vertex(Arc::new(WireVertex::from_protobuf(v)?)))
             }
             proto::mod_Response::OneOfResponseData::preference(h) => Ok(Response::Preference(
-                rmp_serde::from_slice(&h.hash)?,
+                VertexHash::from_protobuf(&h.hash.ok_or(Error::IncompleteResponse)?)?,
                 h.preferred,
             )),
             proto::mod_Response::OneOfResponseData::None => Err(super::Error::IncompleteResponse),

@@ -31,7 +31,7 @@ message Hash {
 }
 
 message Preference {
-  bytes hash = 0;
+  Hash hash = 0;
   bool preferred = 1;
 }
 
@@ -46,6 +46,6 @@ message Block {
 
 message Vertex {
   uint32 version = 0;
-	repeated bytes parents = 1;
-  bytes block_hash = 2;
+	repeated Hash parents = 1;
+  Hash block_hash = 2;
 }

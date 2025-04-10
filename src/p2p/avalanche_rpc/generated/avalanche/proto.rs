@@ -203,7 +203,7 @@ impl MessageWrite for Hash {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct Preference {
-    pub hash: Vec<u8>,
+    pub hash: Option<avalanche::proto::Hash>,
     pub preferred: bool,
 }
 
@@ -212,7 +212,7 @@ impl<'a> MessageRead<'a> for Preference {
         let mut msg = Self::default();
         while !r.is_eof() {
             match r.next_tag(bytes) {
-                Ok(2) => msg.hash = r.read_bytes(bytes)?.to_owned(),
+                Ok(2) => msg.hash = Some(r.read_message::<avalanche::proto::Hash>(bytes)?),
                 Ok(8) => msg.preferred = r.read_bool(bytes)?,
                 Ok(t) => { r.read_unknown(bytes, t)?; }
                 Err(e) => return Err(e),
@@ -225,12 +225,12 @@ impl<'a> MessageRead<'a> for Preference {
 impl MessageWrite for Preference {
     fn get_size(&self) -> usize {
         0
-        + if self.hash.is_empty() { 0 } else { 1 + sizeof_len((&self.hash).len()) }
+        + self.hash.as_ref().map_or(0, |m| 1 + sizeof_len((m).get_size()))
         + if self.preferred == false { 0 } else { 1 + sizeof_varint(*(&self.preferred) as u64) }
     }
 
     fn write_message<W: WriterBackend>(&self, w: &mut Writer<W>) -> Result<()> {
-        if !self.hash.is_empty() { w.write_with_tag(2, |w| w.write_bytes(&**&self.hash))?; }
+        if let Some(ref s) = self.hash { w.write_with_tag(2, |w| w.write_message(s))?; }
         if self.preferred != false { w.write_with_tag(8, |w| w.write_bool(*&self.preferred))?; }
         Ok(())
     }
@@ -292,8 +292,8 @@ impl MessageWrite for Block {
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct Vertex {
     pub version: u32,
-    pub parents: Vec<Vec<u8>>,
-    pub block_hash: Vec<u8>,
+    pub parents: Vec<avalanche::proto::Hash>,
+    pub block_hash: Option<avalanche::proto::Hash>,
 }
 
 impl<'a> MessageRead<'a> for Vertex {
@@ -302,8 +302,8 @@ impl<'a> MessageRead<'a> for Vertex {
         while !r.is_eof() {
             match r.next_tag(bytes) {
                 Ok(0) => msg.version = r.read_uint32(bytes)?,
-                Ok(10) => msg.parents.push(r.read_bytes(bytes)?.to_owned()),
-                Ok(18) => msg.block_hash = r.read_bytes(bytes)?.to_owned(),
+                Ok(10) => msg.parents.push(r.read_message::<avalanche::proto::Hash>(bytes)?),
+                Ok(18) => msg.block_hash = Some(r.read_message::<avalanche::proto::Hash>(bytes)?),
                 Ok(t) => { r.read_unknown(bytes, t)?; }
                 Err(e) => return Err(e),
             }
@@ -316,14 +316,14 @@ impl MessageWrite for Vertex {
     fn get_size(&self) -> usize {
         0
         + if self.version == 0u32 { 0 } else { 1 + sizeof_varint(*(&self.version) as u64) }
-        + self.parents.iter().map(|s| 1 + sizeof_len((s).len())).sum::<usize>()
-        + if self.block_hash.is_empty() { 0 } else { 1 + sizeof_len((&self.block_hash).len()) }
+        + self.parents.iter().map(|s| 1 + sizeof_len((s).get_size())).sum::<usize>()
+        + self.block_hash.as_ref().map_or(0, |m| 1 + sizeof_len((m).get_size()))
     }
 
     fn write_message<W: WriterBackend>(&self, w: &mut Writer<W>) -> Result<()> {
         if self.version != 0u32 { w.write_with_tag(0, |w| w.write_uint32(*&self.version))?; }
-        for s in &self.parents { w.write_with_tag(10, |w| w.write_bytes(&**s))?; }
-        if !self.block_hash.is_empty() { w.write_with_tag(18, |w| w.write_bytes(&**&self.block_hash))?; }
+        for s in &self.parents { w.write_with_tag(10, |w| w.write_message(s))?; }
+        if let Some(ref s) = self.block_hash { w.write_with_tag(18, |w| w.write_message(s))?; }
         Ok(())
     }
 }

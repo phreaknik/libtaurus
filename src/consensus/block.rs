@@ -174,6 +174,18 @@ impl BlockHash {
     pub fn to_short_hex(&self) -> String {
         format!("{}..", hex::encode(&self.0[..4]))
     }
+
+    /// Serialize into protobuf format
+    pub fn to_protobuf(&self) -> Result<p2p::avalanche_rpc::proto::Hash> {
+        Ok(p2p::avalanche_rpc::proto::Hash {
+            hash: rmp_serde::to_vec(&self)?,
+        })
+    }
+
+    /// Deserialize from protobuf format
+    pub fn from_protobuf(proto: &p2p::avalanche_rpc::proto::Hash) -> Result<BlockHash> {
+        Ok(BlockHash(rmp_serde::from_slice(&proto.hash)?))
+    }
 }
 
 impl fmt::Display for BlockHash {
