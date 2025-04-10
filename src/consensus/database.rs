@@ -122,7 +122,7 @@ impl ConsensusDb {
         let mut wtxn_l = self.links_env.write_txn().unwrap();
         let mut wtxn_v = self.vertex_env.write_txn().unwrap();
         self.vertex_db.put(&mut wtxn_v, &vertex.hash()?, vertex)?;
-        self.links_db.put(&mut wtxn_l, &vertex.block, &vhash)?;
+        self.links_db.put(&mut wtxn_l, &vertex.block_hash, &vhash)?;
         Ok(())
     }
 

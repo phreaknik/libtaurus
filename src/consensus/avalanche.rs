@@ -266,10 +266,10 @@ impl DAG {
 
     fn request_missing_data(&mut self, wire_vertex: Arc<WireVertex>, peer: PeerId) -> Result<()> {
         // Look up block if missing
-        if let Err(Error::NotFound) = self.get_block(&wire_vertex.block) {
+        if let Err(Error::NotFound) = self.get_block(&wire_vertex.block_hash) {
             self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
                 peer,
-                avalanche_rpc::Request::GetBlock(wire_vertex.block),
+                avalanche_rpc::Request::GetBlock(wire_vertex.block_hash),
             ))?;
         }
         // Lookup any missing parents
@@ -305,7 +305,7 @@ impl DAG {
         // already been finalized, there is no need to create a vertex object.
         let block = self
             .undecided_blocks
-            .get(&wire_vertex.block)
+            .get(&wire_vertex.block_hash)
             .ok_or(Error::NotFound)?;
         let rw_vertex = Arc::new(TracingRwLock::new(Vertex::new(
             block.clone(),

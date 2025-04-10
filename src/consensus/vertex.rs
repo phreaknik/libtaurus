@@ -199,12 +199,12 @@ impl Default for VertexHash {
 pub struct WireVertex {
     pub version: u32,
     pub parents: Vec<VertexHash>,
-    pub block: BlockHash,
+    pub block_hash: BlockHash,
 }
 
 impl WireVertex {
     /// Construct a new vertex for a block at the given frontire
-    pub fn new<F>(bhash: BlockHash, frontier: F) -> Result<WireVertex>
+    pub fn new<F>(block_hash: BlockHash, frontier: F) -> Result<WireVertex>
     where
         F: Iterator<Item = Arc<TracingRwLock<Vertex>>>,
     {
@@ -218,7 +218,7 @@ impl WireVertex {
                         .and_then(|v| v.hash())
                 })
                 .try_collect()?,
-            block: bhash,
+            block_hash,
         })
     }
 
@@ -236,7 +236,7 @@ impl WireVertex {
                 .iter()
                 .map(|p| VertexHash::from_protobuf(&p))
                 .try_collect()?,
-            block: BlockHash::from_protobuf(
+            block_hash: BlockHash::from_protobuf(
                 &vertex
                     .block_hash
                     .ok_or(Error::ProtoDecode("missing block_hash".to_string()))?,
@@ -249,7 +249,7 @@ impl WireVertex {
         Ok(p2p::avalanche_rpc::proto::Vertex {
             version: self.version,
             parents: self.parents.iter().map(|p| p.to_protobuf()).try_collect()?,
-            block_hash: Some(self.block.to_protobuf()?),
+            block_hash: Some(self.block_hash.to_protobuf()?),
         })
     }
 }
@@ -273,7 +273,7 @@ impl TryFrom<&TracingRwLockGuard<'_, std::sync::RwLockWriteGuard<'_, Vertex>>> f
         Ok(WireVertex {
             version: vertex.version,
             parents: vertex.parents.clone(),
-            block: vertex.block.hash()?,
+            block_hash: vertex.block.hash()?,
         })
     }
 }
@@ -297,7 +297,7 @@ impl TryFrom<&TracingRwLockGuard<'_, std::sync::RwLockReadGuard<'_, Vertex>>> fo
         Ok(WireVertex {
             version: vertex.version,
             parents: vertex.parents.clone(),
-            block: vertex.block.hash()?,
+            block_hash: vertex.block.hash()?,
         })
     }
 }
@@ -317,7 +317,7 @@ impl TryFrom<&Vertex> for WireVertex {
         Ok(WireVertex {
             version: vertex.version,
             parents: vertex.parents.clone(),
-            block: vertex.block.hash()?,
+            block_hash: vertex.block.hash()?,
         })
     }
 }
