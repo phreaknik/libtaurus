@@ -2,7 +2,8 @@ use super::{database::BlocksDatabase, Block, BlockHash, Event};
 use crate::{
     p2p::{self, avalanche_rpc},
     params::{
-        self, AVALANCHE_QUERY_COUNT, AVALANCHE_QUORUM, MAX_QUERY_MINER_AGE, QUERY_TIMEOUT_SEC,
+        self, AVALANCHE_ACCEPTANCE_THRESHOLD, AVALANCHE_QUERY_COUNT, AVALANCHE_QUORUM,
+        MAX_QUERY_MINER_AGE, QUERY_TIMEOUT_SEC,
     },
 };
 use cached::{Cached, TimedCache};
@@ -214,12 +215,12 @@ impl DAG {
         vertex.preferred = preference;
 
         // Update each parent
-        for parent in &vertex.parents {
+        for parent in vertex.undecided_parents.values_mut() {
             parent
                 .write()
                 .map_err(|_| Error::VertexWriteLock)?
                 .children
-                .push(arc_vertex.clone());
+                .insert(hash, arc_vertex.clone());
         }
 
         // Update the conflict set for each transaction input
@@ -261,25 +262,33 @@ impl DAG {
         // Return true if this vertex is strongly preferred
         Ok(vertex.preferred
             && vertex
-                .parents
-                .iter()
+                .undecided_parents
+                .values()
                 .all(|v| v.read().unwrap().preferred == true))
     }
 
     /// Fill out parent links if the parents are present in the DAG
     fn link_parents(&mut self, arc_vertex: Arc<TracingRwLock<Vertex>>) -> Result<()> {
         let mut vertex = arc_vertex.write().map_err(|_| Error::VertexWriteLock)?;
-        Ok(vertex.parents = vertex
+        vertex.undecided_parents = vertex
             .block
             .parents
             .iter()
+            .filter(|&&hash| {
+                // Filter out any blocks already finalized in the database
+                self.database
+                    .read_block(hash)
+                    .expect("Database read error")
+                    .is_none()
+            })
             .map(|&hash| {
                 self.vertices
                     .get(&hash)
                     .ok_or(Error::MissingParents(vec![hash]))
-                    .map(|val| val.clone())
+                    .map(|vertex| (hash, vertex.clone()))
             })
-            .try_collect()?)
+            .try_collect()?;
+        Ok(())
     }
 
     /// Remove the specified entry from the waitlist, and retry inserting any of is descendents
@@ -384,36 +393,26 @@ impl DAG {
                     }
                     if scorecard.score >= AVALANCHE_QUORUM {
                         // Quorum has been reached. Award a chit and cancel the vote.
-                        self.vertices.get(&hash).and_then(|v| {
-                            v.write().map_err(|_| Error::VertexWriteLock).unwrap().chit = 1;
-                            Some(v)
-                        });
+                        let mut accepted_blocks = Vec::new();
+                        if let Some(v) = self.vertices.get(&hash) {
+                            let mut vertex = v.write().map_err(|_| Error::VertexWriteLock).unwrap();
+                            vertex.chit = 1;
+                            accepted_blocks.append(&mut vertex.increase_confidence());
+                        }
+                        self.finalize_blocks(accepted_blocks);
                         self.scorecards.cache_remove(&hash);
                     } else if scorecard.score + scorecard.pending.len() < AVALANCHE_QUORUM {
-                        // Quorum is not possible. Cancel the vote.
+                        // Quorum is not possible. Reset confidence and cancel the vote.
+                        if let Some(v) = self.vertices.get(&hash) {
+                            let mut vertex = v.write().map_err(|_| Error::VertexWriteLock).unwrap();
+                            vertex.reset_confidence();
+                        }
                         self.scorecards.cache_remove(&hash);
                     }
                 }
                 self.scorecards.flush();
             }
         })
-    }
-
-    /// Look up a block from the DAG
-    pub fn get_block(&mut self, hash: &BlockHash) -> Result<Block> {
-        match self.vertices.get(hash) {
-            // Look for the vertex in the in-memory DAG
-            Some(vertex) => Ok(vertex
-                .read()
-                .map_err(|_| Error::VertexReadLock)?
-                .block
-                .clone()),
-            // If its not in the in-memory DAG, check the database.
-            None => self
-                .database
-                .read_block(hash.clone())?
-                .ok_or(Error::NotFound),
-        }
     }
 
     /// Determine if the specified vertex is strongly preferred, as described in the Avalanche
@@ -471,6 +470,46 @@ impl DAG {
             }
         }))
     }
+
+    /// Look up a block from the DAG
+    pub fn get_block(&mut self, hash: &BlockHash) -> Result<Block> {
+        match self.vertices.get(hash) {
+            // Look for the vertex in the in-memory DAG
+            Some(vertex) => Ok(vertex
+                .read()
+                .map_err(|_| Error::VertexReadLock)?
+                .block
+                .clone()),
+            // If its not in the in-memory DAG, check the database.
+            None => self
+                .database
+                .read_block(hash.clone())?
+                .ok_or(Error::NotFound),
+        }
+    }
+
+    /// Finalize the specified blocks
+    fn finalize_blocks(&mut self, hashes: Vec<BlockHash>) {
+        for rw_vertex in hashes.iter().filter_map(|hash| self.vertices.get(hash)) {
+            let vertex = rw_vertex.write().unwrap();
+            // Only finalize the block if it has no undecided parents
+            if vertex.undecided_parents.len() == 0 {
+                // Write the block to the database
+                // TODO: Figure out how to batch these database writes
+                self.database
+                    .write_block(None, vertex.block.clone(), true)
+                    .ok();
+                // Remove this block from its children's undecided_parents lists
+                for child in vertex.children.values() {
+                    child
+                        .write()
+                        .unwrap()
+                        .undecided_parents
+                        .remove(&vertex.block.hash().unwrap());
+                }
+            }
+        }
+    }
 }
 
 /// A vertex in the avalanche DAG. A vertex is essentially a block with parent & child links to
@@ -480,29 +519,69 @@ pub struct Vertex {
     /// Block represented by this vertex
     block: Block,
 
-    /// Every vertex after the genesis vertex will have parents.
-    parents: Vec<Arc<TracingRwLock<Vertex>>>,
+    /// Every parent vertex which hasn't been decided yet
+    undecided_parents: HashMap<BlockHash, Arc<TracingRwLock<Vertex>>>,
 
     /// If this vertex is accepted into the DAG, it will be built upon and acquire children. This
     /// map will be empty when the vertex is first mined, and omitted from the marshalled output
     /// when the vertex is marshalled for storage or transmission.
-    children: Vec<Arc<TracingRwLock<Vertex>>>,
+    children: HashMap<BlockHash, Arc<TracingRwLock<Vertex>>>,
 
-    /// Chit score this vertex received when it was queried by the network
+    /// Chit indicates if this vertex received quorum when we queried the network
     chit: usize,
+
+    /// Confidence counts how many dependent votes have been received without changing preference
+    confidence: usize,
 
     /// Is this vertex currently preferred?
     preferred: bool,
 }
 
 impl Vertex {
+    /// Create a new vertex representing a block's position in the DAG
     pub fn new(block: Block) -> Vertex {
         Vertex {
-            parents: Vec::new(),
-            children: Vec::new(),
+            undecided_parents: HashMap::new(),
+            children: HashMap::new(),
             block: block.clone(),
             chit: 0,
+            confidence: 0,
             preferred: false,
+        }
+    }
+
+    /// Increase the confidences of this vertex and all undecided ancestors. Returns the hashes of
+    /// ancestors which can now be accepted
+    pub fn increase_confidence(&mut self) -> Vec<BlockHash> {
+        self.confidence += 1;
+        // Increase confidence of parents and collect any ancestors which can be accepted
+        let mut accepted = self
+            .undecided_parents
+            .values_mut()
+            .map(|parent| {
+                // TODO paralellize this walk
+                parent.write().unwrap().increase_confidence()
+            })
+            .reduce(|mut acc, mut new| {
+                acc.append(&mut new);
+                acc
+            })
+            .unwrap();
+        if self.undecided_parents.len() == 0 && self.confidence >= AVALANCHE_ACCEPTANCE_THRESHOLD {
+            // This vertex has reached the acceptance threshold.
+            accepted.push(self.block.hash().unwrap());
+        }
+        accepted
+    }
+
+    /// Reset the convidence of this vertex and any children
+    pub fn reset_confidence(&mut self) {
+        self.confidence = 0;
+        // TODO: According to avalanche, children of a non-virtuous transaction should be retried
+        // with new parents closer to genesis. Not doing so results in a liveness failure.
+        for child in self.children.values() {
+            // TODO paralellize this walk
+            child.write().unwrap().reset_confidence();
         }
     }
 }

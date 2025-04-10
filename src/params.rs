@@ -19,6 +19,9 @@ pub const AVALANCHE_QUERY_COUNT: usize = 16;
 // TODO: figure out real avalanche parameters
 pub const AVALANCHE_QUORUM: usize = 9;
 
+/// Confidence level a vertex must achieve to become accepted
+pub const AVALANCHE_ACCEPTANCE_THRESHOLD: usize = 9;
+
 // TODO: Select appropriate age
 /// Maximum age (in blocks) of miner to select for query
 pub const MAX_QUERY_MINER_AGE: usize = 1024 * 1024;
