@@ -89,12 +89,12 @@ async fn task_fn(
     let sols_count_sender = start_stats();
     let randomx_vm =
         RandomXVMInstance::new(b"cordelia-randomx", RandomXFlag::get_recommended_flags()).unwrap();
-    let _miner_id = PeerId::from(config.identity_key.public()); // TODO: need to set miner ID
+    let miner_id = PeerId::from(config.identity_key.public()); // TODO: need to set miner ID
     info!("Starting miner...");
     let mut results_receiver = spawn_mining_threads(
         config.num_threads,
         randomx_vm.clone(),
-        Block::default(),
+        Block::new(miner_id, None),
         sols_count_sender.clone(),
     )
     .expect("Failed to start miner.");
@@ -110,7 +110,8 @@ async fn task_fn(
                             // Restart mining threads to mine on new frontier
                             consensus::Event::NewFrontier(_) => {
                                 results_receiver.close(); // Kill previous mining threads
-                                results_receiver = match spawn_mining_threads(config.num_threads, randomx_vm.clone(), Block::default(), sols_count_sender.clone()) {
+                                // TODO: need to set prev_mined in Block::new() below
+                                results_receiver = match spawn_mining_threads(config.num_threads, randomx_vm.clone(), Block::new(miner_id, None), sols_count_sender.clone()) {
                                     Ok(ch) => ch,
                                     Err(e) => {
                                         error!("Failed to start miners: {e}");

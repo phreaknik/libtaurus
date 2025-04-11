@@ -3,7 +3,7 @@ use super::{
     database::ConsensusDb,
     transaction::{self, Txo, TxoHash},
     vertex,
-    voter_pool::{self, VoterPool},
+    voter_pool::{self, Scorecard, VoterPool},
     Block, BlockHash, Event, SlimVertex, Vertex,
 };
 use crate::{
@@ -16,13 +16,7 @@ use crate::{
 use cached::{Cached, TimedCache};
 use libp2p::PeerId;
 use lru::LruCache;
-use std::{
-    collections::{HashMap, HashSet},
-    num::NonZeroUsize,
-    path::PathBuf,
-    result,
-    sync::Arc,
-};
+use std::{collections::HashMap, num::NonZeroUsize, path::PathBuf, result, sync::Arc};
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::{debug, error, info, trace, warn};
 use tracing_mutex::stdsync::TracingRwLock;
@@ -161,6 +155,7 @@ impl Dag {
     /// Register a block as available to be inserted into the DAG. This must occur before a vertex
     /// referencing this block can be inserted.
     pub fn submit_block(&mut self, block: Block, build_vertex: bool) -> Result<()> {
+        debug!("Block submitted:\n{block:?}");
         // TODO: need to check pow, difficulty, block validity, etc
         let bhash = block.hash()?;
         if let Ok(Some(_)) = self.database.read_block(&bhash) {
@@ -184,7 +179,7 @@ impl Dag {
         } else {
             let block = Arc::new(block);
             // Register this miner as a potential Avalanche voter
-            self.voter_pool.register(block.miner);
+            self.voter_pool.register_from_block(block.clone());
             // Add its outputs to the list of undecided TXOs
             for &txo in &block.outputs {
                 let txo_hash = txo.hash()?;
@@ -322,16 +317,14 @@ impl Dag {
         // TODO: this query could be initiated multiple times, if a block goes through waitlist
         // several times. Fix this. It should only happen once.
         let voters = self.voter_pool.select(AVALANCHE_QUERY_COUNT)?;
-        for &peer in &voters {
+        for voter in &voters {
             self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
-                peer,
+                voter.read().unwrap().id(),
                 avalanche_rpc::Request::GetPreference(vhash),
             ))?;
         }
-        self.scorecards.cache_set(
-            vhash,
-            Scorecard::new_with_voters(voters.into_iter().collect()),
-        );
+        self.scorecards
+            .cache_set(vhash, Scorecard::new_with_voters(voters));
         Ok(())
     }
 
@@ -602,7 +595,7 @@ impl Dag {
         from_peer: PeerId,
         request: avalanche_rpc::Request,
     ) -> Result<Option<avalanche_rpc::Response>> {
-        debug!("Handling request: {request}");
+        trace!("Handling request: {request}");
         match request {
             avalanche_rpc::Request::GetBlock(bhash) => match self.get_block(&bhash) {
                 Ok(block) => {
@@ -690,8 +683,9 @@ impl Dag {
                 if let Some(scorecard) = self.scorecards.cache_get_mut(&vhash) {
                     // TODO: move this logic into method on Scorecard
                     // Make sure a peer's vote only gets counted once
-                    if scorecard.pending.remove(&from_peer) {
+                    if let Some(voter) = scorecard.pending.remove(&from_peer) {
                         scorecard.score += preferred as usize;
+                        voter.write().unwrap().count_vote();
                     }
                     let pending_len = scorecard.pending.len();
                     if scorecard.score >= AVALANCHE_QUORUM {
@@ -787,21 +781,6 @@ impl WaitList {
             .write()
             .map_err(|_| Error::WaitlistWriteLock)?
             .pop(vhash))
-    }
-}
-
-/// A scorecard to count votes received from peers during a round of queries
-struct Scorecard {
-    pending: HashSet<PeerId>, // Peers that still need to vote
-    score: usize,             // Total score from peers which have voted
-}
-
-impl Scorecard {
-    fn new_with_voters(voters: HashSet<PeerId>) -> Scorecard {
-        Scorecard {
-            pending: voters,
-            score: 0,
-        }
     }
 }
 

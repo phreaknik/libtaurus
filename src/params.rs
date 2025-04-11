@@ -19,5 +19,8 @@ pub const AVALANCHE_QUORUM: usize = 9;
 /// Confidence level a vertex must achieve to become accepted
 pub const AVALANCHE_ACCEPTANCE_THRESHOLD: usize = 9;
 
+/// Time we look back for mined blocks to consider a miner for Avalanche voting
+pub const VOTER_REGISTRATION_WINDOW_HRS: i64 = 24;
+
 /// Time we allow for each peer in a query to respond
 pub const QUERY_TIMEOUT_SEC: u64 = 10;

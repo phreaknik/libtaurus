@@ -12,7 +12,7 @@ use serde_derive::{Deserialize, Serialize};
 use std::{fmt, hash::Hash, result};
 
 /// Current version of the block structure
-pub const VERSION: u32 = 32;
+pub const VERSION: u32 = 0;
 
 /// Error type for block errors
 #[derive(thiserror::Error, Debug)]
@@ -75,6 +75,20 @@ pub struct Block {
 }
 
 impl Block {
+    /// Create a new empty block
+    pub fn new(miner: PeerId, prev_mined: Option<BlockHash>) -> Block {
+        Block {
+            version: VERSION,
+            difficulty: GENESIS_DIFFICULTY,
+            miner,
+            prev_mined,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            time: Utc::now(),
+            nonce: 0,
+        }
+    }
+
     /// Compute the hash of the block
     pub fn hash(&self) -> Result<BlockHash> {
         Ok(blake3::hash(&rmp_serde::to_vec(self)?).into())
