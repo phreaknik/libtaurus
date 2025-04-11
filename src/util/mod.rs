@@ -1,6 +1,7 @@
-use std::{fmt::Display, ops::DivAssign};
+mod ewma;
 
 use num::Num;
+use std::{fmt::Display, ops::DivAssign};
 
 /// Formats a number into a human readable string
 pub fn human_readable<T>(mut num: T, units: &str) -> String
