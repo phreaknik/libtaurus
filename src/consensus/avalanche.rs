@@ -189,7 +189,7 @@ impl Dag {
         }
     }
 
-    /// Try to create a vertex for the given block. Return a copy of the vertex ans a bool
+    /// Try to create a vertex for the given block. Return a copy of the vertex and a bool
     /// indicating if the vertex is currently preferred.
     pub fn try_insert_vertex(
         &mut self,
@@ -244,36 +244,39 @@ impl Dag {
         // Query peers for their preference, according to the avalanche consensus protocol
         self.query_peer_preferences(vhash)?;
 
-        // Add vertex as known child to each of its parents
-        let vertex = rw_vertex.read().map_err(|_| Error::VertexWriteLock)?;
-        for parent in vertex.undecided_parents.values() {
-            parent
-                .write()
-                .map_err(|_| Error::VertexWriteLock)?
-                .known_children
-                .insert(vhash, rw_vertex.clone());
-        }
-
         // Add it to the collection of undecided vertices
         self.undecided_vertices.insert(vhash, rw_vertex.clone());
 
-        if vertex.strongly_preferred {
-            // Remove its parents from the frontier, as they are no longer the youngest
-            for parent in &vertex.parents {
-                self.frontier.remove(parent);
+        let strongly_preferred = {
+            // Add vertex as known child to each of its parents
+            let vertex = rw_vertex.read().map_err(|_| Error::VertexWriteLock)?;
+            for parent in vertex.undecided_parents.values() {
+                parent
+                    .write()
+                    .map_err(|_| Error::VertexWriteLock)?
+                    .known_children
+                    .insert(vhash, rw_vertex.clone());
             }
 
-            // Add it to the frontier
-            self.frontier.insert(vhash, rw_vertex.clone());
+            if vertex.strongly_preferred {
+                // Remove its parents from the frontier, as they are no longer the youngest
+                for parent in &vertex.parents {
+                    self.frontier.remove(parent);
+                }
 
-            // Notify subscribers of new frontier
-            self.events_ch
-                .send(Event::NewFrontier(self.frontier.keys().cloned().collect()))?;
+                // Add it to the frontier
+                self.frontier.insert(vhash, rw_vertex.clone());
 
-            info!("Inserted preferred vertex {}", vhash.to_hex());
-        } else {
-            info!("Inserted non-preferred vertex {}", vhash.to_hex());
-        }
+                // Notify subscribers of new frontier
+                self.events_ch
+                    .send(Event::NewFrontier(self.frontier.keys().cloned().collect()))?;
+
+                info!("Inserted preferred vertex {}", vhash.to_hex());
+            } else {
+                info!("Inserted non-preferred vertex {}", vhash.to_hex());
+            }
+            vertex.strongly_preferred
+        };
 
         // Retry vertices in the waitlist
         // TODO: Waitlest rn only waits on missing parent. Also need to retry waitlist if new block
@@ -281,7 +284,7 @@ impl Dag {
         self.remove_and_retry_waitlist(vhash);
 
         // Return whether or not this vertex is strongly_preferred
-        Ok(vertex.strongly_preferred)
+        Ok(strongly_preferred)
     }
 
     /// Begin querying our peers for their preference for the specified vertex
