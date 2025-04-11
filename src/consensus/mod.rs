@@ -96,6 +96,7 @@ impl GenesisConfig {
             version: 0,
             difficulty: self.difficulty,
             miner: PeerId::from_multihash(Multihash::default()).unwrap(),
+            prev_mined: None,
             inputs: Vec::new(),
             outputs: Vec::new(),
             time: self.time,

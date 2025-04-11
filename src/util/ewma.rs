@@ -1,19 +1,19 @@
-use std::ops::{Add, Mul, Sub};
-
+use num::Float;
 use num::One;
+use std::ops::{Add, Mul, Sub};
 
 /// Exponentially weighted moving average filter
 pub struct EWMA<T>
 where
-    T: Add<Output = T> + Copy + Mul<Output = T> + Sub<Output = T> + One<Output = T>,
+    T: Add<Output = T> + Copy + Mul<Output = T> + Sub<Output = T> + One<Output = T> + Float,
 {
-    curr: T,
-    alpha: T,
+    pub curr: T,
+    pub alpha: T,
 }
 
 impl<T> EWMA<T>
 where
-    T: Add<Output = T> + Copy + Mul<Output = T> + Sub<Output = T> + One<Output = T>,
+    T: Add<Output = T> + Copy + Mul<Output = T> + Sub<Output = T> + One<Output = T> + Float,
 {
     /// Instantiate a new EWMA filter
     pub fn new(initial: T, alpha: T) -> EWMA<T> {

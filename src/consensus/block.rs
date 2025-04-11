@@ -48,12 +48,29 @@ pub struct Block {
     ///        * ^ this is actually very interesting. Feedback loop regulates for network
     ///        efficiency, instead of for block production time as a proxy for efficiency.
     ///    * time must be relatively recent and not future
+
+    /// Block format revision number
     pub version: u32,
+
+    /// Difficulty this block's proof-of-work must satisfy
     pub difficulty: u64,
+
+    /// Which peer mined this block
     pub miner: PeerId,
+
+    /// Block hash of this peer's previously mined block
+    pub prev_mined: Option<BlockHash>,
+
+    /// Transaction outputs consumed by this block
     pub inputs: Vec<TxoHash>,
+
+    /// Transaction outputs created by this bock
     pub outputs: Vec<Txo>,
+
+    /// Time when the miner claims to have solved this proof-of-work
     pub time: DateTime<Utc>, // TODO: don't need a timestamp... might be nice in Vertex though
+
+    /// Nonce used in proof-of-work
     pub nonce: u64,
 }
 
@@ -92,6 +109,10 @@ impl Block {
             version: block.version,
             difficulty: block.difficulty,
             miner: PeerId::from_bytes(&block.miner)?,
+            prev_mined: match block.prev_mined {
+                Some(hash) => Some(BlockHash::from_protobuf(&hash)?),
+                None => None,
+            },
             inputs: block
                 .inputs
                 .iter()
@@ -113,6 +134,10 @@ impl Block {
             version: self.version,
             difficulty: self.difficulty,
             miner: self.miner.to_bytes(),
+            prev_mined: match self.prev_mined {
+                Some(hash) => Some(hash.to_protobuf()?),
+                None => None,
+            },
             inputs: self
                 .inputs
                 .iter()
@@ -147,6 +172,7 @@ impl Default for Block {
             version: VERSION,
             difficulty: GENESIS_DIFFICULTY,
             miner: PeerId::from_multihash(Multihash::default()).unwrap(),
+            prev_mined: None,
             inputs: Vec::new(),
             outputs: Vec::new(),
             time: Utc::now(),

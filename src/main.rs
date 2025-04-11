@@ -26,7 +26,6 @@
 
 mod consensus;
 mod http;
-mod math;
 mod miner;
 mod p2p;
 mod params;

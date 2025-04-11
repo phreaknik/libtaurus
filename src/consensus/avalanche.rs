@@ -10,6 +10,7 @@ use crate::{
         AVALANCHE_ACCEPTANCE_THRESHOLD, AVALANCHE_QUERY_COUNT, AVALANCHE_QUORUM,
         MAX_QUERY_MINER_AGE, QUERY_TIMEOUT_SEC,
     },
+    util::miner_stats::MinerStats,
     VertexHash,
 };
 use cached::{Cached, TimedCache};
@@ -51,6 +52,8 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("missing data")]
     MissingData,
+    #[error("missing the previously mined block from this miner")]
+    MissingPrevMined,
     #[error("new block channel error")]
     NewBlockCh(#[from] tokio::sync::mpsc::error::SendError<Block>),
     #[error("data not found")]
@@ -108,6 +111,9 @@ pub struct Dag {
     /// The active edge of the DAG, i.e. the preferred vertices which don't yet have children
     frontier: HashMap<VertexHash, Arc<TracingRwLock<Vertex>>>,
 
+    /// Statistics about recent miners
+    miner_stats: HashMap<PeerId, MinerStats>,
+
     /// Database for block storage
     database: ConsensusDb,
 
@@ -135,6 +141,7 @@ impl Dag {
             undecided_txos: HashMap::new(),
             waitlist: WaitList::new(config.waitlist_cap),
             frontier: HashMap::new(),
+            miner_stats: HashMap::new(),
             database: ConsensusDb::open(&config.data_dir.join(DATABASE_DIR), true)
                 .expect("Failed to open consensus database"),
             scorecards: TimedCache::with_lifespan(QUERY_TIMEOUT_SEC),
@@ -166,6 +173,8 @@ impl Dag {
             // Block spends at least one UTXO, which does not exist in the active txo set
             Err(Error::UnknownTransactionInputs)
         } else {
+            // Update our statistics for that miner
+            self.update_miner_stats(&block)?;
             // Add its outputs to the list of undecided TXOs
             for &txo in &block.outputs {
                 let txo_hash = txo.hash()?;
@@ -189,6 +198,31 @@ impl Dag {
                         slim_vertex.to_wire(block)?,
                     )))?;
             }
+            Ok(())
+        }
+    }
+
+    fn update_miner_stats(&mut self, block: &Block) -> Result<()> {
+        if let Some(prev_hash) = block.prev_mined {
+            if let Ok(prev_mined) = self.get_block(&prev_hash) {
+                let duration = block.time - prev_mined.time;
+                match self.miner_stats.get_mut(&block.miner) {
+                    Some(miner) => {
+                        miner.mined_block(block.difficulty as f64, duration);
+                    }
+                    None => {
+                        self.miner_stats.insert(block.miner, MinerStats::new());
+                    }
+                }
+                Ok(())
+            } else {
+                self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
+                    block.miner,
+                    avalanche_rpc::Request::GetBlock(prev_hash),
+                ))?;
+                Err(Error::MissingPrevMined)
+            }
+        } else {
             Ok(())
         }
     }

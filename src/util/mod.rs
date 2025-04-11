@@ -1,4 +1,5 @@
-mod ewma;
+pub mod ewma;
+pub mod miner_stats;
 
 use num::Num;
 use std::{fmt::Display, ops::DivAssign};
