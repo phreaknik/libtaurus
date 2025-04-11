@@ -100,7 +100,7 @@ pub struct Dag {
     undecided_vertices: HashMap<VertexHash, Arc<TracingRwLock<Vertex>>>,
 
     /// List of transaction outputs being considered in the undecided portion of the DAG
-    txo_set: HashMap<TxoHash, DagTxo>,
+    undecided_txos: HashMap<TxoHash, DagTxo>,
 
     /// Waitlist for vertices that cannot be inserted yet
     waitlist: WaitList,
@@ -132,7 +132,7 @@ impl Dag {
         let mut dag = Dag {
             undecided_blocks: HashMap::new(),
             undecided_vertices: HashMap::new(),
-            txo_set: HashMap::new(),
+            undecided_txos: HashMap::new(),
             waitlist: WaitList::new(config.waitlist_cap),
             frontier: HashMap::new(),
             database: ConsensusDb::open(&config.data_dir.join(DATABASE_DIR), true)
@@ -161,7 +161,7 @@ impl Dag {
         } else if block
             .inputs
             .iter()
-            .any(|txo_hash| !self.txo_set.contains_key(txo_hash))
+            .any(|txo_hash| !self.undecided_txos.contains_key(txo_hash))
         {
             // Block spends at least one UTXO, which does not exist in the active txo set
             Err(Error::UnknownTransactionInputs)
@@ -169,7 +169,11 @@ impl Dag {
             // Add its outputs to the list of undecided TXOs
             for &txo in &block.outputs {
                 let txo_hash = txo.hash()?;
-                if self.txo_set.insert(txo_hash, DagTxo::new(txo)).is_some() {
+                if self
+                    .undecided_txos
+                    .insert(txo_hash, DagTxo::new(txo))
+                    .is_some()
+                {
                     error!("Registered duplicate txo: {txo_hash}");
                 }
             }
@@ -232,7 +236,7 @@ impl Dag {
         // If this vertex is conflict free, mark it as the preferred spender of its tx inputs
         if !has_conflicts {
             for txo_hash in &block.inputs {
-                if let Some(txo) = self.txo_set.get_mut(txo_hash) {
+                if let Some(txo) = self.undecided_txos.get_mut(txo_hash) {
                     txo.preferred_spender = Some(rw_vertex.clone());
                 } else {
                     error!("Attempt to spend unknown txo");
@@ -318,9 +322,8 @@ impl Dag {
     ) -> Result<()> {
         let vhash = slim_vertex.hash()?;
         // Look up block if missing
-        let mut missing_block = false;
-        if self.undecided_blocks.get(&slim_vertex.block_hash).is_none() {
-            missing_block = true;
+        let opt_block = self.undecided_blocks.get(&slim_vertex.block_hash);
+        if opt_block.is_none() {
             if let Some(peer) = sender {
                 self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
                     peer,
@@ -367,7 +370,22 @@ impl Dag {
             missing_str += "]";
             info!("Missing parents necessary to insert vertex {vhash}: {missing_str}");
         }
-        if missing_block || missing_parents.len() > 0 {
+        // Make sure transaction inputs are in the txo set. If they are not in the txo set at all,
+        // then reject this vertex entirely. If they are in the txo set, but spent by another
+        // vertex, it is still possible to insert this vertex, but it will be in conflict and
+        // according to Avalanche consensus rules, it will not be accepted unless its confidence
+        // exceeds that of its conflicts.
+        if let Some(block) = opt_block {
+            if !block
+                .inputs
+                .iter()
+                .all(|txo_hash| self.undecided_txos.contains_key(txo_hash))
+            {
+                warn!("Received block spends unknown transaction outputs.");
+                return Err(Error::UnknownTransactionInputs);
+            }
+        };
+        if opt_block.is_none() || missing_parents.len() > 0 {
             Err(Error::MissingData)
         } else {
             Ok(())
@@ -394,7 +412,7 @@ impl Dag {
                 .get(&slim_vertex.block_hash)
                 .ok_or(Error::NotFound)?;
             let has_conflicts = block.inputs.iter().any(|txo_hash| {
-                self.txo_set
+                self.undecided_txos
                     .get(txo_hash)
                     .expect("undecided vertex should already have validated inputs")
                     .preferred_spender
@@ -441,7 +459,19 @@ impl Dag {
     fn remove_and_retry_waitlist(&mut self, vhash: VertexHash) {
         if let Ok(Some(descendents)) = self.waitlist.remove(&vhash) {
             for descendent in descendents {
-                let _ = self.try_insert_vertex(descendent, None);
+                let bhash = descendent.block_hash;
+                let vhash = descendent.hash().unwrap();
+                if let Err(Error::UnknownTransactionInputs) =
+                    self.try_insert_vertex(descendent, None)
+                {
+                    // If the TXOs spent by this vertex have been decidedly spent by another
+                    // vertex, they will have been removed from the undecided txo set, and this
+                    // block will no longer be spendable.
+                    self.undecided_blocks.remove(&bhash);
+                    self.undecided_vertices.remove(&vhash);
+                    // TODO: should also proc on timer, to prevent accumulation of orphaned
+                    // blocks/vertices
+                }
             }
         }
     }
@@ -466,7 +496,7 @@ impl Dag {
             .inputs
             .iter()
             .filter_map(|txo_hash| {
-                self.txo_set
+                self.undecided_txos
                     .get(&txo_hash)
                     .unwrap()
                     .preferred_spender
@@ -480,11 +510,13 @@ impl Dag {
             // Reset the preferred spender of each UTXO spent by the overtaken vertex
             let conflict = pref.read().unwrap();
             for txo_hash in &conflict.block.inputs {
-                self.txo_set.get_mut(txo_hash).unwrap().preferred_spender =
-                    match vertex.block.inputs.contains(txo_hash) {
-                        true => Some(rw_vertex.clone()),
-                        false => None,
-                    }
+                self.undecided_txos
+                    .get_mut(txo_hash)
+                    .unwrap()
+                    .preferred_spender = match vertex.block.inputs.contains(txo_hash) {
+                    true => Some(rw_vertex.clone()),
+                    false => None,
+                }
             }
             // Remove this vertex from the frontier, if needed
             self.frontier.remove(&conflict.hash().unwrap());
