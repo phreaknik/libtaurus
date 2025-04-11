@@ -39,13 +39,18 @@ message Block {
   uint32 version = 0;
 	uint64 difficulty = 1;
 	bytes miner = 2;
-  repeated bytes inputs = 3;
-	bytes time = 4;
-	uint64 nonce = 5;
+  repeated Hash inputs = 3;
+  repeated Txo outputs = 4;
+	bytes time = 5;
+	uint64 nonce = 6;
 }
 
 message Vertex {
   uint32 version = 0;
 	repeated Hash parents = 1;
   Hash block_hash = 2;
+}
+
+message Txo {
+  uint64 value = 0;
 }

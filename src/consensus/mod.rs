@@ -47,7 +47,7 @@ pub enum Error {
     #[error(transparent)]
     Block(#[from] block::Error),
     #[error("error acquiring write lock on Avalanche DAG")]
-    DAGWriteLock,
+    DagWriteLock,
     #[error("consensus event channel error")]
     EventsOutCh(#[from] tokio::sync::broadcast::error::SendError<Event>),
     #[error(transparent)]
@@ -97,6 +97,7 @@ impl GenesisConfig {
             difficulty: self.difficulty,
             miner: PeerId::from_multihash(Multihash::default()).unwrap(),
             inputs: Vec::new(),
+            outputs: Vec::new(),
             time: self.time,
             nonce: 0,
         }
@@ -132,7 +133,7 @@ pub struct Runtime {
     _config: Config,
     peer_id: Option<PeerId>,
     randomx_vm: RandomXVMInstance,
-    dag: TracingRwLock<avalanche::DAG>,
+    dag: TracingRwLock<avalanche::Dag>,
     actions_in: UnboundedReceiver<Action>,
     events_out: broadcast::Sender<Event>,
     p2p_action_ch: UnboundedSender<p2p::Action>,
@@ -156,7 +157,7 @@ impl Runtime {
         // Instantiate the runtime
         Ok(Runtime {
             _config: config.clone(),
-            dag: TracingRwLock::new(DAG::new(
+            dag: TracingRwLock::new(Dag::new(
                 config.avalanche,
                 p2p_action_ch.clone(),
                 events_out.clone(),
@@ -199,7 +200,7 @@ impl Runtime {
                             }
                         },
                         Ok(p2p::Event::Avalanche(message)) => {
-                            match self.dag.write().map_err(|_| Error::DAGWriteLock).unwrap().handle_avalanche_message(message) {
+                            match self.dag.write().map_err(|_| Error::DagWriteLock).unwrap().handle_avalanche_message(message) {
                                 Ok(()) => trace!("Handled avalanche message"),
                                 Err(avalanche::Error::P2pActionCh(e)) => return error!("Stopping due to p2p_action channel error: {e}"),
                                 Err(e) => error!("Error while handling Avalanche message: {e}"),
@@ -220,7 +221,7 @@ impl Runtime {
                                     // Insert the vertex into the DAG
                                     self.dag
                                         .write()
-                                        .map_err(|_| Error::DAGWriteLock)?
+                                        .map_err(|_| Error::DagWriteLock)?
                                         .submit_block(block, true)
                                         .map_err(Error::from)
                                 }) {
@@ -243,7 +244,7 @@ impl Runtime {
         let reject = msg.reject();
         match msg.data {
             p2p::MessageData::Vertex(wire_vertex) => {
-                let mut dag = self.dag.write().map_err(|_| Error::DAGWriteLock)?;
+                let mut dag = self.dag.write().map_err(|_| Error::DagWriteLock)?;
                 let slim = wire_vertex.slim()?;
                 match dag
                     .submit_block(wire_vertex.block, false)

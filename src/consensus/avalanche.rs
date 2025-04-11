@@ -1,6 +1,8 @@
 use super::{
-    block, database::ConsensusDb, transaction::UtxoHash, vertex, Block, BlockHash, Event,
-    SlimVertex, Vertex,
+    block,
+    database::ConsensusDb,
+    transaction::{self, Txo, TxoHash},
+    vertex, Block, BlockHash, Event, SlimVertex, Vertex,
 };
 use crate::{
     p2p::{self, avalanche_rpc},
@@ -56,6 +58,10 @@ pub enum Error {
     #[error("p2p action channel error")]
     P2pActionCh(#[from] tokio::sync::mpsc::error::SendError<p2p::Action>),
     #[error(transparent)]
+    Transaction(#[from] transaction::Error),
+    #[error("block spends unknown UTXOs")]
+    UnknownTransactionInputs,
+    #[error(transparent)]
     Vertex(#[from] vertex::Error),
     #[error("error acquiring read lock on a vertex")]
     VertexReadLock,
@@ -64,6 +70,8 @@ pub enum Error {
     #[error("error acquiring write lock on the waitlist")]
     WaitlistWriteLock,
 }
+
+// TODO: Mutexes likely not necessary around vertices, since entire DAG is guarded by mutex
 
 /// Result type for avalanche errors
 pub type Result<T> = result::Result<T, Error>;
@@ -81,16 +89,18 @@ pub struct Config {
     pub waitlist_cap: NonZeroUsize,
 }
 
-/// Implementation of Avalanche DAG, using blocks as vertices
-pub struct DAG {
+/// Implementation of Avalanche DAG, for determining the preference of new vertices. Finalized
+/// vertices are moved to a database. The Dag structure will only contain vertices which are not
+/// yet decided.
+pub struct Dag {
     /// Complete list of undecided blocks
     undecided_blocks: HashMap<BlockHash, Arc<Block>>,
 
     /// Complete list of undecided vertices
     undecided_vertices: HashMap<VertexHash, Arc<TracingRwLock<Vertex>>>,
 
-    /// Preferred vertex spending each transaction input
-    preferences: HashMap<UtxoHash, Arc<TracingRwLock<Vertex>>>,
+    /// List of transaction outputs being considered in the undecided portion of the DAG
+    txo_set: HashMap<TxoHash, DagTxo>,
 
     /// Waitlist for vertices that cannot be inserted yet
     waitlist: WaitList,
@@ -111,18 +121,18 @@ pub struct DAG {
     events_ch: broadcast::Sender<Event>,
 }
 
-impl DAG {
+impl Dag {
     /// Create a new DAG
     pub fn new(
         config: Config,
         p2p_action_ch: UnboundedSender<p2p::Action>,
         events_ch: broadcast::Sender<Event>,
-    ) -> DAG {
+    ) -> Dag {
         // Create DAG instance, initialized with genesis block in the frontier
-        let mut dag = DAG {
+        let mut dag = Dag {
             undecided_blocks: HashMap::new(),
             undecided_vertices: HashMap::new(),
-            preferences: HashMap::new(),
+            txo_set: HashMap::new(),
             waitlist: WaitList::new(config.waitlist_cap),
             frontier: HashMap::new(),
             database: ConsensusDb::open(&config.data_dir.join(DATABASE_DIR), true)
@@ -148,8 +158,22 @@ impl DAG {
         if let Ok(Some(_)) = self.database.read_block(&bhash) {
             // First see if the block is already in the database of decided blocks
             Ok(())
+        } else if block
+            .inputs
+            .iter()
+            .any(|txo_hash| !self.txo_set.contains_key(txo_hash))
+        {
+            // Block spends at least one UTXO, which does not exist in the active txo set
+            Err(Error::UnknownTransactionInputs)
         } else {
-            // Otherwise add it to the list of undecided blocks
+            // Add its outputs to the list of undecided TXOs
+            for &txo in &block.outputs {
+                let txo_hash = txo.hash()?;
+                if self.txo_set.insert(txo_hash, DagTxo::new(txo)).is_some() {
+                    error!("Registered duplicate txo: {txo_hash}");
+                }
+            }
+            // Add it to the list of undecided blocks
             info!("Registered new block {}", bhash.to_hex());
             self.undecided_blocks.insert(bhash, Arc::new(block.clone()));
             if build_vertex {
@@ -207,9 +231,12 @@ impl DAG {
 
         // If this vertex is conflict free, mark it as the preferred spender of its tx inputs
         if !has_conflicts {
-            for &thash in &block.inputs {
-                if self.preferences.insert(thash, rw_vertex.clone()).is_some() {
-                    error!("Conflict set poisoned!");
+            for txo_hash in &block.inputs {
+                if let Some(txo) = self.txo_set.get_mut(txo_hash) {
+                    txo.preferred_spender = Some(rw_vertex.clone());
+                } else {
+                    error!("Attempt to spend unknown txo");
+                    return Err(Error::UnknownTransactionInputs);
                 }
             }
         }
@@ -363,10 +390,13 @@ impl DAG {
                 .undecided_blocks
                 .get(&slim_vertex.block_hash)
                 .ok_or(Error::NotFound)?;
-            let has_conflicts = self
-                .preferences
-                .keys()
-                .any(|utxo| block.inputs.contains(utxo));
+            let has_conflicts = block.inputs.iter().any(|txo_hash| {
+                self.txo_set
+                    .get(txo_hash)
+                    .expect("undecided vertex should already have validated inputs")
+                    .preferred_spender
+                    .is_some()
+            });
             Ok((
                 Arc::new(TracingRwLock::new(Vertex::new(
                     block.clone(),
@@ -420,7 +450,6 @@ impl DAG {
         rw_vertex: Arc<TracingRwLock<Vertex>>,
     ) -> Vec<VertexHash> {
         let mut vertex = rw_vertex.write().unwrap();
-
         // Recursively compute confidence as sum of chits in progeny
         vertex.confidence = vertex.chit
             + vertex
@@ -428,36 +457,35 @@ impl DAG {
                 .values()
                 .map(|v| v.read().unwrap().confidence)
                 .sum::<usize>();
-
         // Check if this vertex's confidence has surpassed that of any vertices in its conflict set
         let overtaken = vertex
             .block
             .inputs
             .iter()
-            .filter_map(|thash| {
-                self.preferences
-                    .get(&thash)
-                    .map(|pref| (thash, pref.clone()))
+            .filter_map(|txo_hash| {
+                self.txo_set
+                    .get(&txo_hash)
+                    .unwrap()
+                    .preferred_spender
+                    .clone()
             })
-            .filter(|(_thash, pref)| pref.read().unwrap().confidence < vertex.confidence)
+            .filter(|pref| pref.read().unwrap().confidence < vertex.confidence)
             .collect::<Vec<_>>();
-        for (&thash, pref) in overtaken {
+        for pref in overtaken {
             // Reset the conflicting vertex's confidence
             self.reset_confidence(rw_vertex.clone());
-
-            // Remove the conflicting vertex from the preference list
+            // Reset the preferred spender of each UTXO spent by the overtaken vertex
             let conflict = pref.read().unwrap();
-            for thash in &conflict.block.inputs {
-                self.preferences.remove(thash);
+            for txo_hash in &conflict.block.inputs {
+                self.txo_set.get_mut(txo_hash).unwrap().preferred_spender =
+                    match vertex.block.inputs.contains(txo_hash) {
+                        true => Some(rw_vertex.clone()),
+                        false => None,
+                    }
             }
-
             // Remove this vertex from the frontier, if needed
             self.frontier.remove(&conflict.hash().unwrap());
-
-            // Mark this vertex as the new preferred spender of this utxo
-            self.preferences.insert(thash, rw_vertex.clone());
         }
-
         // Increase confidence of parents and collect any ancestors which can be accepted
         let mut accepted = vertex
             .undecided_parents
@@ -468,7 +496,6 @@ impl DAG {
                 acc
             })
             .unwrap();
-
         // Check if this vertex has reached the acceptance threshold
         if vertex.undecided_parents.len() == 0
             && vertex.confidence >= AVALANCHE_ACCEPTANCE_THRESHOLD
@@ -481,6 +508,7 @@ impl DAG {
     /// Reset the convidence of this vertex and any children
     pub fn reset_confidence(&mut self, rw_vertex: Arc<TracingRwLock<Vertex>>) {
         let mut vertex = rw_vertex.write().unwrap();
+        vertex.strongly_preferred = false;
         vertex.confidence = 0;
         vertex.chit = 0;
         // TODO: According to avalanche, children of a non-virtuous transaction should be retried
@@ -707,6 +735,25 @@ impl Scorecard {
         Scorecard {
             pending: voters,
             score: 0,
+        }
+    }
+}
+
+/// Wrapper around Utxo for use in undecided DAG
+#[derive(Debug, Clone)]
+pub struct DagTxo {
+    /// The underlying transaction output
+    txo: Txo,
+
+    /// Link to the preferred vertex which spends this UTXO, if any
+    preferred_spender: Option<Arc<TracingRwLock<Vertex>>>,
+}
+
+impl DagTxo {
+    fn new(txo: Txo) -> DagTxo {
+        DagTxo {
+            txo,
+            preferred_spender: None,
         }
     }
 }

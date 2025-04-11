@@ -242,7 +242,8 @@ pub struct Block {
     pub version: u32,
     pub difficulty: u64,
     pub miner: Vec<u8>,
-    pub inputs: Vec<Vec<u8>>,
+    pub inputs: Vec<avalanche::proto::Hash>,
+    pub outputs: Vec<avalanche::proto::Txo>,
     pub time: Vec<u8>,
     pub nonce: u64,
 }
@@ -255,9 +256,10 @@ impl<'a> MessageRead<'a> for Block {
                 Ok(0) => msg.version = r.read_uint32(bytes)?,
                 Ok(8) => msg.difficulty = r.read_uint64(bytes)?,
                 Ok(18) => msg.miner = r.read_bytes(bytes)?.to_owned(),
-                Ok(26) => msg.inputs.push(r.read_bytes(bytes)?.to_owned()),
-                Ok(34) => msg.time = r.read_bytes(bytes)?.to_owned(),
-                Ok(40) => msg.nonce = r.read_uint64(bytes)?,
+                Ok(26) => msg.inputs.push(r.read_message::<avalanche::proto::Hash>(bytes)?),
+                Ok(34) => msg.outputs.push(r.read_message::<avalanche::proto::Txo>(bytes)?),
+                Ok(42) => msg.time = r.read_bytes(bytes)?.to_owned(),
+                Ok(48) => msg.nonce = r.read_uint64(bytes)?,
                 Ok(t) => { r.read_unknown(bytes, t)?; }
                 Err(e) => return Err(e),
             }
@@ -272,7 +274,8 @@ impl MessageWrite for Block {
         + if self.version == 0u32 { 0 } else { 1 + sizeof_varint(*(&self.version) as u64) }
         + if self.difficulty == 0u64 { 0 } else { 1 + sizeof_varint(*(&self.difficulty) as u64) }
         + if self.miner.is_empty() { 0 } else { 1 + sizeof_len((&self.miner).len()) }
-        + self.inputs.iter().map(|s| 1 + sizeof_len((s).len())).sum::<usize>()
+        + self.inputs.iter().map(|s| 1 + sizeof_len((s).get_size())).sum::<usize>()
+        + self.outputs.iter().map(|s| 1 + sizeof_len((s).get_size())).sum::<usize>()
         + if self.time.is_empty() { 0 } else { 1 + sizeof_len((&self.time).len()) }
         + if self.nonce == 0u64 { 0 } else { 1 + sizeof_varint(*(&self.nonce) as u64) }
     }
@@ -281,9 +284,10 @@ impl MessageWrite for Block {
         if self.version != 0u32 { w.write_with_tag(0, |w| w.write_uint32(*&self.version))?; }
         if self.difficulty != 0u64 { w.write_with_tag(8, |w| w.write_uint64(*&self.difficulty))?; }
         if !self.miner.is_empty() { w.write_with_tag(18, |w| w.write_bytes(&**&self.miner))?; }
-        for s in &self.inputs { w.write_with_tag(26, |w| w.write_bytes(&**s))?; }
-        if !self.time.is_empty() { w.write_with_tag(34, |w| w.write_bytes(&**&self.time))?; }
-        if self.nonce != 0u64 { w.write_with_tag(40, |w| w.write_uint64(*&self.nonce))?; }
+        for s in &self.inputs { w.write_with_tag(26, |w| w.write_message(s))?; }
+        for s in &self.outputs { w.write_with_tag(34, |w| w.write_message(s))?; }
+        if !self.time.is_empty() { w.write_with_tag(42, |w| w.write_bytes(&**&self.time))?; }
+        if self.nonce != 0u64 { w.write_with_tag(48, |w| w.write_uint64(*&self.nonce))?; }
         Ok(())
     }
 }
@@ -324,6 +328,38 @@ impl MessageWrite for Vertex {
         if self.version != 0u32 { w.write_with_tag(0, |w| w.write_uint32(*&self.version))?; }
         for s in &self.parents { w.write_with_tag(10, |w| w.write_message(s))?; }
         if let Some(ref s) = self.block_hash { w.write_with_tag(18, |w| w.write_message(s))?; }
+        Ok(())
+    }
+}
+
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Debug, Default, PartialEq, Clone)]
+pub struct Txo {
+    pub value: u64,
+}
+
+impl<'a> MessageRead<'a> for Txo {
+    fn from_reader(r: &mut BytesReader, bytes: &'a [u8]) -> Result<Self> {
+        let mut msg = Self::default();
+        while !r.is_eof() {
+            match r.next_tag(bytes) {
+                Ok(0) => msg.value = r.read_uint64(bytes)?,
+                Ok(t) => { r.read_unknown(bytes, t)?; }
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(msg)
+    }
+}
+
+impl MessageWrite for Txo {
+    fn get_size(&self) -> usize {
+        0
+        + if self.value == 0u64 { 0 } else { 1 + sizeof_varint(*(&self.value) as u64) }
+    }
+
+    fn write_message<W: WriterBackend>(&self, w: &mut Writer<W>) -> Result<()> {
+        if self.value != 0u64 { w.write_with_tag(0, |w| w.write_uint64(*&self.value))?; }
         Ok(())
     }
 }

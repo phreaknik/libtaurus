@@ -1,3 +1,4 @@
+use super::transaction::{self, Txo, TxoHash};
 use crate::{
     p2p,
     params::{self, GENESIS_DIFFICULTY},
@@ -9,8 +10,6 @@ use libp2p::{multihash::Multihash, PeerId};
 use num::{BigUint, FromPrimitive};
 use serde_derive::{Deserialize, Serialize};
 use std::{fmt, hash::Hash, result};
-
-use super::transaction::UtxoHash;
 
 /// Current version of the block structure
 pub const VERSION: u32 = 32;
@@ -33,6 +32,8 @@ pub enum Error {
     #[error(transparent)]
     RandomX(#[from] randomx::Error),
     #[error(transparent)]
+    Transaction(#[from] transaction::Error),
+    #[error(transparent)]
     Utf8(#[from] std::string::FromUtf8Error),
 }
 
@@ -50,7 +51,8 @@ pub struct Block {
     pub version: u32,
     pub difficulty: u64,
     pub miner: PeerId,
-    pub inputs: Vec<UtxoHash>,
+    pub inputs: Vec<TxoHash>,
+    pub outputs: Vec<Txo>,
     pub time: DateTime<Utc>, // TODO: don't need a timestamp... might be nice in Vertex though
     pub nonce: u64,
 }
@@ -93,7 +95,12 @@ impl Block {
             inputs: block
                 .inputs
                 .iter()
-                .map(|bytes| rmp_serde::from_slice(bytes))
+                .map(|txo_hash| TxoHash::from_protobuf(txo_hash))
+                .try_collect()?,
+            outputs: block
+                .outputs
+                .iter()
+                .map(|txo| Txo::from_protobuf(txo))
                 .try_collect()?,
             time: rmp_serde::from_slice(&block.time)?,
             nonce: block.nonce,
@@ -109,7 +116,12 @@ impl Block {
             inputs: self
                 .inputs
                 .iter()
-                .map(|i| rmp_serde::to_vec(i))
+                .map(|txo_hash| txo_hash.to_protobuf())
+                .try_collect()?,
+            outputs: self
+                .outputs
+                .iter()
+                .map(|txo| txo.to_protobuf())
                 .try_collect()?,
             time: rmp_serde::to_vec(&self.time)?,
             nonce: self.nonce,
@@ -136,6 +148,7 @@ impl Default for Block {
             difficulty: GENESIS_DIFFICULTY,
             miner: PeerId::from_multihash(Multihash::default()).unwrap(),
             inputs: Vec::new(),
+            outputs: Vec::new(),
             time: Utc::now(),
             nonce: 0,
         }
@@ -162,6 +175,7 @@ impl<'a> BytesDecode<'a> for Block {
     }
 }
 
+// TODO: These hash types should be wrappers around one common hash type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct BlockHash(pub [u8; blake3::OUT_LEN]);
 
