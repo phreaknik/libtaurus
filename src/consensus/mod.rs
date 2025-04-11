@@ -3,6 +3,7 @@ pub mod block;
 mod database;
 mod transaction;
 pub mod vertex;
+mod voter_pool;
 
 use crate::randomx::RandomXVMInstance;
 use crate::{p2p, randomx};

@@ -1,7 +1,6 @@
 use super::{block, vertex, Block, BlockHash};
 use crate::{SlimVertex, VertexHash};
 use heed::{BytesDecode, BytesEncode, Database, Env, EnvOpenOptions, RwTxn};
-use libp2p::PeerId;
 use serde_derive::{Deserialize, Serialize};
 use std::{fs, path::PathBuf, result};
 
@@ -120,13 +119,6 @@ impl ConsensusDb {
             .db
             .get(&mut rtxn, &self.vertex_key(vhash))?
             .map(|v| v.try_into().expect("corrupt database entry")))
-    }
-
-    /// Select a random quorum of miners from the list of recently mined blocks. Will return a set
-    /// of 'count' unique miners, where each miner's probability of selection is weighted
-    /// proportionally to the number of blocks he has mined in the last 'age' blocks.
-    pub fn select_random_miners(&mut self, count: usize, age: usize) -> Result<Vec<PeerId>> {
-        todo!()
     }
 
     /// Construct the db key for the specified block

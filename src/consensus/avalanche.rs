@@ -2,15 +2,15 @@ use super::{
     block,
     database::ConsensusDb,
     transaction::{self, Txo, TxoHash},
-    vertex, Block, BlockHash, Event, SlimVertex, Vertex,
+    vertex,
+    voter_pool::{self, VoterPool},
+    Block, BlockHash, Event, SlimVertex, Vertex,
 };
 use crate::{
     p2p::{self, avalanche_rpc},
     params::{
-        AVALANCHE_ACCEPTANCE_THRESHOLD, AVALANCHE_QUERY_COUNT, AVALANCHE_QUORUM,
-        MAX_QUERY_MINER_AGE, QUERY_TIMEOUT_SEC,
+        AVALANCHE_ACCEPTANCE_THRESHOLD, AVALANCHE_QUERY_COUNT, AVALANCHE_QUORUM, QUERY_TIMEOUT_SEC,
     },
-    util::miner_stats::MinerStats,
     VertexHash,
 };
 use cached::{Cached, TimedCache};
@@ -70,6 +70,8 @@ pub enum Error {
     VertexReadLock,
     #[error("error acquiring write lock on a vertex")]
     VertexWriteLock,
+    #[error(transparent)]
+    VoterPool(#[from] voter_pool::Error),
     #[error("error acquiring write lock on the waitlist")]
     WaitlistWriteLock,
 }
@@ -111,8 +113,8 @@ pub struct Dag {
     /// The active edge of the DAG, i.e. the preferred vertices which don't yet have children
     frontier: HashMap<VertexHash, Arc<TracingRwLock<Vertex>>>,
 
-    /// Statistics about recent miners
-    miner_stats: HashMap<PeerId, MinerStats>,
+    /// Voter pool to select from for Avalanche queries
+    voter_pool: VoterPool,
 
     /// Database for block storage
     database: ConsensusDb,
@@ -141,7 +143,7 @@ impl Dag {
             undecided_txos: HashMap::new(),
             waitlist: WaitList::new(config.waitlist_cap),
             frontier: HashMap::new(),
-            miner_stats: HashMap::new(),
+            voter_pool: VoterPool::new(),
             database: ConsensusDb::open(&config.data_dir.join(DATABASE_DIR), true)
                 .expect("Failed to open consensus database"),
             scorecards: TimedCache::with_lifespan(QUERY_TIMEOUT_SEC),
@@ -152,7 +154,6 @@ impl Dag {
         dag.database
             .write_block(None, config.genesis)
             .expect("Failed to write genesis block");
-
         // Return the dag
         dag
     }
@@ -172,9 +173,18 @@ impl Dag {
         {
             // Block spends at least one UTXO, which does not exist in the active txo set
             Err(Error::UnknownTransactionInputs)
+        } else if block.prev_mined.is_some() && self.get_block(&block.prev_mined.unwrap()).is_err()
+        {
+            // Cannot accept this block until we have the prev_mined block from that miner
+            self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
+                block.miner,
+                avalanche_rpc::Request::GetBlock(block.prev_mined.unwrap()),
+            ))?;
+            Err(Error::MissingPrevMined)
         } else {
-            // Update our statistics for that miner
-            self.update_miner_stats(&block)?;
+            let block = Arc::new(block);
+            // Register this miner as a potential Avalanche voter
+            self.voter_pool.register(block.miner);
             // Add its outputs to the list of undecided TXOs
             for &txo in &block.outputs {
                 let txo_hash = txo.hash()?;
@@ -188,41 +198,16 @@ impl Dag {
             }
             // Add it to the list of undecided blocks
             info!("Registered new block {}", bhash.to_hex());
-            self.undecided_blocks.insert(bhash, Arc::new(block.clone()));
+            self.undecided_blocks.insert(bhash, block.clone());
             if build_vertex {
                 let slim_vertex =
                     Arc::new(SlimVertex::new(bhash, self.frontier.values().cloned())?);
                 self.try_insert_vertex(slim_vertex.clone(), None)?;
                 self.p2p_action_ch
                     .send(p2p::Action::Broadcast(p2p::MessageData::Vertex(
-                        slim_vertex.to_wire(block)?,
+                        slim_vertex.to_wire((*block).clone())?,
                     )))?;
             }
-            Ok(())
-        }
-    }
-
-    fn update_miner_stats(&mut self, block: &Block) -> Result<()> {
-        if let Some(prev_hash) = block.prev_mined {
-            if let Ok(prev_mined) = self.get_block(&prev_hash) {
-                let duration = block.time - prev_mined.time;
-                match self.miner_stats.get_mut(&block.miner) {
-                    Some(miner) => {
-                        miner.mined_block(block.difficulty as f64, duration);
-                    }
-                    None => {
-                        self.miner_stats.insert(block.miner, MinerStats::new());
-                    }
-                }
-                Ok(())
-            } else {
-                self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
-                    block.miner,
-                    avalanche_rpc::Request::GetBlock(prev_hash),
-                ))?;
-                Err(Error::MissingPrevMined)
-            }
-        } else {
             Ok(())
         }
     }
@@ -239,6 +224,7 @@ impl Dag {
         if let Ok((_vertex, preferred)) = self.get_vertex(&vhash) {
             return Ok(preferred);
         }
+        // TODO: should check if vertex or parents are in waitlist
 
         // TODO: How do we verify if this vertex ties back to genesis... Do we need to?
 
@@ -280,7 +266,13 @@ impl Dag {
         }
 
         // Query peers for their preference, according to the avalanche consensus protocol
-        self.query_peer_preferences(vhash)?;
+        match self.query_peer_preferences(vhash) {
+            Err(Error::VoterPool(voter_pool::Error::NotEnoughVoters)) => {
+                warn!("Not enough voters to query vertex preference");
+                Ok(())
+            }
+            other @ _ => other,
+        }?;
 
         // Add it to the collection of undecided vertices
         self.undecided_vertices.insert(vhash, rw_vertex.clone());
@@ -317,7 +309,7 @@ impl Dag {
         };
 
         // Retry vertices in the waitlist
-        // TODO: Waitlest rn only waits on missing parent. Also need to retry waitlist if new block
+        // TODO: Waitlist rn only waits on missing parent. Also need to retry waitlist if new block
         // TODO: Do this async?
         self.remove_and_retry_waitlist(vhash);
 
@@ -329,21 +321,17 @@ impl Dag {
     fn query_peer_preferences(&mut self, vhash: VertexHash) -> Result<()> {
         // TODO: this query could be initiated multiple times, if a block goes through waitlist
         // several times. Fix this. It should only happen once.
-        let voters = self
-            .database
-            .select_random_miners(AVALANCHE_QUERY_COUNT, MAX_QUERY_MINER_AGE)?
-            .into_iter()
-            .map(|peer| {
-                self.p2p_action_ch
-                    .send(p2p::Action::AvalancheRequest(
-                        peer,
-                        avalanche_rpc::Request::GetPreference(vhash),
-                    ))
-                    .map(|_| peer)
-            })
-            .try_collect()?;
-        self.scorecards
-            .cache_set(vhash, Scorecard::new_with_voters(voters));
+        let voters = self.voter_pool.select(AVALANCHE_QUERY_COUNT)?;
+        for &peer in &voters {
+            self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
+                peer,
+                avalanche_rpc::Request::GetPreference(vhash),
+            ))?;
+        }
+        self.scorecards.cache_set(
+            vhash,
+            Scorecard::new_with_voters(voters.into_iter().collect()),
+        );
         Ok(())
     }
 
@@ -700,10 +688,12 @@ impl Dag {
             }
             avalanche_rpc::Response::Preference(vhash, preferred) => {
                 if let Some(scorecard) = self.scorecards.cache_get_mut(&vhash) {
+                    // TODO: move this logic into method on Scorecard
                     // Make sure a peer's vote only gets counted once
                     if scorecard.pending.remove(&from_peer) {
                         scorecard.score += preferred as usize;
                     }
+                    let pending_len = scorecard.pending.len();
                     if scorecard.score >= AVALANCHE_QUORUM {
                         // Quorum has been reached. Award a chit and cancel the vote.
                         let mut accepted_vertices = Vec::new();
@@ -712,13 +702,16 @@ impl Dag {
                             vertex.chit = 1;
                             accepted_vertices.append(&mut self.recompute_confidences(v.clone()));
                         }
-                        self.scorecards.cache_remove(&vhash);
                         self.finalize_vertices(accepted_vertices)?;
                     } else if scorecard.score + scorecard.pending.len() < AVALANCHE_QUORUM {
                         // Quorum is not possible. Reset confidence and cancel the vote.
                         if let Some(v) = self.undecided_vertices.get(&vhash) {
                             self.reset_confidence(v.clone());
                         }
+                    }
+                    if pending_len == 0 {
+                        // TODO: also remove after timeout, in case of unresponsive peer
+                        // TODO: mark peers as unresponsive if not responded at expiry
                         self.scorecards.cache_remove(&vhash);
                     }
                 }
