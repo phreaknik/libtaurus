@@ -307,23 +307,3 @@ impl SlimVertex {
         }
     }
 }
-
-impl<'a> BytesEncode<'a> for SlimVertex {
-    type EItem = SlimVertex;
-
-    fn bytes_encode(
-        item: &'a Self::EItem,
-    ) -> std::result::Result<std::borrow::Cow<'a, [u8]>, Box<dyn std::error::Error>> {
-        Ok(rmp_serde::to_vec(item)?.into())
-    }
-}
-
-impl<'a> BytesDecode<'a> for SlimVertex {
-    type DItem = SlimVertex;
-
-    fn bytes_decode(
-        bytes: &'a [u8],
-    ) -> std::result::Result<Self::DItem, Box<dyn std::error::Error>> {
-        Ok(rmp_serde::from_slice(bytes)?)
-    }
-}

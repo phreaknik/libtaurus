@@ -228,26 +228,6 @@ impl Into<blake3::Hash> for BlockHash {
     }
 }
 
-impl<'a> BytesEncode<'a> for BlockHash {
-    type EItem = BlockHash;
-
-    fn bytes_encode(
-        item: &'a Self::EItem,
-    ) -> std::result::Result<std::borrow::Cow<'a, [u8]>, Box<dyn std::error::Error>> {
-        Ok(rmp_serde::to_vec(item)?.into())
-    }
-}
-
-impl<'a> BytesDecode<'a> for BlockHash {
-    type DItem = BlockHash;
-
-    fn bytes_decode(
-        bytes: &'a [u8],
-    ) -> std::result::Result<Self::DItem, Box<dyn std::error::Error>> {
-        Ok(rmp_serde::from_slice(bytes)?)
-    }
-}
-
 impl Default for BlockHash {
     fn default() -> Self {
         BlockHash([0; blake3::OUT_LEN])

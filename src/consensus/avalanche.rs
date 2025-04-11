@@ -143,7 +143,7 @@ impl Dag {
         };
         dag.scorecards.set_refresh(false);
         dag.database
-            .write_block(None, &config.genesis)
+            .write_block(None, config.genesis)
             .expect("Failed to write genesis block");
 
         // Return the dag
@@ -699,7 +699,7 @@ impl Dag {
             .iter()
             .filter_map(|hash| self.undecided_vertices.get(hash))
         {
-            let vertex = rw_vertex.write().map_err(|_| Error::VertexWriteLock)?;
+            let vertex = rw_vertex.read().map_err(|_| Error::VertexWriteLock)?;
             // Only finalize the block if it has no undecided parents
             if vertex.undecided_parents.len() == 0 {
                 // Remove this block from its children's undecided_parents lists
@@ -712,7 +712,11 @@ impl Dag {
                 }
                 // Write the block to the database
                 // TODO: Figure out how to batch these database writes
-                self.database.write_vertex(&vertex.slim()?).ok();
+                self.database.write_vertex(None, vertex.slim()?).ok();
+                // Remove this block's inputs from the set of undecided_txos
+                for txo_hash in &vertex.block.inputs {
+                    self.undecided_txos.remove(txo_hash);
+                }
             }
         }
         Ok(())
