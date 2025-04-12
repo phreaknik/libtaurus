@@ -25,6 +25,7 @@
 //!   avalanche participant AND have submitted appropriate proofs-of-work.
 
 mod consensus;
+mod hash;
 mod http;
 mod miner;
 mod p2p;

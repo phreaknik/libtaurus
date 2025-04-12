@@ -1,8 +1,6 @@
 use super::block;
 use crate::{p2p, Block, BlockHash};
-use heed::{BytesDecode, BytesEncode};
 use serde_derive::{Deserialize, Serialize};
-use std::fmt;
 use std::{collections::HashMap, result, sync::Arc};
 use tracing_mutex::stdsync::TracingRwLock;
 
@@ -17,6 +15,8 @@ pub enum Error {
     #[error(transparent)]
     Block(#[from] block::Error),
     #[error(transparent)]
+    Hash(#[from] crate::hash::Error),
+    #[error(transparent)]
     MsgPackDecode(#[from] rmp_serde::decode::Error),
     #[error(transparent)]
     MsgPackEncode(#[from] rmp_serde::encode::Error),
@@ -28,6 +28,9 @@ pub enum Error {
 
 /// Result type for vertex errors
 pub type Result<T> = result::Result<T, Error>;
+
+/// Type alias for vertex hashes
+pub type VertexHash = crate::hash::Hash;
 
 /// A vertex in the avalanche DAG. A vertex is essentially a block with parent & child links to
 /// assist DAG operations.
@@ -112,84 +115,6 @@ impl Vertex {
             parents: self.parents.clone(),
             block_hash: self.block.hash()?,
         })
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
-pub struct VertexHash([u8; blake3::OUT_LEN]);
-
-impl VertexHash {
-    /// Format the VertexHash as a hex string
-    pub fn to_hex(&self) -> String {
-        hex::encode(self.0)
-    }
-
-    /// Format the VertexHash as a short hex string, better for displaying VertexHashes in large
-    /// collections of data
-    pub fn to_short_hex(&self) -> String {
-        format!("{}..", hex::encode(&self.0[..4]))
-    }
-
-    /// Serialize into protobuf format
-    pub fn to_protobuf(&self) -> Result<p2p::avalanche_rpc::proto::Hash> {
-        Ok(p2p::avalanche_rpc::proto::Hash {
-            hash: rmp_serde::to_vec(&self)?,
-        })
-    }
-
-    /// Deserialize from protobuf format
-    pub fn from_protobuf(proto: &p2p::avalanche_rpc::proto::Hash) -> Result<VertexHash> {
-        Ok(VertexHash(rmp_serde::from_slice(&proto.hash)?))
-    }
-}
-
-impl fmt::Display for VertexHash {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.to_short_hex())
-    }
-}
-
-impl From<blake3::Hash> for VertexHash {
-    fn from(hash: blake3::Hash) -> Self {
-        VertexHash(*hash.as_bytes())
-    }
-}
-
-impl Into<blake3::Hash> for &VertexHash {
-    fn into(self) -> blake3::Hash {
-        blake3::Hash::from(self.0)
-    }
-}
-
-impl Into<blake3::Hash> for VertexHash {
-    fn into(self) -> blake3::Hash {
-        blake3::Hash::from(self.0)
-    }
-}
-
-impl<'a> BytesEncode<'a> for VertexHash {
-    type EItem = VertexHash;
-
-    fn bytes_encode(
-        item: &'a Self::EItem,
-    ) -> std::result::Result<std::borrow::Cow<'a, [u8]>, Box<dyn std::error::Error>> {
-        Ok(rmp_serde::to_vec(item)?.into())
-    }
-}
-
-impl<'a> BytesDecode<'a> for VertexHash {
-    type DItem = VertexHash;
-
-    fn bytes_decode(
-        bytes: &'a [u8],
-    ) -> std::result::Result<Self::DItem, Box<dyn std::error::Error>> {
-        Ok(rmp_serde::from_slice(bytes)?)
-    }
-}
-
-impl Default for VertexHash {
-    fn default() -> Self {
-        VertexHash([0; blake3::OUT_LEN])
     }
 }
 

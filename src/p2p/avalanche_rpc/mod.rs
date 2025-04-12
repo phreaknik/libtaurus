@@ -31,6 +31,8 @@ pub enum Event {
 pub enum Error {
     #[error(transparent)]
     Block(#[from] block::Error),
+    #[error(transparent)]
+    Hash(#[from] crate::hash::Error),
     #[error("request message is missing data")]
     IncompleteRequest,
     #[error("response message is missing data")]

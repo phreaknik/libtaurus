@@ -9,7 +9,7 @@ use heed::{BytesDecode, BytesEncode};
 use libp2p::{multihash::Multihash, PeerId};
 use num::{BigUint, FromPrimitive};
 use serde_derive::{Deserialize, Serialize};
-use std::{fmt, hash::Hash, result};
+use std::result;
 
 /// Current version of the block structure
 pub const VERSION: u32 = 0;
@@ -19,6 +19,8 @@ pub const VERSION: u32 = 0;
 pub enum Error {
     #[error(transparent)]
     Chrono(#[from] chrono::ParseError),
+    #[error(transparent)]
+    Hash(#[from] crate::hash::Error),
     #[error("invalid difficulty")]
     InvalidDifficulty,
     #[error("invalid proof-of-work")]
@@ -39,6 +41,9 @@ pub enum Error {
 
 /// Result type for block errors
 pub type Result<T> = result::Result<T, Error>;
+
+/// Type alias for block hashes
+pub type BlockHash = crate::hash::Hash;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Block {
@@ -216,65 +221,6 @@ impl<'a> BytesDecode<'a> for Block {
     }
 }
 
-// TODO: These hash types should be wrappers around one common hash type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
-pub struct BlockHash(pub [u8; blake3::OUT_LEN]);
-
-impl BlockHash {
-    /// Format the BlockHash as a hex string
-    pub fn to_hex(&self) -> String {
-        hex::encode(self.0)
-    }
-
-    /// Format the BlockHash as a short hex string, better for displaying BlockHashes in large
-    /// collections of data
-    pub fn to_short_hex(&self) -> String {
-        format!("{}..", hex::encode(&self.0[..4]))
-    }
-
-    /// Serialize into protobuf format
-    pub fn to_protobuf(&self) -> Result<p2p::avalanche_rpc::proto::Hash> {
-        Ok(p2p::avalanche_rpc::proto::Hash {
-            hash: rmp_serde::to_vec(&self)?,
-        })
-    }
-
-    /// Deserialize from protobuf format
-    pub fn from_protobuf(proto: &p2p::avalanche_rpc::proto::Hash) -> Result<BlockHash> {
-        Ok(BlockHash(rmp_serde::from_slice(&proto.hash)?))
-    }
-}
-
-impl fmt::Display for BlockHash {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.to_short_hex())
-    }
-}
-
-impl From<blake3::Hash> for BlockHash {
-    fn from(hash: blake3::Hash) -> Self {
-        BlockHash(*hash.as_bytes())
-    }
-}
-
-impl Into<blake3::Hash> for &BlockHash {
-    fn into(self) -> blake3::Hash {
-        blake3::Hash::from(self.0)
-    }
-}
-
-impl Into<blake3::Hash> for BlockHash {
-    fn into(self) -> blake3::Hash {
-        blake3::Hash::from(self.0)
-    }
-}
-
-impl Default for BlockHash {
-    fn default() -> Self {
-        BlockHash([0; blake3::OUT_LEN])
-    }
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct PrettyBlock {
     version: u32,
@@ -289,11 +235,7 @@ impl From<&Block> for PrettyBlock {
     fn from(block: &Block) -> Self {
         PrettyBlock {
             version: block.version,
-            inputs: block
-                .inputs
-                .iter()
-                .map(|p| p.0.iter().map(|b| format!("{b:02x}")).collect())
-                .collect(),
+            inputs: block.inputs.iter().map(|txo| txo.to_hex()).collect(),
             difficulty: block.difficulty,
             miner: block.miner,
             time: block.time,
