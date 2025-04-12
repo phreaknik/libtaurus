@@ -89,7 +89,7 @@ async fn task_fn(
     let sols_count_sender = start_stats();
     let randomx_vm =
         RandomXVMInstance::new(b"cordelia-randomx", RandomXFlag::get_recommended_flags()).unwrap();
-    let miner_id = PeerId::from(config.identity_key.public()); // TODO: need to set miner ID
+    let miner_id = PeerId::from(config.identity_key.public());
     info!("Starting miner...");
     let mut last_block = None;
     let mut results_receiver = spawn_mining_threads(
