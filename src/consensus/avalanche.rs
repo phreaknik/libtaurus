@@ -8,9 +8,7 @@ use super::{
 };
 use crate::{
     p2p::{self, avalanche_rpc},
-    params::{
-        AVALANCHE_ACCEPTANCE_THRESHOLD, AVALANCHE_QUERY_COUNT, AVALANCHE_QUORUM, QUERY_TIMEOUT_SEC,
-    },
+    params::{AVALANCHE_ACCEPTANCE_THRESHOLD, AVALANCHE_QUERY_COUNT, QUERY_TIMEOUT_SEC},
     VertexHash,
 };
 use cached::{Cached, TimedCache};
@@ -681,33 +679,35 @@ impl Dag {
             }
             avalanche_rpc::Response::Preference(vhash, preferred) => {
                 if let Some(scorecard) = self.scorecards.cache_get_mut(&vhash) {
-                    // TODO: move this logic into method on Scorecard
-                    // Make sure a peer's vote only gets counted once
-                    if let Some(voter) = scorecard.pending.remove(&from_peer) {
-                        scorecard.score += preferred as usize;
-                        voter.write().unwrap().count_vote();
-                    }
-                    let pending_len = scorecard.pending.len();
-                    if scorecard.score >= AVALANCHE_QUORUM {
-                        // Quorum has been reached. Award a chit and cancel the vote.
-                        let mut accepted_vertices = Vec::new();
-                        if let Some(v) = self.undecided_vertices.get(&vhash).map(|v| v.clone()) {
-                            let mut vertex = v.write().map_err(|_| Error::VertexWriteLock)?;
-                            vertex.chit = 1;
-                            accepted_vertices.append(&mut self.recompute_confidences(v.clone()));
+                    // Process this peer's vote
+                    match scorecard.register_vote(&from_peer, preferred)? {
+                        // Vote completed, vertex is preferred amongst peers
+                        Some(true) => {
+                            // Award a chit and cancel the vote.
+                            let mut accepted_vertices = Vec::new();
+                            if let Some(v) = self.undecided_vertices.get(&vhash).map(|v| v.clone())
+                            {
+                                let mut vertex = v.write().map_err(|_| Error::VertexWriteLock)?;
+                                vertex.chit = 1;
+                                accepted_vertices
+                                    .append(&mut self.recompute_confidences(v.clone()));
+                            }
+                            self.finalize_vertices(accepted_vertices)?;
                         }
-                        self.finalize_vertices(accepted_vertices)?;
-                    } else if scorecard.score + scorecard.pending.len() < AVALANCHE_QUORUM {
-                        // Quorum is not possible. Reset confidence and cancel the vote.
-                        if let Some(v) = self.undecided_vertices.get(&vhash) {
-                            self.reset_confidence(v.clone());
+                        // Vote completed, vertex is NOT preferred amongst peers
+                        Some(false) => {
+                            if let Some(v) = self.undecided_vertices.get(&vhash) {
+                                self.reset_confidence(v.clone());
+                            }
                         }
-                    }
-                    if pending_len == 0 {
-                        // TODO: also remove after timeout, in case of unresponsive peer
-                        self.scorecards.cache_remove(&vhash);
+                        // Vote is still open
+                        None => {}
                     }
                 }
+
+                // Flush the TimedCache to drop any expired scorecards. This process will trigger
+                // any peers which did not respond in time to get penalized in the scorecard drop
+                // trait implementation.
                 self.scorecards.flush();
             }
         })

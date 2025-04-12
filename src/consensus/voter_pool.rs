@@ -1,5 +1,5 @@
 use crate::{
-    params::{VOTER_EXPERATION_HRS, VOTER_REGISTRATION_WINDOW_HRS},
+    params::{AVALANCHE_QUORUM, VOTER_EXPERATION_HRS, VOTER_REGISTRATION_WINDOW_HRS},
     Block,
 };
 use chrono::{Duration, Utc};
@@ -164,6 +164,7 @@ pub struct Scorecard {
 }
 
 impl Scorecard {
+    /// Create a new scoreard for a running vote among the given voters
     pub fn new_with_voters<P>(voters: P) -> Scorecard
     where
         P: IntoIterator<Item = Arc<TracingRwLock<VoterRecord>>>,
@@ -179,10 +180,33 @@ impl Scorecard {
             score: 0,
         }
     }
+
+    /// Register the vote from a voter.
+    ///
+    /// Votes is only counted if this voter is one of the allowed voters and has not voted already.
+    /// Return ['Some'] if a decision has been reached (even if we're still awaiting some
+    /// votes). If the voters reched quorum for the corresponding vertex, then the result will
+    /// be `Some(true)`. If the vote completed without reaching quorum, the result will be
+    /// `Some(false)`. If the vote has not completed yet, the result will be `None`.
+    pub fn register_vote(&mut self, peer: &PeerId, preference: bool) -> Result<Option<bool>> {
+        // Make sure a peer's vote only gets counted once
+        if let Some(voter) = self.pending.remove(peer) {
+            self.score += preference as usize;
+            voter.write().unwrap().count_vote();
+        }
+        if self.score >= AVALANCHE_QUORUM {
+            Ok(Some(true))
+        } else if self.score + self.pending.len() < AVALANCHE_QUORUM {
+            Ok(Some(false))
+        } else {
+            Ok(None)
+        }
+    }
 }
 
 impl Drop for Scorecard {
     fn drop(&mut self) {
+        // Record a timeout for each peer which did not respond in time
         for (_id, record) in &self.pending {
             record.write().unwrap().count_timeout();
         }
