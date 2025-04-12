@@ -95,9 +95,8 @@ impl Block {
     }
 
     /// Compute the hash of the block
-    // TODO: maybe don't return result?
-    pub fn hash(&self) -> Result<BlockHash> {
-        Ok(blake3::hash(&rmp_serde::to_vec(self)?).into())
+    pub fn hash(&self) -> BlockHash {
+        blake3::hash(&rmp_serde::to_vec(self).expect("Serde encode failure in hash")).into()
     }
 
     /// Compute the mining target from the given difficulty

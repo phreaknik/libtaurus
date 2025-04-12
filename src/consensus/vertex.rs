@@ -105,7 +105,7 @@ impl Vertex {
 
     /// Compute the hash of the vertex
     pub fn hash(&self) -> Result<VertexHash> {
-        self.slim()?.hash()
+        Ok(self.slim()?.hash())
     }
 
     /// Convert into a ['SlimVertex']
@@ -113,7 +113,7 @@ impl Vertex {
         Ok(SlimVertex {
             version: self.version,
             parents: self.parents.clone(),
-            block_hash: self.block.hash()?,
+            block_hash: self.block.hash(),
         })
     }
 }
@@ -146,17 +146,17 @@ impl WireVertex {
     }
 
     /// Convert into a ['SlimVertex']
-    pub fn slim(&self) -> Result<SlimVertex> {
-        Ok(SlimVertex {
+    pub fn slim(&self) -> SlimVertex {
+        SlimVertex {
             version: self.version,
             parents: self.parents.clone(),
-            block_hash: self.block.hash()?,
-        })
+            block_hash: self.block.hash(),
+        }
     }
 
     /// Compute the hash of the vertex
-    pub fn hash(&self) -> Result<VertexHash> {
-        self.slim()?.hash()
+    pub fn hash(&self) -> VertexHash {
+        self.slim().hash()
     }
 }
 
@@ -189,8 +189,8 @@ impl SlimVertex {
     }
 
     /// Compute the hash of the vertex
-    pub fn hash(&self) -> Result<VertexHash> {
-        Ok(blake3::hash(&rmp_serde::to_vec(self)?).into())
+    pub fn hash(&self) -> VertexHash {
+        blake3::hash(&rmp_serde::to_vec(self).expect("Serde encode failure in hash")).into()
     }
 
     /// Deserialize from protobuf format
@@ -221,7 +221,7 @@ impl SlimVertex {
 
     /// Inflate the SlimVertex into a ['WireVertex']
     pub fn to_wire(&self, block: Block) -> Result<WireVertex> {
-        if self.block_hash != block.hash()? {
+        if self.block_hash != block.hash() {
             Err(Error::BadHash)
         } else {
             Ok(WireVertex {

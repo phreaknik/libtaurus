@@ -217,7 +217,7 @@ impl Runtime {
                     match action {
                         Action::SubmitBlock(block) => {
                             // Immediately forward the block on to our peers
-                            let hash = block.hash().unwrap();
+                            let hash = block.hash();
                             match block
                                 .verify_pow(&self.randomx_vm)
                                 .map_err(Error::from)
@@ -249,7 +249,7 @@ impl Runtime {
         match msg.data {
             p2p::MessageData::Vertex(wire_vertex) => {
                 let mut dag = self.dag.write().map_err(|_| Error::DagWriteLock)?;
-                let slim = wire_vertex.slim()?;
+                let slim = wire_vertex.slim();
                 match dag
                     .submit_block(wire_vertex.block, false)
                     .and_then(|_| dag.try_insert_vertex(Arc::new(slim), Some(msg.msg_source)))

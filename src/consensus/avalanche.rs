@@ -155,7 +155,7 @@ impl Dag {
     pub fn submit_block(&mut self, block: Block, build_vertex: bool) -> Result<()> {
         debug!("Block submitted:\n{block:?}");
         // TODO: need to check pow, difficulty, block validity, etc
-        let bhash = block.hash()?;
+        let bhash = block.hash();
         if let Ok(Some(_)) = self.database.read_block(&bhash) {
             // First see if the block is already in the database of decided blocks
             Ok(())
@@ -180,7 +180,7 @@ impl Dag {
             self.voter_pool.register_from_block(block.clone());
             // Add its outputs to the list of undecided TXOs
             for &txo in &block.outputs {
-                let txo_hash = txo.hash()?;
+                let txo_hash = txo.hash();
                 if self
                     .undecided_txos
                     .insert(txo_hash, DagTxo::new(txo))
@@ -213,7 +213,7 @@ impl Dag {
         sender: Option<PeerId>,
     ) -> Result<bool> {
         // First see if we already have this vertex
-        let vhash = slim_vertex.hash()?;
+        let vhash = slim_vertex.hash();
         if let Ok((_vertex, preferred)) = self.get_vertex(&vhash) {
             return Ok(preferred);
         }
@@ -333,7 +333,7 @@ impl Dag {
         slim_vertex: Arc<SlimVertex>,
         sender: Option<PeerId>,
     ) -> Result<()> {
-        let vhash = slim_vertex.hash()?;
+        let vhash = slim_vertex.hash();
         // Look up block if missing
         let opt_block = self.undecided_blocks.get(&slim_vertex.block_hash);
         if opt_block.is_none() {
@@ -473,7 +473,7 @@ impl Dag {
         if let Ok(Some(descendents)) = self.waitlist.remove(&vhash) {
             for descendent in descendents {
                 let bhash = descendent.block_hash;
-                let vhash = descendent.hash().unwrap();
+                let vhash = descendent.hash();
                 if let Err(Error::UnknownTransactionInputs) =
                     self.try_insert_vertex(descendent, None)
                 {
@@ -660,21 +660,19 @@ impl Dag {
             // Do we try to find the requested data on the DHT instead?
             avalanche_rpc::Response::Error(_) => todo!(),
             avalanche_rpc::Response::Block(block) => {
-                if let Ok(bhash) = block.hash() {
-                    debug!("received block response {bhash}={block:?}");
-                    // TODO: need to check POW here
-                    if let Err(e) = self.submit_block(block, false) {
-                        debug!("unable to insert requested block {bhash}: {e}");
-                    }
+                let bhash = block.hash();
+                debug!("received block response {bhash}={block:?}");
+                // TODO: need to check POW here
+                if let Err(e) = self.submit_block(block, false) {
+                    debug!("unable to insert requested block {bhash}: {e}");
                 }
             }
             avalanche_rpc::Response::Vertex(slim_vertex) => {
-                if let Ok(vhash) = slim_vertex.hash() {
-                    debug!("received vertex response {vhash}={slim_vertex:?}");
-                    // TODO: need to check POW here
-                    if let Err(e) = self.try_insert_vertex(slim_vertex, Some(from_peer)) {
-                        debug!("unable to insert requested vertex {vhash}: {e}");
-                    }
+                let vhash = slim_vertex.hash();
+                debug!("received vertex response {vhash}={slim_vertex:?}");
+                // TODO: need to check POW here
+                if let Err(e) = self.try_insert_vertex(slim_vertex, Some(from_peer)) {
+                    debug!("unable to insert requested vertex {vhash}: {e}");
                 }
             }
             avalanche_rpc::Response::Preference(vhash, preferred) => {

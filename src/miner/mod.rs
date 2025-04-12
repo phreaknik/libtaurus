@@ -127,8 +127,8 @@ async fn task_fn(
             // Handle results from the mining threads
             Some(block) = results_receiver.recv() => {
                 if block.verify_pow(&randomx_vm).is_ok() {
-                    last_block = Some(block.hash().unwrap());
-                    info!("Mined a new block {}", block.hash().unwrap().to_hex());
+                    last_block = Some(block.hash());
+                    info!("Mined a new block {}", block.hash().to_hex());
                     if consensus_action_ch.send(consensus::Action::SubmitBlock(block)).is_err() {
                         error!("Stopping...");
                     }

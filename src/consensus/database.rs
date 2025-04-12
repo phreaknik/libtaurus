@@ -64,7 +64,7 @@ impl ConsensusDb {
         let mut wtxn = wtxn.unwrap_or(self.env.write_txn().unwrap());
         self.db.put(
             &mut wtxn,
-            &self.block_key(&block.hash()?),
+            &self.block_key(&block.hash()),
             &DbEntry::from(block),
         )?;
         Ok(wtxn)
@@ -101,7 +101,7 @@ impl ConsensusDb {
         vertex: SlimVertex,
     ) -> Result<RwTxn<'a, 'a>> {
         let mut wtxn = wtxn.unwrap_or(self.env.write_txn().unwrap());
-        let vhash = vertex.hash()?;
+        let vhash = vertex.hash();
         self.db.put(
             &mut wtxn,
             &self.link_key(&vertex.block_hash),

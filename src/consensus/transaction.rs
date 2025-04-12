@@ -31,8 +31,8 @@ pub struct Txo {
 
 impl Txo {
     /// Compute the hash of the transaction output
-    pub fn hash(&self) -> Result<TxoHash> {
-        Ok(blake3::hash(&rmp_serde::to_vec(self)?).into())
+    pub fn hash(&self) -> TxoHash {
+        blake3::hash(&rmp_serde::to_vec(self).expect("Serde encode failure in hash")).into()
     }
 
     /// Deserialize from protobuf format
