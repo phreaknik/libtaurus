@@ -220,7 +220,6 @@ async fn stats_fn(mut solutions_receiver: UnboundedReceiver<usize>) {
 
             // print stats
             _ = ticker.tick() => {
-                //TODO: Use EWMA for this
                 let rate = count/ STATS_PERIOD_SECOND.as_secs();
                 count = 0;
                 info!("Current hashrate: {}", util::human_readable(rate, "h/s"));
