@@ -41,7 +41,7 @@ use p2p::PeerDatabase;
 use std::{fs, path::PathBuf};
 use tokio::{self, select};
 use tracing::{error, trace};
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{fmt::time::UtcTime, EnvFilter};
 
 /// File name of the stored identity_key
 const IDENTITY_KEY_FILE: &str = "identity_key";
@@ -179,6 +179,7 @@ fn parse_cli_args() -> ArgMatches {
 /// Set up logger
 fn setup_logger<'a>(args: &'a ArgMatches) {
     tracing_subscriber::fmt()
+        .with_timer(UtcTime::rfc_3339()) // TODO: shorter timestamps
         .with_env_filter(EnvFilter::from_default_env().add_directive(
             match args.get_count("verbosity") {
                 1 => "cordelia=debug".parse().unwrap(),
