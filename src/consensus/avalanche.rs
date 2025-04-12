@@ -705,7 +705,6 @@ impl Dag {
                     }
                     if pending_len == 0 {
                         // TODO: also remove after timeout, in case of unresponsive peer
-                        // TODO: mark peers as unresponsive if not responded at expiry
                         self.scorecards.cache_remove(&vhash);
                     }
                 }

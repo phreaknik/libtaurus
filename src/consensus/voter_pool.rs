@@ -1,4 +1,7 @@
-use crate::{params::VOTER_REGISTRATION_WINDOW_HRS, Block};
+use crate::{
+    params::{VOTER_EXPERATION_HRS, VOTER_REGISTRATION_WINDOW_HRS},
+    Block,
+};
 use chrono::{Duration, Utc};
 use libp2p::PeerId;
 use rand::{
@@ -30,9 +33,21 @@ impl VoterPool {
     /// Create new instance of a voter pool
     pub fn new() -> VoterPool {
         VoterPool {
-            // TODO: how do miners get removed from the pool? multiple failed queries?
             all_voters: HashMap::new(),
             sieve: Vec::new(),
+        }
+    }
+
+    /// Remove any miners which have become unresponsive for some time
+    pub fn remove_offline_miners(&mut self) {
+        let offline = self
+            .all_voters
+            .iter()
+            .filter(|(_peer, rw_record)| rw_record.read().unwrap().is_offline())
+            .map(|(&id, _record)| id)
+            .collect::<Vec<_>>();
+        for peer in &offline {
+            self.all_voters.remove(peer);
         }
     }
 
@@ -53,6 +68,7 @@ impl VoterPool {
 
     /// Select a number of voters. Resets the sieve if its empty.
     pub fn select(&mut self, count: usize) -> Result<Vec<Arc<TracingRwLock<VoterRecord>>>> {
+        self.remove_offline_miners();
         if count == 0 {
             Ok(Vec::new())
         } else if self.all_voters.len() < count {
@@ -107,6 +123,12 @@ impl VoterRecord {
     /// Return the ['PeerID'] associated with this voter record
     pub fn id(&self) -> PeerId {
         self.id
+    }
+
+    /// Is this voter unresponsive?
+    pub fn is_offline(&self) -> bool {
+        Utc::now() - self.last_block.time > Duration::hours(VOTER_EXPERATION_HRS)
+            && self.query_timeouts > 0
     }
 
     /// Is this voter active and available to vote?

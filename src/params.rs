@@ -22,5 +22,8 @@ pub const AVALANCHE_ACCEPTANCE_THRESHOLD: usize = 9;
 /// Time we look back for mined blocks to consider a miner for Avalanche voting
 pub const VOTER_REGISTRATION_WINDOW_HRS: i64 = 24;
 
+/// Time after which we remove an inactive miner from the voter pool
+pub const VOTER_EXPERATION_HRS: i64 = 72;
+
 /// Time we allow for each peer in a query to respond
 pub const QUERY_TIMEOUT_SEC: u64 = 10;
