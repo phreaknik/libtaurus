@@ -83,7 +83,8 @@ impl WaitList {
             .by_block
             .write()
             .map_err(|_| Error::WaitlistWriteLock)?
-            .pop(bhash))
+            .get(bhash)
+            .cloned())
     }
 
     /// Get any vertices waiting on the specified parent vertex
@@ -92,6 +93,20 @@ impl WaitList {
             .by_parent
             .write()
             .map_err(|_| Error::WaitlistWriteLock)?
-            .pop(vhash))
+            .get(vhash)
+            .cloned())
+    }
+
+    /// Remove a vertex from the waitlist
+    pub fn remove(&mut self, vhash: &VertexHash, bhash: &BlockHash) -> Result<()> {
+        self.by_parent
+            .write()
+            .map_err(|_| Error::WaitlistWriteLock)?
+            .pop(vhash);
+        self.by_block
+            .write()
+            .map_err(|_| Error::WaitlistWriteLock)?
+            .pop(bhash);
+        Ok(())
     }
 }

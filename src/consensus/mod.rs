@@ -228,14 +228,13 @@ impl Runtime {
                 Some(action) = self.actions_in.recv() => {
                     match action {
                         Action::SubmitBlock(block) => {
-                            // Immediately forward the block on to our peers
                             let hash = block.hash();
                             // Insert the vertex into the DAG
                             match self
                                 .dag
                                 .write()
                                 .map_err(|_| Error::DagWriteLock)
-                                .and_then(|mut dag| dag.try_insert_block(block).map_err(Error::from))
+                                .and_then(|mut dag| dag.try_insert_block(block, true).map_err(Error::from))
                             {
                                 Ok(_) => {},
                                 Err(Error::P2pActionCh(e)) => return error!("Stopping due to p2p_action channel error: {e}"),
@@ -257,7 +256,11 @@ impl Runtime {
         match msg.data {
             p2p::MessageData::Vertex(wire_vertex) => {
                 let mut dag = self.dag.write().map_err(|_| Error::DagWriteLock)?;
-                match dag.try_insert_vertices(once(Arc::new(wire_vertex)), Some(msg.msg_source)) {
+                match dag.try_insert_vertices(
+                    once(Arc::new(wire_vertex)),
+                    Some(msg.msg_source),
+                    false,
+                ) {
                     Err(
                         avalanche::Error::MissingBlock(_)
                         | avalanche::Error::MissingParents(_)

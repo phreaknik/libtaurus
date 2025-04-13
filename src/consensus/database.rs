@@ -53,10 +53,7 @@ impl ConsensusDb {
     }
 
     /// Read a block from the database
-    pub fn lookup_vertex_for_block<'a>(
-        &'a mut self,
-        bhash: &BlockHash,
-    ) -> Result<Option<VertexHash>> {
+    pub fn lookup_vertex_for_block<'a>(&'a self, bhash: &BlockHash) -> Result<Option<VertexHash>> {
         let mut rtxn = self.env.read_txn().unwrap();
         Ok(self
             .db
@@ -92,7 +89,7 @@ impl ConsensusDb {
     }
 
     /// Read a vertex from the database
-    pub fn read_vertex<'a>(&'a mut self, vhash: &VertexHash) -> Result<Option<WireVertex>> {
+    pub fn read_vertex<'a>(&'a self, vhash: &VertexHash) -> Result<Option<WireVertex>> {
         let mut rtxn = self.env.read_txn().unwrap();
         Ok(self
             .db

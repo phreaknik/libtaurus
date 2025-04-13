@@ -173,8 +173,8 @@ impl Dag {
         self.config.genesis.hash()
     }
 
-    /// Submit a block as available to be inserted into the DAG
-    fn submit_block(&mut self, block: Block) -> Result<()> {
+    /// Register a block as available to be inserted into the DAG
+    fn register_block(&mut self, block: Block) -> Result<()> {
         // Check the block has sufficient proof-of-work
         block.verify_pow(&self.randomx_vm)?;
         let bhash = block.hash();
@@ -187,24 +187,34 @@ impl Dag {
             self.undecided_blocks.insert(bhash, arc_block.clone());
             // Register this miner as a potential Avalanche voter
             self.voter_pool.register_from_block(arc_block);
+            // Attempt to insert any vertices waiting on that block
+            if let Some(vertices) = self.waitlist.get_by_block(&bhash)? {
+                self.try_insert_vertices(vertices, None, false)?;
+            }
             Ok(())
         }
     }
 
     /// Try to submit this block as a vertex at the frontier of the DAG
-    pub fn try_insert_block(&mut self, block: Block) -> Result<()> {
-        self.try_insert_vertex(
-            Arc::new(WireVertex::new(
+    pub fn try_insert_block(&mut self, block: Block, broadcast: bool) -> Result<()> {
+        self.try_insert_vertices(
+            once(Arc::new(WireVertex::new(
                 block,
                 self.frontier.values().cloned(),
                 true,
-            )?),
+            )?)),
             None,
+            broadcast,
         )
     }
 
     /// Try to insert a list of vertices, and attempt to also insert any known waiting children
-    pub fn try_insert_vertices<V>(&mut self, vertices: V, sender: Option<PeerId>) -> Result<()>
+    pub fn try_insert_vertices<V>(
+        &mut self,
+        vertices: V,
+        sender: Option<PeerId>,
+        broadcast: bool,
+    ) -> Result<()>
     where
         V: IntoIterator<Item = Arc<WireVertex>>,
     {
@@ -217,12 +227,27 @@ impl Dag {
         for wire_vertex in vertices {
             let vhash = wire_vertex.hash();
             let bhash = wire_vertex.bhash;
-            match self.try_insert_vertex(wire_vertex, sender) {
-                Ok(_) => Ok(successful.push((vhash, bhash))),
-                Err(Error::MissingPrevMined(_)) => Ok(()),
-                Err(Error::MissingBlock(_)) => Ok(()),
-                Err(Error::MissingParents(_)) => Ok(()),
-                other @ _ => other,
+            match self.try_insert_vertex(wire_vertex, sender, broadcast) {
+                Ok(preferred) => {
+                    info!(
+                        "Inserted {}preferred vertex {}",
+                        if !preferred { "non-" } else { "" },
+                        vhash.to_hex()
+                    );
+                    Ok(successful.push((vhash, bhash)))
+                }
+                Err(
+                    e @ Error::MissingPrevMined(_)
+                    | e @ Error::MissingBlock(_)
+                    | e @ Error::MissingParents(_),
+                ) => {
+                    info!("Error inserting {vhash}: {e}");
+                    Ok(())
+                }
+                Err(e) => {
+                    info!("Error inserting {vhash}: {e}");
+                    Err(e)
+                }
             }?;
         }
         // Attempt to insert any dependents of the successful insertions
@@ -245,12 +270,27 @@ impl Dag {
                     let bhash = wire_vertex.bhash;
                     // Exclude sender, because there is no expectation the sender can serve a
                     // missing data request for items in the waitlist.
-                    match self.try_insert_vertex(wire_vertex, None) {
-                        Ok(_) => Ok(successful.push((vhash, bhash))),
-                        Err(Error::MissingPrevMined(_)) => Ok(()),
-                        Err(Error::MissingBlock(_)) => Ok(()),
-                        Err(Error::MissingParents(_)) => Ok(()),
-                        other @ _ => other,
+                    match self.try_insert_vertex(wire_vertex, None, false) {
+                        Ok(preferred) => {
+                            info!(
+                                "Inserted {}preferred vertex {}",
+                                if !preferred { "non-" } else { "" },
+                                vhash.to_hex()
+                            );
+                            Ok(successful.push((vhash, bhash)))
+                        }
+                        Err(
+                            e @ Error::MissingPrevMined(_)
+                            | e @ Error::MissingBlock(_)
+                            | e @ Error::MissingParents(_),
+                        ) => {
+                            info!("Error inserting {vhash}: {e}");
+                            Ok(())
+                        }
+                        Err(e) => {
+                            info!("Error inserting {vhash}: {e}");
+                            Err(e)
+                        }
                     }?;
                 }
             }
@@ -258,19 +298,22 @@ impl Dag {
         Ok(())
     }
 
+    /// Attempt to insert the vertex into the DAG. If successful, will return true if the vertex is
+    /// currently strongly preferred.
     fn try_insert_vertex(
         &mut self,
         wire_vertex: Arc<WireVertex>,
         sender: Option<PeerId>,
-    ) -> Result<()> {
+        broadcast: bool,
+    ) -> Result<bool> {
         // TODO: need to check difficulty, block validity, etc
 
         let vhash = wire_vertex.hash();
         debug!("Vertex submitted: {vhash} = {wire_vertex}");
 
         // Check if we already have this vertex
-        if self.get_vertex(&vhash).is_ok() {
-            return Ok(());
+        if let Ok((_v, preferred)) = self.get_vertex(&vhash) {
+            return Ok(preferred);
         }
 
         // If available, check proof-of-work before doing anything
@@ -278,12 +321,8 @@ impl Dag {
             if wire_vertex.bhash != block.hash() {
                 return Err(Error::CorruptBlockHash);
             }
-            self.submit_block(block.clone())?;
+            self.register_block(block.clone())?;
         }
-
-        // Make sure the block referenced in this vertex can be spent
-        // TODO: be sure to check this _at the parent state. Retry if fail.
-        let conflict_free = self.check_conflicts(&wire_vertex)?;
 
         // Make sure this vertex isn't missing any necessary data to process this vertex
         match self.request_if_missing_data(&wire_vertex, sender) {
@@ -301,6 +340,10 @@ impl Dag {
             Ok(filled) => Ok(filled),
         }?;
 
+        // Make sure the block referenced in this vertex can be spent
+        // TODO: be sure to check this _at the parent state. Retry if fail.
+        let (conflict_free, opt_block) = self.check_conflicts(&wire_vertex)?;
+
         // Create a mutex protected vertex for inserting into the DAG structure
         let rw_vertex = Arc::new(TracingRwLock::new(Vertex::new(
             wire_vertex.as_ref(),
@@ -314,19 +357,24 @@ impl Dag {
 
         // If this vertex is conflict free, mark it as the preferred spender of its tx inputs
         if conflict_free {
-            // TODO: too many block.clones here
-            for txo_hash in &wire_vertex.block.clone().unwrap().inputs {
-                if let Some(txo) = self.undecided_txos.get_mut(txo_hash) {
-                    txo.preferred_spender = Some(rw_vertex.clone());
-                } else {
-                    error!("Attempt to spend unknown txo");
-                    return Err(Error::UnknownTransactionInputs);
-                }
+            for txo_hash in opt_block
+                .as_ref()
+                .map(|b| b.inputs.iter())
+                .unwrap_or_else(|| wire_vertex.block.as_ref().unwrap().inputs.iter())
+            {
+                self.undecided_txos
+                    .get_mut(txo_hash)
+                    .expect("Attempted to spend non-existent UTXO")
+                    .preferred_spender = Some(rw_vertex.clone());
             }
         };
 
         // Add its outputs to the list of undecided TXOs
-        for &txo in &wire_vertex.block.clone().unwrap().outputs {
+        for &txo in opt_block
+            .as_ref()
+            .map(|b| b.outputs.iter())
+            .unwrap_or_else(|| wire_vertex.block.as_ref().unwrap().outputs.iter())
+        {
             let txo_hash = txo.hash();
             if self
                 .undecided_txos
@@ -340,7 +388,7 @@ impl Dag {
         // TODO: How do we verify if this vertex ties back to genesis... Do we need to?
 
         // Broadcast to peers if this vertex didn't already come from our peers
-        if sender.is_none() {
+        if broadcast {
             self.p2p_action_ch
                 .send(p2p::Action::Broadcast(p2p::MessageData::Vertex(
                     wire_vertex.as_ref().clone(),
@@ -366,6 +414,9 @@ impl Dag {
                 .insert(vhash, rw_vertex.clone());
         }
 
+        // Remove this vertex from the waitlist
+        self.waitlist.remove(&vhash, &wire_vertex.bhash)?;
+
         if vertex.strongly_preferred {
             // Remove its parents from the frontier, as they are no longer the youngest
             for parent in &vertex.parents {
@@ -378,12 +429,8 @@ impl Dag {
             // Notify subscribers of new frontier
             self.events_ch
                 .send(Event::NewFrontier(self.frontier.keys().cloned().collect()))?;
-
-            info!("Inserted preferred vertex {}", vhash.to_hex());
-        } else {
-            info!("Inserted non-preferred vertex {}", vhash.to_hex());
         }
-        Ok(())
+        Ok(vertex.strongly_preferred)
     }
 
     /// Check for missing data and request them from peers
@@ -392,6 +439,7 @@ impl Dag {
         wire_vertex: &WireVertex,
         sender: Option<PeerId>,
     ) -> Result<()> {
+        // TODO: check waitlist before requesting!
         // Lookup any missing parents
         let missing_parents: Vec<VertexHash> = wire_vertex
             .parents
@@ -469,35 +517,44 @@ impl Dag {
         Ok(())
     }
 
-    /// Check that the vertex uniquely spends UTXOs. Returns true if no conflicts.
-    fn check_conflicts(&mut self, wire_vertex: &WireVertex) -> Result<bool> {
+    /// Check that the vertex uniquely spends UTXOs. Returns true if no conflicts. Also reurns a
+    /// reference to the block, if the block is not included in the WireVertex.
+    fn check_conflicts(&mut self, wire_vertex: &WireVertex) -> Result<(bool, Option<Arc<Block>>)> {
         // Make sure transaction inputs are in the txo set. If they are not in the txo set at all,
         // then reject this vertex entirely. If they are in the txo set, but spent by another
         // vertex, it is still possible to insert this vertex, but it will be in conflict and
         // according to Avalanche consensus rules, it will not be accepted unless its confidence
         // exceeds that of its conflicts.
-        if let Some(block) = &wire_vertex.block {
-            if !block
-                .inputs
+
+        let check_known_utxos = |b: &Block| {
+            if b.inputs
                 .iter()
                 .all(|txo_hash| self.undecided_txos.contains_key(txo_hash))
             {
+                Ok(())
+            } else {
                 warn!("Received block spends unknown transaction outputs.");
                 Err(Error::UnknownTransactionInputs)
-            } else if block.inputs.iter().any(|txo_hash| {
+            }
+        };
+
+        let conflict_free = |b: &Block| {
+            b.inputs.iter().all(|txo_hash| {
                 self.undecided_txos
                     .get(txo_hash)
                     .expect("undecided vertex should already have validated inputs")
                     .preferred_spender
-                    .is_some()
-            }) {
-                debug!("Received vertex has conflicts");
-                Ok(false)
-            } else {
-                Ok(true)
-            }
+                    .is_none()
+            })
+        };
+
+        if let Some(block) = &wire_vertex.block {
+            check_known_utxos(block)?;
+            Ok((conflict_free(block), None))
         } else {
-            Err(Error::MissingBlock(wire_vertex.bhash))
+            let block = self.get_block(&wire_vertex.bhash)?;
+            check_known_utxos(&block)?;
+            Ok((conflict_free(&block), Some(block)))
         }
     }
 
@@ -518,7 +575,7 @@ impl Dag {
     }
 
     /// Look up a block from the DAG
-    pub fn get_block(&mut self, bhash: &BlockHash) -> Result<Arc<Block>> {
+    pub fn get_block(&self, bhash: &BlockHash) -> Result<Arc<Block>> {
         match self.undecided_blocks.get(bhash) {
             Some(block) => Ok(block.clone()),
             None => {
@@ -659,7 +716,7 @@ impl Dag {
         match request {
             avalanche_rpc::Request::GetBlock(bhash) => match self.get_block(&bhash) {
                 Ok(block) => {
-                    trace!("Sending block response {bhash}={block}");
+                    debug!("Sending block response {bhash}={block}");
                     Ok(Some(avalanche_rpc::Response::Block((*block).clone())))
                 }
                 Err(Error::NotFound) => {
@@ -673,7 +730,7 @@ impl Dag {
             },
             avalanche_rpc::Request::GetVertex(vhash) => match self.get_vertex(&vhash) {
                 Ok((vertex, _preferred)) => {
-                    trace!("Sending vertex response {vhash}={vertex}");
+                    debug!("Sending vertex response {vhash}={vertex}");
                     Ok(Some(avalanche_rpc::Response::Vertex(vertex)))
                 }
                 Err(Error::NotFound) => {
@@ -715,23 +772,23 @@ impl Dag {
         Ok(match response {
             avalanche_rpc::Response::Block(block) => {
                 let bhash = block.hash();
-                debug!("received block response {bhash}={block}");
-                match self.submit_block(block) {
+                debug!("Received block response {bhash}={block}");
+                match self.register_block(block) {
                     Err(Error::Block(block::Error::InvalidPoW)) => {
                         // TODO: ban this peer for sending us a block with invalid POW
                         todo!()
                     }
-                    Err(e) => debug!("unable to insert requested block {bhash}: {e}"),
+                    Err(e) => debug!("Unable to insert requested block {bhash}: {e}"),
                     _ => {}
                 }
             }
             avalanche_rpc::Response::Vertex(wire_vertex) => {
                 let vhash = wire_vertex.hash();
-                debug!("received vertex response {vhash}={wire_vertex}");
+                debug!("Received vertex response {vhash}={wire_vertex}");
                 if let Err(e) =
-                    self.try_insert_vertices(once(Arc::new(wire_vertex)), Some(from_peer))
+                    self.try_insert_vertices(once(Arc::new(wire_vertex)), Some(from_peer), false)
                 {
-                    debug!("unable to insert requested vertex {vhash}: {e}");
+                    debug!("Unable to insert requested vertex {vhash}: {e}");
                 }
             }
             avalanche_rpc::Response::Preference(vhash, preferred) => {
