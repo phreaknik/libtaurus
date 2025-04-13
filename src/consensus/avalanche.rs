@@ -9,6 +9,7 @@ use super::{
 use crate::{
     p2p::{self, avalanche_rpc},
     params::{AVALANCHE_ACCEPTANCE_THRESHOLD, AVALANCHE_QUERY_COUNT, QUERY_TIMEOUT_SEC},
+    randomx::RandomXVMInstance,
     VertexHash,
 };
 use cached::{Cached, TimedCache};
@@ -114,6 +115,9 @@ pub struct Dag {
     /// Collection of scorecards tracking the progress of pending queries
     scorecards: TimedCache<VertexHash, Scorecard>,
 
+    /// RandomX VM instance for verifying proof-of-work
+    randomx_vm: RandomXVMInstance,
+
     /// Channel to make requests of the P2P network
     p2p_action_ch: UnboundedSender<p2p::Action>,
 
@@ -125,6 +129,7 @@ impl Dag {
     /// Create a new DAG
     pub fn new(
         config: Config,
+        randomx_vm: RandomXVMInstance,
         p2p_action_ch: UnboundedSender<p2p::Action>,
         events_ch: broadcast::Sender<Event>,
     ) -> Dag {
@@ -139,6 +144,7 @@ impl Dag {
             database: ConsensusDb::open(&config.data_dir.join(DATABASE_DIR), true)
                 .expect("Failed to open consensus database"),
             scorecards: TimedCache::with_lifespan(QUERY_TIMEOUT_SEC),
+            randomx_vm,
             p2p_action_ch,
             events_ch,
         };
@@ -154,7 +160,8 @@ impl Dag {
     /// referencing this block can be inserted.
     pub fn submit_block(&mut self, block: Block, build_vertex: bool) -> Result<()> {
         debug!("Block submitted:\n{block:?}");
-        // TODO: need to check pow, difficulty, block validity, etc
+        // TODO: need to check difficulty, block validity, etc
+        block.verify_pow(&self.randomx_vm)?;
         let bhash = block.hash();
         if let Ok(Some(_)) = self.database.read_block(&bhash) {
             // First see if the block is already in the database of decided blocks
@@ -662,15 +669,18 @@ impl Dag {
             avalanche_rpc::Response::Block(block) => {
                 let bhash = block.hash();
                 debug!("received block response {bhash}={block:?}");
-                // TODO: need to check POW here
-                if let Err(e) = self.submit_block(block, false) {
-                    debug!("unable to insert requested block {bhash}: {e}");
+                match self.submit_block(block, false) {
+                    Err(Error::Block(block::Error::InvalidPoW)) => {
+                        // TODO: ban this peer for sending us a block with invalid POW
+                        todo!()
+                    }
+                    Err(e) => debug!("unable to insert requested block {bhash}: {e}"),
+                    _ => {}
                 }
             }
             avalanche_rpc::Response::Vertex(slim_vertex) => {
                 let vhash = slim_vertex.hash();
                 debug!("received vertex response {vhash}={slim_vertex:?}");
-                // TODO: need to check POW here
                 if let Err(e) = self.try_insert_vertex(slim_vertex, Some(from_peer)) {
                     debug!("unable to insert requested vertex {vhash}: {e}");
                 }

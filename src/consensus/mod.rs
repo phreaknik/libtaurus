@@ -136,7 +136,6 @@ pub fn start(
 pub struct Runtime {
     _config: Config,
     peer_id: Option<PeerId>,
-    randomx_vm: RandomXVMInstance,
     dag: TracingRwLock<avalanche::Dag>,
     actions_in: UnboundedReceiver<Action>,
     events_out: broadcast::Sender<Event>,
@@ -163,11 +162,11 @@ impl Runtime {
             _config: config.clone(),
             dag: TracingRwLock::new(Dag::new(
                 config.avalanche,
+                randomx_vm,
                 p2p_action_ch.clone(),
                 events_out.clone(),
             )),
             peer_id: None,
-            randomx_vm,
             actions_in,
             events_out,
             p2p_action_ch,
@@ -218,17 +217,13 @@ impl Runtime {
                         Action::SubmitBlock(block) => {
                             // Immediately forward the block on to our peers
                             let hash = block.hash();
-                            match block
-                                .verify_pow(&self.randomx_vm)
-                                .map_err(Error::from)
-                                .and_then(|_| {
-                                    // Insert the vertex into the DAG
-                                    self.dag
-                                        .write()
-                                        .map_err(|_| Error::DagWriteLock)?
-                                        .submit_block(block, true)
-                                        .map_err(Error::from)
-                                }) {
+                            // Insert the vertex into the DAG
+                            match self
+                                .dag
+                                .write()
+                                .map_err(|_| Error::DagWriteLock)
+                                .and_then(|mut dag| dag.submit_block(block, true).map_err(Error::from))
+                            {
                                 Ok(_) => {},
                                 Err(Error::P2pActionCh(e)) => return error!("Stopping due to p2p_action channel error: {e}"),
                                 Err(e) => error!("Failed to submit mined block {hash}: {e}"),
