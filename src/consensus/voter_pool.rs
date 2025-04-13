@@ -53,9 +53,12 @@ impl VoterPool {
 
     /// Register the voter for a new block, or update the voters record if he already exists
     pub fn register_from_block(&mut self, block: Arc<Block>) -> bool {
-        // TODO: should it error if voter already exists, but block does not specify a last_block?
         if let Some(voter) = self.all_voters.get_mut(&block.miner) {
-            voter.write().unwrap().record_block(block);
+            let mut v = voter.write().unwrap();
+            if block.prev_mined == Some(v.last_block.hash()) {
+                // Only register if the miner linked the correct last block
+                v.record_block(block);
+            }
             false
         } else {
             self.all_voters.insert(
@@ -98,7 +101,6 @@ impl VoterPool {
 }
 
 /// Information we track about each known miner eligible for voting
-// TODO: need process to remove voters who haven't mined a block in a while AND are unresponsive
 pub struct VoterRecord {
     /// ID this voter record applies to
     id: PeerId,
