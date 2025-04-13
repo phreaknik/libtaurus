@@ -63,7 +63,6 @@ impl fmt::Display for Request {
 /// Message type defining the peer RPC response messages
 #[derive(Debug, Clone)]
 pub enum Response {
-    Error(proto::mod_Response::Error),
     Block(Block),
     Vertex(Arc<SlimVertex>),
     Preference(VertexHash, bool),
@@ -74,7 +73,6 @@ impl Response {
     pub fn to_protobuf(self) -> Result<proto::Response, Error> {
         Ok(proto::Response {
             ResponseData: match self {
-                Response::Error(e) => proto::mod_Response::OneOfResponseData::error(e),
                 Response::Block(b) => {
                     proto::mod_Response::OneOfResponseData::block(b.to_protobuf()?)
                 }
@@ -94,7 +92,6 @@ impl Response {
     /// Convert a Response from protobuf format
     pub fn from_protobuf(resp: proto::Response) -> Result<Self, Error> {
         match resp.ResponseData {
-            proto::mod_Response::OneOfResponseData::error(e) => Ok(Response::Error(e)),
             proto::mod_Response::OneOfResponseData::block(b) => {
                 Ok(Response::Block(Block::from_protobuf(b)?))
             }

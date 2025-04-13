@@ -186,6 +186,7 @@ async fn task_fn(
                     swarm.behaviour_mut().report_message_validation_result(&msg_id, &msg_source, acceptance)
                 },
                 Some(Action::AvalancheRequest(peer, request)) => {
+                    // TODO: also look in DHT in case this peer fails
                     swarm.behaviour_mut().avalanche_request(&peer, request)
                 },
                 Some(Action::AvalancheResponse(request_id, response)) => {

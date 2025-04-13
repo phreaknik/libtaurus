@@ -609,9 +609,7 @@ impl Dag {
                 }
                 Err(Error::NotFound) => {
                     debug!("Unable to find requested block: {bhash}");
-                    Ok(Some(avalanche_rpc::Response::Error(
-                        avalanche_rpc::proto::mod_Response::Error::NOT_FOUND,
-                    )))
+                    Ok(None)
                 }
                 Err(e) => {
                     error!("Unexpected error while looking for block {bhash}: {e}");
@@ -625,9 +623,7 @@ impl Dag {
                 }
                 Err(Error::NotFound) => {
                     debug!("Unable to find requested vertex: {vhash}");
-                    Ok(Some(avalanche_rpc::Response::Error(
-                        avalanche_rpc::proto::mod_Response::Error::NOT_FOUND,
-                    )))
+                    Ok(None)
                 }
                 Err(e) => {
                     error!("Unexpected error while looking for vertex {vhash}: {e}");
@@ -662,10 +658,6 @@ impl Dag {
         response: avalanche_rpc::Response,
     ) -> Result<()> {
         Ok(match response {
-            // TODO: if the peer didn't have the requested data, what do we do?
-            // Do we ban the peer for not having data that they should?
-            // Do we try to find the requested data on the DHT instead?
-            avalanche_rpc::Response::Error(_) => todo!(),
             avalanche_rpc::Response::Block(block) => {
                 let bhash = block.hash();
                 debug!("received block response {bhash}={block:?}");

@@ -12,16 +12,10 @@ message Request {
 
 // Response message type
 message Response {
-	// Error codes
-	enum Error {
-		NOT_FOUND = 0;
-	}
-
 	oneof ResponseData {
-		Error error = 0;
-		Block block = 1;
-		Vertex vertex = 2;
-		Preference preference = 3;
+		Block block = 0;
+		Vertex vertex = 1;
+		Preference preference = 2;
 	}
 }
 

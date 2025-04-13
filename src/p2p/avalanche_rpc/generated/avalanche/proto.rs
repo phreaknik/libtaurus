@@ -85,10 +85,9 @@ impl<'a> MessageRead<'a> for Response {
         let mut msg = Self::default();
         while !r.is_eof() {
             match r.next_tag(bytes) {
-                Ok(0) => msg.ResponseData = avalanche::proto::mod_Response::OneOfResponseData::error(r.read_enum(bytes)?),
-                Ok(10) => msg.ResponseData = avalanche::proto::mod_Response::OneOfResponseData::block(r.read_message::<avalanche::proto::Block>(bytes)?),
-                Ok(18) => msg.ResponseData = avalanche::proto::mod_Response::OneOfResponseData::vertex(r.read_message::<avalanche::proto::Vertex>(bytes)?),
-                Ok(26) => msg.ResponseData = avalanche::proto::mod_Response::OneOfResponseData::preference(r.read_message::<avalanche::proto::Preference>(bytes)?),
+                Ok(2) => msg.ResponseData = avalanche::proto::mod_Response::OneOfResponseData::block(r.read_message::<avalanche::proto::Block>(bytes)?),
+                Ok(10) => msg.ResponseData = avalanche::proto::mod_Response::OneOfResponseData::vertex(r.read_message::<avalanche::proto::Vertex>(bytes)?),
+                Ok(18) => msg.ResponseData = avalanche::proto::mod_Response::OneOfResponseData::preference(r.read_message::<avalanche::proto::Preference>(bytes)?),
                 Ok(t) => { r.read_unknown(bytes, t)?; }
                 Err(e) => return Err(e),
             }
@@ -101,7 +100,6 @@ impl MessageWrite for Response {
     fn get_size(&self) -> usize {
         0
         + match self.ResponseData {
-            avalanche::proto::mod_Response::OneOfResponseData::error(ref m) => 1 + sizeof_varint(*(m) as u64),
             avalanche::proto::mod_Response::OneOfResponseData::block(ref m) => 1 + sizeof_len((m).get_size()),
             avalanche::proto::mod_Response::OneOfResponseData::vertex(ref m) => 1 + sizeof_len((m).get_size()),
             avalanche::proto::mod_Response::OneOfResponseData::preference(ref m) => 1 + sizeof_len((m).get_size()),
@@ -109,10 +107,9 @@ impl MessageWrite for Response {
     }    }
 
     fn write_message<W: WriterBackend>(&self, w: &mut Writer<W>) -> Result<()> {
-        match self.ResponseData {            avalanche::proto::mod_Response::OneOfResponseData::error(ref m) => { w.write_with_tag(0, |w| w.write_enum(*m as i32))? },
-            avalanche::proto::mod_Response::OneOfResponseData::block(ref m) => { w.write_with_tag(10, |w| w.write_message(m))? },
-            avalanche::proto::mod_Response::OneOfResponseData::vertex(ref m) => { w.write_with_tag(18, |w| w.write_message(m))? },
-            avalanche::proto::mod_Response::OneOfResponseData::preference(ref m) => { w.write_with_tag(26, |w| w.write_message(m))? },
+        match self.ResponseData {            avalanche::proto::mod_Response::OneOfResponseData::block(ref m) => { w.write_with_tag(2, |w| w.write_message(m))? },
+            avalanche::proto::mod_Response::OneOfResponseData::vertex(ref m) => { w.write_with_tag(10, |w| w.write_message(m))? },
+            avalanche::proto::mod_Response::OneOfResponseData::preference(ref m) => { w.write_with_tag(18, |w| w.write_message(m))? },
             avalanche::proto::mod_Response::OneOfResponseData::None => {},
     }        Ok(())
     }
@@ -122,38 +119,8 @@ pub mod mod_Response {
 
 use super::*;
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum Error {
-    NOT_FOUND = 0,
-}
-
-impl Default for Error {
-    fn default() -> Self {
-        Error::NOT_FOUND
-    }
-}
-
-impl From<i32> for Error {
-    fn from(i: i32) -> Self {
-        match i {
-            0 => Error::NOT_FOUND,
-            _ => Self::default(),
-        }
-    }
-}
-
-impl<'a> From<&'a str> for Error {
-    fn from(s: &'a str) -> Self {
-        match s {
-            "NOT_FOUND" => Error::NOT_FOUND,
-            _ => Self::default(),
-        }
-    }
-}
-
 #[derive(Debug, PartialEq, Clone)]
 pub enum OneOfResponseData {
-    error(avalanche::proto::mod_Response::Error),
     block(avalanche::proto::Block),
     vertex(avalanche::proto::Vertex),
     preference(avalanche::proto::Preference),
