@@ -161,7 +161,9 @@ impl Dag {
         let rw_vertex = Arc::new(TracingRwLock::new(Vertex::genesis(config.genesis.clone())));
         dag.database
             .write_vertex(None, config.genesis)
-            .expect("Failed to write genesis vertex");
+            .unwrap()
+            .commit()
+            .unwrap();
         dag.frontier.insert(genesis_hash, rw_vertex);
         // Return the dag
         dag
@@ -787,7 +789,9 @@ impl Dag {
                 }
                 // Write the block to the database
                 // TODO: Figure out how to batch these database writes
-                self.database.write_vertex(None, vertex.to_wire()?).ok();
+                self.database
+                    .write_vertex(None, vertex.to_wire()?)?
+                    .commit()?;
                 // Remove this block's inputs from the set of undecided_txos
                 for txo_hash in &vertex.block.inputs {
                     self.undecided_txos.remove(txo_hash);

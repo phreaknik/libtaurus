@@ -209,7 +209,7 @@ impl<'a> Behaviour {
                 self.last_bootstrap = Some(t_now);
                 match self.inner.kademlia.bootstrap() {
                     Err(NoKnownPeers {}) => {
-                        warn!("No peers. Unable go join P2P network.");
+                        warn!("No peers. Unable to join P2P network.");
                     }
                     Ok(_) => {}
                 }

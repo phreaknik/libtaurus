@@ -86,11 +86,8 @@ impl ConsensusDb {
             &DbEntry::from(vhash),
         )?;
         // Write the vertex itsself
-        self.db.put(
-            &mut wtxn,
-            &self.vertex_key(&vhash),
-            &DbEntry::from(vertex.slim().1),
-        )?;
+        self.db
+            .put(&mut wtxn, &self.vertex_key(&vhash), &DbEntry::from(vertex))?;
         Ok(wtxn)
     }
 
