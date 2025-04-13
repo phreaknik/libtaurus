@@ -197,15 +197,12 @@ impl Dag {
 
     /// Try to submit this block as a vertex at the frontier of the DAG
     pub fn try_insert_block(&mut self, block: Block, broadcast: bool) -> Result<()> {
-        self.try_insert_vertices(
-            once(Arc::new(WireVertex::new(
-                block,
-                self.frontier.values().cloned(),
-                true,
-            )?)),
-            None,
-            broadcast,
-        )
+        let wire_vertex = Arc::new(WireVertex::new(
+            block,
+            self.frontier.values().cloned(),
+            true,
+        )?);
+        self.try_insert_vertices(once(wire_vertex), None, broadcast)
     }
 
     /// Try to insert a list of vertices, and attempt to also insert any known waiting children
@@ -227,7 +224,7 @@ impl Dag {
         for wire_vertex in vertices {
             let vhash = wire_vertex.hash();
             let bhash = wire_vertex.bhash;
-            match self.try_insert_vertex(wire_vertex, sender, broadcast) {
+            match self.try_insert_vertex(wire_vertex.clone(), sender, broadcast) {
                 Ok(preferred) => {
                     info!(
                         "Inserted {}preferred vertex {}",
@@ -252,46 +249,46 @@ impl Dag {
         }
         // Attempt to insert any dependents of the successful insertions
         while let Some((vhash, bhash)) = successful.pop() {
-            // Get any vertices which were waiting on the one just inserted
             let waiting_by_block = self.waitlist.get_by_block(&bhash)?;
             let waiting_by_vertex = self.waitlist.get_by_vertex(&vhash)?;
-            let waiting = match (waiting_by_block, waiting_by_vertex) {
-                (Some(mut a), Some(mut b)) => {
-                    a.append(&mut b);
-                    Some(a)
+            let mut try_insert_waiting = |wire_vertex: Arc<WireVertex>| -> Result<()> {
+                let vhash = wire_vertex.hash();
+                let bhash = wire_vertex.bhash;
+                // Exclude sender, because there is no expectation the sender can serve a
+                // missing data request for items in the waitlist.
+                match self.try_insert_vertex(wire_vertex.clone(), None, false) {
+                    Ok(preferred) => {
+                        info!(
+                            "Inserted {}preferred vertex {}",
+                            if !preferred { "non-" } else { "" },
+                            vhash.to_hex()
+                        );
+                        Ok(successful.push((vhash, bhash)))
+                    }
+                    Err(
+                        e @ Error::MissingPrevMined(_)
+                        | e @ Error::MissingBlock(_)
+                        | e @ Error::MissingParents(_),
+                    ) => {
+                        info!("Error inserting {vhash}: {e}");
+                        Ok(())
+                    }
+                    Err(e) => {
+                        info!("Error inserting {vhash}: {e}");
+                        Err(e)
+                    }
                 }
-                (Some(a), None) => Some(a),
-                (None, Some(b)) => Some(b),
-                _ => None,
             };
-            if let Some(vertices) = waiting {
-                for wire_vertex in vertices {
-                    let vhash = wire_vertex.hash();
-                    let bhash = wire_vertex.bhash;
-                    // Exclude sender, because there is no expectation the sender can serve a
-                    // missing data request for items in the waitlist.
-                    match self.try_insert_vertex(wire_vertex, None, false) {
-                        Ok(preferred) => {
-                            info!(
-                                "Inserted {}preferred vertex {}",
-                                if !preferred { "non-" } else { "" },
-                                vhash.to_hex()
-                            );
-                            Ok(successful.push((vhash, bhash)))
-                        }
-                        Err(
-                            e @ Error::MissingPrevMined(_)
-                            | e @ Error::MissingBlock(_)
-                            | e @ Error::MissingParents(_),
-                        ) => {
-                            info!("Error inserting {vhash}: {e}");
-                            Ok(())
-                        }
-                        Err(e) => {
-                            info!("Error inserting {vhash}: {e}");
-                            Err(e)
-                        }
-                    }?;
+            // Try to insert any vertices which were waiting on the block just inserted
+            if let Some(waiting) = waiting_by_block {
+                for wire_vertex in waiting {
+                    try_insert_waiting(wire_vertex)?;
+                }
+            }
+            // Try to insert any vertices which were waiting on the vertex just inserted
+            if let Some(waiting) = waiting_by_vertex {
+                for wire_vertex in waiting {
+                    try_insert_waiting(wire_vertex)?;
                 }
             }
         }
@@ -415,7 +412,7 @@ impl Dag {
         }
 
         // Remove this vertex from the waitlist
-        self.waitlist.remove(&vhash, &wire_vertex.bhash)?;
+        self.waitlist.remove_inserted(wire_vertex.clone())?;
 
         if vertex.strongly_preferred {
             // Remove its parents from the frontier, as they are no longer the youngest
@@ -454,6 +451,10 @@ impl Dag {
                     .read_vertex(vhash)
                     .expect("database read error")
                     .is_none()
+            })
+            .filter(|vhash| {
+                // Filter out any vertex already waiting in the waitlist
+                !self.waitlist.contains(vhash).expect("waitlist read error")
             })
             .map(|&parent| {
                 // Request missing parent from peers
