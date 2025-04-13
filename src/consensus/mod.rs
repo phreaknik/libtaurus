@@ -6,6 +6,7 @@ mod database;
 mod transaction;
 pub mod vertex;
 mod voter_pool;
+mod waitlist;
 
 use crate::randomx::RandomXVMInstance;
 use crate::{p2p, randomx};
@@ -15,6 +16,7 @@ use chrono::{DateTime, Utc};
 use libp2p::multihash::Multihash;
 use libp2p::PeerId;
 use randomx_rs::RandomXFlag;
+use std::iter::once;
 use std::path::PathBuf;
 use std::result;
 use std::sync::Arc;
@@ -192,6 +194,11 @@ impl Runtime {
         // Wait until the events channel has listeners, before initializing the DAG
         while self.events_out.receiver_count() == 0 {}
 
+        info!(
+            "Starting Avalanche consensus with genesis: {}",
+            self.dag.read().unwrap().genesis_hash().to_hex()
+        );
+
         // Handle consensus events
         loop {
             select! {
@@ -250,11 +257,11 @@ impl Runtime {
         match msg.data {
             p2p::MessageData::Vertex(wire_vertex) => {
                 let mut dag = self.dag.write().map_err(|_| Error::DagWriteLock)?;
-                match dag.try_insert_vertex(Arc::new(wire_vertex), Some(msg.msg_source)) {
+                match dag.try_insert_vertices(once(Arc::new(wire_vertex)), Some(msg.msg_source)) {
                     Err(
-                        avalanche::Error::MissingBlock
-                        | avalanche::Error::MissingParents
-                        | avalanche::Error::MissingPrevMined,
+                        avalanche::Error::MissingBlock(_)
+                        | avalanche::Error::MissingParents(_)
+                        | avalanche::Error::MissingPrevMined(_),
                     ) => Ok(ignore),
                     Err(_) => Ok(reject),
                     Ok(_) => Ok(accept),

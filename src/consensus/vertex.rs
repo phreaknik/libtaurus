@@ -68,6 +68,20 @@ pub struct Vertex {
 }
 
 impl Vertex {
+    /// Create a genesis vertex from a given block
+    pub fn genesis(wire_vertex: WireVertex) -> Vertex {
+        Vertex {
+            version: 0,
+            block: Arc::new(wire_vertex.block.unwrap()),
+            parents: Vec::new(),
+            undecided_parents: HashMap::new(),
+            known_children: HashMap::new(),
+            strongly_preferred: true,
+            chit: 1,
+            confidence: 0,
+        }
+    }
+
     /// Create a new vertex representing a block's position in the DAG. If this vertex has no
     /// existing preferred conflicts, and its parents are strongly preferred, then it too will be
     /// marked as strongly preferred.
@@ -120,18 +134,18 @@ impl Vertex {
     pub fn to_wire(&self) -> Result<WireVertex> {
         Ok(WireVertex {
             version: self.version,
-            parents: self.parents.clone(),
             bhash: self.block.hash(),
+            parents: self.parents.clone(),
             block: Some((*self.block).clone()),
         })
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct WireVertex {
     pub version: u32,
-    pub parents: Vec<VertexHash>,
     pub bhash: BlockHash,
+    pub parents: Vec<VertexHash>,
     pub block: Option<Block>,
 }
 
@@ -145,6 +159,7 @@ impl WireVertex {
     {
         Ok(WireVertex {
             version: VERSION,
+            bhash: block.hash(),
             parents: parents
                 .map(|rw_vertex| {
                     rw_vertex
@@ -153,7 +168,6 @@ impl WireVertex {
                         .and_then(|v| v.hash())
                 })
                 .try_collect()?,
-            bhash: block.hash(),
             block: if full { Some(block) } else { None },
         })
     }
@@ -203,5 +217,38 @@ impl WireVertex {
             parents: self.parents.iter().map(|p| p.to_protobuf()).try_collect()?,
             block_hash: Some(self.bhash.to_protobuf()?),
         })
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct PrettyVertex {
+    version: u32,
+    bhash: String,
+    parents: Vec<String>,
+}
+
+impl From<&WireVertex> for PrettyVertex {
+    fn from(wire_vertex: &WireVertex) -> Self {
+        PrettyVertex {
+            version: wire_vertex.version,
+            bhash: wire_vertex.bhash.to_hex(),
+            parents: wire_vertex.parents.iter().map(|txo| txo.to_hex()).collect(),
+        }
+    }
+}
+
+impl std::fmt::Display for WireVertex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            serde_json::to_string_pretty(&PrettyVertex::from(self)).unwrap()
+        )
+    }
+}
+
+impl std::fmt::Debug for WireVertex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        <Self as std::fmt::Display>::fmt(&self, f)
     }
 }

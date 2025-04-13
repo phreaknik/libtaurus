@@ -173,13 +173,19 @@ impl Block {
     }
 }
 
-impl std::fmt::Debug for Block {
+impl std::fmt::Display for Block {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "block: {}",
+            "{}",
             serde_json::to_string_pretty(&PrettyBlock::from(self)).unwrap()
         )
+    }
+}
+
+impl std::fmt::Debug for Block {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        <Self as std::fmt::Display>::fmt(&self, f)
     }
 }
 

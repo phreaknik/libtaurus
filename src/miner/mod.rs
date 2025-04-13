@@ -147,7 +147,7 @@ fn spawn_mining_threads(
     block: Block,
     sols_count_ch: UnboundedSender<usize>,
 ) -> Result<UnboundedReceiver<Block>> {
-    debug!("Block template:\n{block:?}");
+    debug!("Block template:\n{block}");
 
     // Close the old channel to kill the old mining threads, and
     // create a new channel for the new mining threads.
