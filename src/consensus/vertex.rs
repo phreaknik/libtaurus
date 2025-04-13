@@ -16,6 +16,8 @@ pub enum Error {
     Block(#[from] block::Error),
     #[error(transparent)]
     Hash(#[from] crate::hash::Error),
+    #[error("missing block")]
+    MissingBlock,
     #[error(transparent)]
     MsgPackDecode(#[from] rmp_serde::decode::Error),
     #[error(transparent)]
@@ -70,17 +72,18 @@ impl Vertex {
     /// existing preferred conflicts, and its parents are strongly preferred, then it too will be
     /// marked as strongly preferred.
     pub fn new(
-        block: Arc<Block>,
-        parents: Vec<VertexHash>,
+        wire_vertex: &WireVertex,
+        undecided_blocks: &HashMap<BlockHash, Arc<Block>>,
         undecided_vertices: &HashMap<VertexHash, Arc<TracingRwLock<Vertex>>>,
-        has_conflicts: bool,
+        conflict_free: bool,
     ) -> Result<Vertex> {
-        let undecided_parents: HashMap<VertexHash, Arc<TracingRwLock<Vertex>>> = parents
+        let undecided_parents: HashMap<VertexHash, Arc<TracingRwLock<Vertex>>> = wire_vertex
+            .parents
             .iter()
             .filter_map(|&k| undecided_vertices.get(&k).map(|v| (k, v.clone())))
             .collect();
         // Strongly preferred if no conflicts and all undecided parents are also strongly preferred.
-        let strongly_preferred = !has_conflicts
+        let strongly_preferred = conflict_free
             && undecided_parents
                 .values()
                 .map(|p| {
@@ -91,11 +94,15 @@ impl Vertex {
                 .try_fold(true, |all, strongly_preferred| {
                     strongly_preferred.map(|sp| sp && all)
                 })?;
+        let block = undecided_blocks
+            .get(&wire_vertex.bhash)
+            .cloned()
+            .ok_or(Error::MissingBlock)?;
         Ok(Vertex {
             version: VERSION,
             block,
             undecided_parents,
-            parents,
+            parents: wire_vertex.parents.clone(),
             known_children: HashMap::new(),
             strongly_preferred,
             chit: 0,
@@ -105,15 +112,17 @@ impl Vertex {
 
     /// Compute the hash of the vertex
     pub fn hash(&self) -> Result<VertexHash> {
-        Ok(self.slim()?.hash())
+        // TODO: cache this result?
+        Ok(self.to_wire()?.slim().1.hash())
     }
 
-    /// Convert into a ['SlimVertex']
-    pub fn slim(&self) -> Result<SlimVertex> {
-        Ok(SlimVertex {
+    /// Convert into a ['WireVertex']
+    pub fn to_wire(&self) -> Result<WireVertex> {
+        Ok(WireVertex {
             version: self.version,
             parents: self.parents.clone(),
-            block_hash: self.block.hash(),
+            bhash: self.block.hash(),
+            block: Some((*self.block).clone()),
         })
     }
 }
@@ -122,18 +131,21 @@ impl Vertex {
 pub struct WireVertex {
     pub version: u32,
     pub parents: Vec<VertexHash>,
-    pub block: Block,
+    pub bhash: BlockHash,
+    pub block: Option<Block>,
 }
 
 impl WireVertex {
     /// Construct a new vertex for a block at the given frontire
-    pub fn new<F>(block: Block, frontier: F) -> Result<WireVertex>
+    /// If its expected our peers already know about the block (e.g. in case of transmitting a new
+    /// vertex for an existing block), set `full` to false.
+    pub fn new<P>(block: Block, parents: P, full: bool) -> Result<WireVertex>
     where
-        F: Iterator<Item = Arc<TracingRwLock<Vertex>>>,
+        P: Iterator<Item = Arc<TracingRwLock<Vertex>>>,
     {
         Ok(WireVertex {
             version: VERSION,
-            parents: frontier
+            parents: parents
                 .map(|rw_vertex| {
                     rw_vertex
                         .read()
@@ -141,68 +153,42 @@ impl WireVertex {
                         .and_then(|v| v.hash())
                 })
                 .try_collect()?,
-            block,
+            bhash: block.hash(),
+            block: if full { Some(block) } else { None },
         })
     }
 
-    /// Convert into a ['SlimVertex']
-    pub fn slim(&self) -> SlimVertex {
-        SlimVertex {
-            version: self.version,
-            parents: self.parents.clone(),
-            block_hash: self.block.hash(),
+    /// Compute the hash of the vertex
+    /// This performs a copy, which could be expensive.
+    pub fn hash(&self) -> VertexHash {
+        blake3::hash(
+            &rmp_serde::to_vec(&self.clone().slim().1).expect("Serde encode failure in hash"),
+        )
+        .into()
+    }
+
+    /// Slim this vertex by removing the block
+    pub fn slim(mut self) -> (Option<Block>, WireVertex) {
+        if let Some(block) = self.block {
+            self.bhash = block.hash();
+            self.block = None;
+            (Some(block), self)
+        } else {
+            (None, self)
         }
     }
 
-    /// Compute the hash of the vertex
-    pub fn hash(&self) -> VertexHash {
-        self.slim().hash()
-    }
-}
-
-/// A reduced representation of a vertex, suitable for encoding for wire transmision.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct SlimVertex {
-    pub version: u32,
-    pub parents: Vec<VertexHash>,
-    pub block_hash: BlockHash,
-}
-
-impl SlimVertex {
-    /// Construct a new vertex for a block at the given frontire
-    pub fn new<F>(block_hash: BlockHash, frontier: F) -> Result<SlimVertex>
-    where
-        F: Iterator<Item = Arc<TracingRwLock<Vertex>>>,
-    {
-        Ok(SlimVertex {
-            version: VERSION,
-            parents: frontier
-                .map(|rw_vertex| {
-                    rw_vertex
-                        .read()
-                        .map_err(|_| Error::VertexReadLock)
-                        .and_then(|v| v.hash())
-                })
-                .try_collect()?,
-            block_hash,
-        })
-    }
-
-    /// Compute the hash of the vertex
-    pub fn hash(&self) -> VertexHash {
-        blake3::hash(&rmp_serde::to_vec(self).expect("Serde encode failure in hash")).into()
-    }
-
     /// Deserialize from protobuf format
-    pub fn from_protobuf(vertex: p2p::avalanche_rpc::proto::Vertex) -> Result<SlimVertex> {
-        Ok(SlimVertex {
+    pub fn from_protobuf(vertex: p2p::avalanche_rpc::proto::Vertex) -> Result<WireVertex> {
+        Ok(WireVertex {
             version: vertex.version,
             parents: vertex
                 .parents
                 .iter()
                 .map(|p| VertexHash::from_protobuf(&p))
                 .try_collect()?,
-            block_hash: BlockHash::from_protobuf(
+            block: None,
+            bhash: BlockHash::from_protobuf(
                 &vertex
                     .block_hash
                     .ok_or(Error::ProtoDecode("missing block_hash".to_string()))?,
@@ -215,20 +201,7 @@ impl SlimVertex {
         Ok(p2p::avalanche_rpc::proto::Vertex {
             version: self.version,
             parents: self.parents.iter().map(|p| p.to_protobuf()).try_collect()?,
-            block_hash: Some(self.block_hash.to_protobuf()?),
+            block_hash: Some(self.bhash.to_protobuf()?),
         })
-    }
-
-    /// Inflate the SlimVertex into a ['WireVertex']
-    pub fn to_wire(&self, block: Block) -> Result<WireVertex> {
-        if self.block_hash != block.hash() {
-            Err(Error::BadHash)
-        } else {
-            Ok(WireVertex {
-                version: self.version,
-                parents: self.parents.clone(),
-                block,
-            })
-        }
     }
 }

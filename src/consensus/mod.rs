@@ -94,8 +94,8 @@ pub struct GenesisConfig {
 
 impl GenesisConfig {
     /// Create a genesis block
-    pub fn to_block(&self) -> Block {
-        Block {
+    pub fn to_vertex(&self) -> WireVertex {
+        let block = Block {
             version: 0,
             difficulty: self.difficulty,
             miner: PeerId::from_multihash(Multihash::default()).unwrap(),
@@ -104,6 +104,12 @@ impl GenesisConfig {
             outputs: Vec::new(),
             time: self.time,
             nonce: 0,
+        };
+        WireVertex {
+            version: 0,
+            parents: Vec::new(),
+            bhash: block.hash(),
+            block: Some(block),
         }
     }
 }
@@ -222,7 +228,7 @@ impl Runtime {
                                 .dag
                                 .write()
                                 .map_err(|_| Error::DagWriteLock)
-                                .and_then(|mut dag| dag.submit_block(block, true).map_err(Error::from))
+                                .and_then(|mut dag| dag.try_insert_block(block).map_err(Error::from))
                             {
                                 Ok(_) => {},
                                 Err(Error::P2pActionCh(e)) => return error!("Stopping due to p2p_action channel error: {e}"),
@@ -244,12 +250,12 @@ impl Runtime {
         match msg.data {
             p2p::MessageData::Vertex(wire_vertex) => {
                 let mut dag = self.dag.write().map_err(|_| Error::DagWriteLock)?;
-                let slim = wire_vertex.slim();
-                match dag
-                    .submit_block(wire_vertex.block, false)
-                    .and_then(|_| dag.try_insert_vertex(Arc::new(slim), Some(msg.msg_source)))
-                {
-                    Err(avalanche::Error::MissingData) => Ok(ignore),
+                match dag.try_insert_vertex(Arc::new(wire_vertex), Some(msg.msg_source)) {
+                    Err(
+                        avalanche::Error::MissingBlock
+                        | avalanche::Error::MissingParents
+                        | avalanche::Error::MissingPrevMined,
+                    ) => Ok(ignore),
                     Err(_) => Ok(reject),
                     Ok(_) => Ok(accept),
                 }

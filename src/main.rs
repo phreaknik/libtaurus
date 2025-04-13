@@ -35,7 +35,7 @@ mod util;
 
 use clap::{arg, command, ArgMatches, Command};
 use consensus::{avalanche, GenesisConfig};
-pub use consensus::{Block, BlockHash, SlimVertex, VertexHash};
+pub use consensus::{Block, BlockHash, VertexHash, WireVertex};
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
 use libp2p::identity::Keypair;
 use p2p::PeerDatabase;
@@ -236,7 +236,7 @@ fn build_consensus_cfg(args: &ArgMatches) -> consensus::Config {
         data_dir: data_dir.clone(),
         avalanche: avalanche::Config {
             data_dir,
-            genesis: genesis.to_block(),
+            genesis: genesis.to_vertex(),
             waitlist_cap: args
                 .get_one::<String>("waitlist_cap")
                 .map(|v| {

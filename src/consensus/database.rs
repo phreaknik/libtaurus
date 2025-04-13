@@ -1,5 +1,5 @@
-use super::{block, vertex, Block, BlockHash};
-use crate::{SlimVertex, VertexHash};
+use super::{block, vertex, BlockHash};
+use crate::{VertexHash, WireVertex};
 use heed::{BytesDecode, BytesEncode, Database, Env, EnvOpenOptions, RwTxn};
 use serde_derive::{Deserialize, Serialize};
 use std::{fs, path::PathBuf, result};
@@ -52,33 +52,6 @@ impl ConsensusDb {
         Ok(ConsensusDb { env, db })
     }
 
-    /// Write a new block into the database
-    /// May optionally pass in an existing write transaction, to add this to a batch of writes
-    /// Must call ['heed::RwTxn::commit'] on the resulting ['RwTxn'] for the database write to
-    /// complete.
-    pub fn write_block<'a>(
-        &'a mut self,
-        wtxn: Option<RwTxn<'a, 'a>>,
-        block: Block,
-    ) -> Result<RwTxn<'a, 'a>> {
-        let mut wtxn = wtxn.unwrap_or(self.env.write_txn().unwrap());
-        self.db.put(
-            &mut wtxn,
-            &self.block_key(&block.hash()),
-            &DbEntry::from(block),
-        )?;
-        Ok(wtxn)
-    }
-
-    /// Read a block from the database
-    pub fn read_block<'a>(&'a mut self, bhash: &BlockHash) -> Result<Option<Block>> {
-        let mut rtxn = self.env.read_txn().unwrap();
-        Ok(self
-            .db
-            .get(&mut rtxn, &self.block_key(bhash))?
-            .map(|v| v.try_into().expect("corrupt database entry")))
-    }
-
     /// Read a block from the database
     pub fn lookup_vertex_for_block<'a>(
         &'a mut self,
@@ -98,32 +71,36 @@ impl ConsensusDb {
     pub fn write_vertex<'a>(
         &'a mut self,
         wtxn: Option<RwTxn<'a, 'a>>,
-        vertex: SlimVertex,
+        vertex: WireVertex,
     ) -> Result<RwTxn<'a, 'a>> {
+        // Make sure this vertex includes the block. May not write slim vertices.
+        if vertex.block.is_none() {
+            return Err(Error::ExpectedBlock);
+        };
+        // Write the link from block-hash to vertex
         let mut wtxn = wtxn.unwrap_or(self.env.write_txn().unwrap());
         let vhash = vertex.hash();
         self.db.put(
             &mut wtxn,
-            &self.link_key(&vertex.block_hash),
+            &self.link_key(&vertex.bhash),
             &DbEntry::from(vhash),
         )?;
-        self.db
-            .put(&mut wtxn, &self.vertex_key(&vhash), &DbEntry::from(vertex))?;
+        // Write the vertex itsself
+        self.db.put(
+            &mut wtxn,
+            &self.vertex_key(&vhash),
+            &DbEntry::from(vertex.slim().1),
+        )?;
         Ok(wtxn)
     }
 
     /// Read a vertex from the database
-    pub fn read_vertex<'a>(&'a mut self, vhash: &VertexHash) -> Result<Option<SlimVertex>> {
+    pub fn read_vertex<'a>(&'a mut self, vhash: &VertexHash) -> Result<Option<WireVertex>> {
         let mut rtxn = self.env.read_txn().unwrap();
         Ok(self
             .db
             .get(&mut rtxn, &self.vertex_key(vhash))?
             .map(|v| v.try_into().expect("corrupt database entry")))
-    }
-
-    /// Construct the db key for the specified block
-    fn block_key(&self, bhash: &BlockHash) -> DbKey {
-        DbKey(format!("block:{}", bhash.to_hex()))
     }
 
     /// Construct the db key for the specified vertex
@@ -162,38 +139,27 @@ impl<'a> BytesDecode<'a> for DbKey {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum DbEntry {
-    Block(Block),
-    Vertex(SlimVertex),
+    Vertex(WireVertex),
     Link(VertexHash),
 }
 
-impl From<Block> for DbEntry {
-    fn from(value: Block) -> Self {
-        DbEntry::Block(value)
-    }
-}
-
-impl TryInto<Block> for DbEntry {
-    type Error = Error;
-    fn try_into(self) -> result::Result<Block, Self::Error> {
-        match self {
-            DbEntry::Block(b) => Ok(b),
-            _ => Err(Error::ExpectedBlock),
-        }
-    }
-}
-
-impl From<SlimVertex> for DbEntry {
-    fn from(value: SlimVertex) -> Self {
+impl From<WireVertex> for DbEntry {
+    fn from(value: WireVertex) -> Self {
         DbEntry::Vertex(value)
     }
 }
 
-impl TryInto<SlimVertex> for DbEntry {
+impl TryInto<WireVertex> for DbEntry {
     type Error = Error;
-    fn try_into(self) -> result::Result<SlimVertex, Self::Error> {
+    fn try_into(self) -> result::Result<WireVertex, Self::Error> {
         match self {
-            DbEntry::Vertex(v) => Ok(v),
+            DbEntry::Vertex(v) => {
+                if v.block.is_none() {
+                    Err(Error::ExpectedBlock)
+                } else {
+                    Ok(v)
+                }
+            }
             _ => Err(Error::ExpectedVertex),
         }
     }

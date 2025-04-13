@@ -2,9 +2,9 @@ use super::{
     block,
     database::ConsensusDb,
     transaction::{self, Txo, TxoHash},
-    vertex,
+    vertex::{self, WireVertex},
     voter_pool::{self, Scorecard, VoterPool},
-    Block, BlockHash, Event, SlimVertex, Vertex,
+    Block, BlockHash, Event, Vertex,
 };
 use crate::{
     p2p::{self, avalanche_rpc},
@@ -31,10 +31,8 @@ pub enum Error {
     AlreadyDecided(VertexHash),
     #[error(transparent)]
     Block(#[from] block::Error),
-    #[error(transparent)]
-    MsgPackDecode(#[from] rmp_serde::decode::Error),
-    #[error(transparent)]
-    MsgPackEncode(#[from] rmp_serde::encode::Error),
+    #[error("vertex has corrupt block hash")]
+    CorruptBlockHash,
     #[error(transparent)]
     Database(#[from] super::database::Error),
     #[error("consensus event channel error")]
@@ -43,10 +41,16 @@ pub enum Error {
     Heed(#[from] heed::Error),
     #[error(transparent)]
     Io(#[from] std::io::Error),
-    #[error("missing data")]
-    MissingData,
+    #[error("missing block")]
+    MissingBlock,
+    #[error("missing parents")]
+    MissingParents,
     #[error("missing the previously mined block from this miner")]
     MissingPrevMined,
+    #[error(transparent)]
+    MsgPackDecode(#[from] rmp_serde::decode::Error),
+    #[error(transparent)]
+    MsgPackEncode(#[from] rmp_serde::encode::Error),
     #[error("new block channel error")]
     NewBlockCh(#[from] tokio::sync::mpsc::error::SendError<Block>),
     #[error("data not found")]
@@ -81,7 +85,7 @@ pub struct Config {
     pub data_dir: PathBuf,
 
     /// Genesis block to serve as root vertex in the DAG
-    pub genesis: Block,
+    pub genesis: WireVertex,
 
     /// Maximum number of vertices which can wait in the list
     pub waitlist_cap: NonZeroUsize,
@@ -150,112 +154,84 @@ impl Dag {
         };
         dag.scorecards.set_refresh(false);
         dag.database
-            .write_block(None, config.genesis)
-            .expect("Failed to write genesis block");
+            .write_vertex(None, config.genesis)
+            .expect("Failed to write genesis vertex");
         // Return the dag
         dag
     }
 
-    /// Register a block as available to be inserted into the DAG. This must occur before a vertex
-    /// referencing this block can be inserted.
-    pub fn submit_block(&mut self, block: Block, build_vertex: bool) -> Result<()> {
-        debug!("Block submitted:\n{block:?}");
-        // TODO: need to check difficulty, block validity, etc
+    /// Submit a block as available to be inserted into the DAG
+    fn submit_block(&mut self, block: Block) -> Result<()> {
         block.verify_pow(&self.randomx_vm)?;
-        let bhash = block.hash();
-        if let Ok(Some(_)) = self.database.read_block(&bhash) {
-            // First see if the block is already in the database of decided blocks
-            Ok(())
-        } else if block
-            .inputs
-            .iter()
-            .any(|txo_hash| !self.undecided_txos.contains_key(txo_hash))
-        {
-            // Block spends at least one UTXO, which does not exist in the active txo set
-            Err(Error::UnknownTransactionInputs)
-        } else if block.prev_mined.is_some() && self.get_block(&block.prev_mined.unwrap()).is_err()
-        {
-            // Cannot accept this block until we have the prev_mined block from that miner
-            self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
-                block.miner,
-                avalanche_rpc::Request::GetBlock(block.prev_mined.unwrap()),
-            ))?;
-            Err(Error::MissingPrevMined)
-        } else {
-            let block = Arc::new(block);
-            // Register this miner as a potential Avalanche voter
-            self.voter_pool.register_from_block(block.clone());
-            // Add its outputs to the list of undecided TXOs
-            for &txo in &block.outputs {
-                let txo_hash = txo.hash();
-                if self
-                    .undecided_txos
-                    .insert(txo_hash, DagTxo::new(txo))
-                    .is_some()
-                {
-                    error!("Registered duplicate txo: {txo_hash}");
-                }
-            }
-            // Add it to the list of undecided blocks
-            info!("Registered new block {}", bhash.to_hex());
-            self.undecided_blocks.insert(bhash, block.clone());
-            if build_vertex {
-                let slim_vertex =
-                    Arc::new(SlimVertex::new(bhash, self.frontier.values().cloned())?);
-                self.try_insert_vertex(slim_vertex.clone(), None)?;
-                self.p2p_action_ch
-                    .send(p2p::Action::Broadcast(p2p::MessageData::Vertex(
-                        slim_vertex.to_wire((*block).clone())?,
-                    )))?;
-            }
-            Ok(())
-        }
+        self.undecided_blocks.insert(block.hash(), Arc::new(block));
+        Ok(())
+    }
+
+    /// Try to submit this block as a vertex at the frontier of the DAG
+    pub fn try_insert_block(&mut self, block: Block) -> Result<bool> {
+        self.try_insert_vertex(
+            Arc::new(WireVertex::new(
+                block,
+                self.frontier.values().cloned(),
+                true,
+            )?),
+            None,
+        )
     }
 
     /// Try to create a vertex for the given block. Return a copy of the vertex and a bool
     /// indicating if the vertex is currently preferred.
     pub fn try_insert_vertex(
         &mut self,
-        slim_vertex: Arc<SlimVertex>,
+        wire_vertex: Arc<WireVertex>,
         sender: Option<PeerId>,
     ) -> Result<bool> {
-        // First see if we already have this vertex
-        let vhash = slim_vertex.hash();
+        // TODO: need to check difficulty, block validity, etc
+
+        debug!("Vertex submitted:\n{wire_vertex:?}");
+
+        // If available, check proof-of-work before doing anything
+        if let Some(block) = &wire_vertex.block {
+            block.verify_pow(&self.randomx_vm)?;
+        }
+
+        // Check if we already have this vertex
+        let vhash = wire_vertex.hash();
         if let Ok((_vertex, preferred)) = self.get_vertex(&vhash) {
             return Ok(preferred);
         }
-        // TODO: should check if vertex or parents are in waitlist
 
-        // TODO: How do we verify if this vertex ties back to genesis... Do we need to?
+        // Make sure the block referenced in this vertex can be spent
+        // TODO: be sure to check this _at the parent state. Retry if fail.
+        let conflict_free = self.check_conflicts(&wire_vertex)?;
 
-        // Check for missing data (missing parents, block, etc), and if any, request it from peers
-        match self.request_if_missing_data(slim_vertex.clone(), sender) {
-            Err(Error::MissingData) => {
-                // Insert this vertex into the waitlist to be retried later
-                self.waitlist.insert(slim_vertex.clone())?;
-                Err(Error::MissingData)
+        // Make sure this vertex isn't missing any parents
+        match self.request_if_missing_parents(&wire_vertex, sender) {
+            Err(e @ Error::MissingParents) => {
+                self.waitlist.insert(wire_vertex.clone())?;
+                Err(e)
             }
             Err(e) => Err(e),
-            Ok(()) => Ok(()),
+            Ok(filled) => Ok(filled),
         }?;
 
-        // Create a new undecided vertex object and insert it into the DAG
-        let (rw_vertex, has_conflicts, block) = match self
-            .create_undecided_vertex(slim_vertex.clone())
-        {
-            Err(Error::AlreadyDecided(vhash)) => {
-                let bhash = &slim_vertex.block_hash;
-                error!("Attempted to create a new undecided vertex for an already decided block");
-                error!("Block {bhash} alredy decided in vertex {vhash}");
-                Err(Error::AlreadyDecided(vhash))
+        // Save the new block, or fill with known block if empty.
+        let rw_vertex = match self.build_vertex(wire_vertex.clone(), sender, conflict_free) {
+            Err(e @ Error::MissingPrevMined | e @ Error::MissingBlock) => {
+                self.waitlist.insert(wire_vertex.clone())?;
+                Err(e)
             }
             Err(e) => Err(e),
-            Ok(rw_vertex) => Ok(rw_vertex),
+            Ok(filled) => Ok(filled),
         }?;
+
+        // Add it to the collection of undecided vertices
+        self.undecided_vertices.insert(vhash, rw_vertex.clone());
 
         // If this vertex is conflict free, mark it as the preferred spender of its tx inputs
-        if !has_conflicts {
-            for txo_hash in &block.inputs {
+        if conflict_free {
+            // TODO: too many block.clones here
+            for txo_hash in &wire_vertex.block.clone().unwrap().inputs {
                 if let Some(txo) = self.undecided_txos.get_mut(txo_hash) {
                     txo.preferred_spender = Some(rw_vertex.clone());
                 } else {
@@ -263,6 +239,28 @@ impl Dag {
                     return Err(Error::UnknownTransactionInputs);
                 }
             }
+        };
+
+        // Add its outputs to the list of undecided TXOs
+        for &txo in &wire_vertex.block.clone().unwrap().outputs {
+            let txo_hash = txo.hash();
+            if self
+                .undecided_txos
+                .insert(txo_hash, DagTxo::new(txo))
+                .is_some()
+            {
+                error!("Registered duplicate txo: {txo_hash}");
+            }
+        }
+
+        // TODO: How do we verify if this vertex ties back to genesis... Do we need to?
+
+        // Broadcast to peers if this vertex didn't already come from our peers
+        if sender.is_none() {
+            self.p2p_action_ch
+                .send(p2p::Action::Broadcast(p2p::MessageData::Vertex(
+                    wire_vertex.as_ref().clone(),
+                )))?;
         }
 
         // Query peers for their preference, according to the avalanche consensus protocol
@@ -273,9 +271,6 @@ impl Dag {
             }
             other @ _ => other,
         }?;
-
-        // Add it to the collection of undecided vertices
-        self.undecided_vertices.insert(vhash, rw_vertex.clone());
 
         let strongly_preferred = {
             // Add vertex as known child to each of its parents
@@ -317,46 +312,82 @@ impl Dag {
         Ok(strongly_preferred)
     }
 
-    /// Begin querying our peers for their preference for the specified vertex
-    fn query_peer_preferences(&mut self, vhash: VertexHash) -> Result<()> {
-        // TODO: this query could be initiated multiple times, if a block goes through waitlist
-        // several times. Fix this. It should only happen once.
-        let voters = self.voter_pool.select(AVALANCHE_QUERY_COUNT)?;
-        for voter in &voters {
-            self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
-                voter.read().unwrap().id(),
-                avalanche_rpc::Request::GetPreference(vhash),
-            ))?;
-        }
-        self.scorecards
-            .cache_set(vhash, Scorecard::new_with_voters(voters));
-        Ok(())
-    }
-
-    /// Check if we have the necessary data to insert the given vertex, and request our peers for
-    /// any data we are missing.
-    fn request_if_missing_data(
+    /// Build a full vertex from the given ['WireVertex']. If a sender is provided, will attempt to
+    /// request missing data from the sender.
+    fn build_vertex(
         &mut self,
-        slim_vertex: Arc<SlimVertex>,
+        wire_vertex: Arc<WireVertex>,
         sender: Option<PeerId>,
-    ) -> Result<()> {
-        let vhash = slim_vertex.hash();
-        // Look up block if missing
-        let opt_block = self.undecided_blocks.get(&slim_vertex.block_hash);
-        if opt_block.is_none() {
+        conflict_free: bool,
+    ) -> Result<Arc<TracingRwLock<Vertex>>> {
+        if let Some(vhash) = self.database.lookup_vertex_for_block(&wire_vertex.bhash)? {
+            Err(Error::AlreadyDecided(vhash))
+        } else if self.undecided_blocks.contains_key(&wire_vertex.bhash) {
+            Ok(Arc::new(TracingRwLock::new(Vertex::new(
+                wire_vertex.as_ref(),
+                &self.undecided_blocks,
+                &self.undecided_vertices,
+                conflict_free,
+            )?)))
+        } else if let Some(block) = &wire_vertex.block {
+            if block.hash() == wire_vertex.bhash {
+                if let Some(prev_mined) = block.prev_mined {
+                    match self.get_block(&prev_mined) {
+                        Err(Error::NotFound) => {
+                            info!("Missing previous block from miner: {}", prev_mined);
+                            if let Some(peer) = sender {
+                                self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
+                                    peer,
+                                    avalanche_rpc::Request::GetBlock(prev_mined),
+                                ))?;
+                                self.request_if_missing_parents(&wire_vertex, sender)?;
+                            }
+                            Err(Error::MissingPrevMined)
+                        }
+                        Err(e) => Err(e),
+                        Ok(_) => Ok(()),
+                    }?;
+                }
+            } else {
+                return Err(Error::CorruptBlockHash);
+            }
+            let arc_block = Arc::new(block.clone());
+            // Save this to new block
+            self.undecided_blocks
+                .insert(wire_vertex.bhash, arc_block.clone());
+            // Register this miner as a potential Avalanche voter
+            self.voter_pool.register_from_block(arc_block);
+            Ok(Arc::new(TracingRwLock::new(Vertex::new(
+                wire_vertex.as_ref(),
+                &self.undecided_blocks,
+                &self.undecided_vertices,
+                conflict_free,
+            )?)))
+        } else {
+            info!(
+                "Missing block {} necessary to insert vertex {}",
+                wire_vertex.bhash,
+                wire_vertex.hash()
+            );
             if let Some(peer) = sender {
                 self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
                     peer,
-                    avalanche_rpc::Request::GetBlock(slim_vertex.block_hash),
+                    avalanche_rpc::Request::GetBlock(wire_vertex.bhash),
                 ))?;
+                self.request_if_missing_parents(&wire_vertex, sender)?;
             }
-            info!(
-                "Missing block {} necessary to insert vertex {vhash}",
-                slim_vertex.block_hash
-            );
+            Err(Error::MissingBlock)
         }
+    }
+
+    /// Check for missing parents and request them from peers
+    fn request_if_missing_parents(
+        &mut self,
+        wire_vertex: &WireVertex,
+        sender: Option<PeerId>,
+    ) -> Result<()> {
         // Lookup any missing parents
-        let missing_parents: Vec<String> = slim_vertex
+        let missing_parents: Vec<String> = wire_vertex
             .parents
             .iter()
             .filter(|vhash| {
@@ -388,88 +419,93 @@ impl Dag {
                 missing_str += &format!(", {}", missing);
             }
             missing_str += "]";
-            info!("Missing parents necessary to insert vertex {vhash}: {missing_str}");
+            info!(
+                "Missing parents necessary to insert vertex {}: {missing_str}",
+                wire_vertex.hash()
+            );
+            Err(Error::MissingParents)
+        } else {
+            Ok(())
         }
+    }
+
+    /// Check that the vertex uniquely spends UTXOs. Returns true if no conflicts.
+    fn check_conflicts(&mut self, wire_vertex: &WireVertex) -> Result<bool> {
         // Make sure transaction inputs are in the txo set. If they are not in the txo set at all,
         // then reject this vertex entirely. If they are in the txo set, but spent by another
         // vertex, it is still possible to insert this vertex, but it will be in conflict and
         // according to Avalanche consensus rules, it will not be accepted unless its confidence
         // exceeds that of its conflicts.
-        if let Some(block) = opt_block {
+        if let Some(block) = &wire_vertex.block {
             if !block
                 .inputs
                 .iter()
                 .all(|txo_hash| self.undecided_txos.contains_key(txo_hash))
             {
                 warn!("Received block spends unknown transaction outputs.");
-                return Err(Error::UnknownTransactionInputs);
-            }
-        };
-        if opt_block.is_none() || missing_parents.len() > 0 {
-            Err(Error::MissingData)
-        } else {
-            Ok(())
-        }
-    }
-
-    /// Build a ['Vertex'] from a ['SlimVertex'] and link it to the other vertices in the DAG.
-    /// Returns the newly created vertex and a boolean indicating if this vertex has any conflicts
-    /// with other vertices.
-    fn create_undecided_vertex(
-        &mut self,
-        slim_vertex: Arc<SlimVertex>,
-    ) -> Result<(Arc<TracingRwLock<Vertex>>, bool, Arc<Block>)> {
-        // Only create undecided vertices from undecided blocks. If a block is not known or has
-        // already been decided, there is no need to create a vertex object.
-        if let Some(vhash) = self
-            .database
-            .lookup_vertex_for_block(&slim_vertex.block_hash)?
-        {
-            Err(Error::AlreadyDecided(vhash))
-        } else {
-            let block = self
-                .undecided_blocks
-                .get(&slim_vertex.block_hash)
-                .ok_or(Error::NotFound)?;
-            let has_conflicts = block.inputs.iter().any(|txo_hash| {
+                Err(Error::UnknownTransactionInputs)
+            } else if block.inputs.iter().any(|txo_hash| {
                 self.undecided_txos
                     .get(txo_hash)
                     .expect("undecided vertex should already have validated inputs")
                     .preferred_spender
                     .is_some()
-            });
-            Ok((
-                Arc::new(TracingRwLock::new(Vertex::new(
-                    block.clone(),
-                    slim_vertex.parents.clone(),
-                    &self.undecided_vertices,
-                    has_conflicts,
-                )?)),
-                has_conflicts,
-                block.clone(),
-            ))
+            }) {
+                debug!("Received vertex has conflicts");
+                Ok(false)
+            } else {
+                Ok(true)
+            }
+        } else {
+            Err(Error::MissingBlock)
         }
+    }
+
+    /// Begin querying our peers for their preference for the specified vertex
+    fn query_peer_preferences(&mut self, vhash: VertexHash) -> Result<()> {
+        // TODO: this query could be initiated multiple times, if a block goes through waitlist
+        // several times. Fix this. It should only happen once.
+        let voters = self.voter_pool.select(AVALANCHE_QUERY_COUNT)?;
+        for voter in &voters {
+            self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
+                voter.read().unwrap().id(),
+                avalanche_rpc::Request::GetPreference(vhash),
+            ))?;
+        }
+        self.scorecards
+            .cache_set(vhash, Scorecard::new_with_voters(voters));
+        Ok(())
     }
 
     /// Look up a block from the DAG
     pub fn get_block(&mut self, bhash: &BlockHash) -> Result<Arc<Block>> {
         match self.undecided_blocks.get(bhash) {
             Some(block) => Ok(block.clone()),
-            None => Ok(Arc::new(
-                self.database.read_block(bhash)?.ok_or(Error::NotFound)?,
-            )),
+            None => {
+                let vhash = self
+                    .database
+                    .lookup_vertex_for_block(bhash)?
+                    .ok_or(Error::NotFound)?;
+                Ok(Arc::new(
+                    self.database
+                        .read_vertex(&vhash)?
+                        .ok_or(Error::NotFound)?
+                        .block
+                        .unwrap(),
+                ))
+            }
         }
     }
 
     /// Look up a vertex from the DAG, and indicate if this vertex is strongly preferred.
-    pub fn get_vertex(&mut self, vhash: &VertexHash) -> Result<(Arc<SlimVertex>, bool)> {
+    pub fn get_vertex(&mut self, vhash: &VertexHash) -> Result<(WireVertex, bool)> {
         match self.undecided_vertices.get(vhash) {
             Some(rw_vertex) => {
                 let vertex = rw_vertex.read().map_err(|_| Error::VertexReadLock)?;
-                Ok((Arc::new(vertex.slim()?), vertex.strongly_preferred))
+                Ok((vertex.to_wire()?, vertex.strongly_preferred))
             }
             None => Ok((
-                Arc::new(self.database.read_vertex(vhash)?.ok_or(Error::NotFound)?),
+                self.database.read_vertex(vhash)?.ok_or(Error::NotFound)?,
                 true,
             )),
         }
@@ -479,7 +515,7 @@ impl Dag {
     fn remove_and_retry_waitlist(&mut self, vhash: VertexHash) {
         if let Ok(Some(descendents)) = self.waitlist.remove(&vhash) {
             for descendent in descendents {
-                let bhash = descendent.block_hash;
+                let bhash = descendent.bhash;
                 let vhash = descendent.hash();
                 if let Err(Error::UnknownTransactionInputs) =
                     self.try_insert_vertex(descendent, None)
@@ -661,7 +697,7 @@ impl Dag {
             avalanche_rpc::Response::Block(block) => {
                 let bhash = block.hash();
                 debug!("received block response {bhash}={block:?}");
-                match self.submit_block(block, false) {
+                match self.submit_block(block) {
                     Err(Error::Block(block::Error::InvalidPoW)) => {
                         // TODO: ban this peer for sending us a block with invalid POW
                         todo!()
@@ -670,10 +706,10 @@ impl Dag {
                     _ => {}
                 }
             }
-            avalanche_rpc::Response::Vertex(slim_vertex) => {
-                let vhash = slim_vertex.hash();
-                debug!("received vertex response {vhash}={slim_vertex:?}");
-                if let Err(e) = self.try_insert_vertex(slim_vertex, Some(from_peer)) {
+            avalanche_rpc::Response::Vertex(wire_vertex) => {
+                let vhash = wire_vertex.hash();
+                debug!("received vertex response {vhash}={wire_vertex:?}");
+                if let Err(e) = self.try_insert_vertex(Arc::new(wire_vertex), Some(from_peer)) {
                     debug!("unable to insert requested vertex {vhash}: {e}");
                 }
             }
@@ -732,7 +768,7 @@ impl Dag {
                 }
                 // Write the block to the database
                 // TODO: Figure out how to batch these database writes
-                self.database.write_vertex(None, vertex.slim()?).ok();
+                self.database.write_vertex(None, vertex.to_wire()?).ok();
                 // Remove this block's inputs from the set of undecided_txos
                 for txo_hash in &vertex.block.inputs {
                     self.undecided_txos.remove(txo_hash);
@@ -748,7 +784,7 @@ impl Dag {
 ///
 /// The list is constructed as a map of <K, V>, where K is the hash of a vertex, and V is a list
 /// child vertices which depend on that vertex.
-struct WaitList(TracingRwLock<LruCache<VertexHash, Vec<Arc<SlimVertex>>>>);
+struct WaitList(TracingRwLock<LruCache<VertexHash, Vec<Arc<WireVertex>>>>);
 
 impl WaitList {
     /// Create a new waitlist
@@ -757,15 +793,16 @@ impl WaitList {
     }
 
     /// Inserts a new vertex into the waitlist.
-    fn insert(&mut self, slim_vertex: Arc<SlimVertex>) -> Result<()> {
+    fn insert(&mut self, wire_vertex: Arc<WireVertex>) -> Result<()> {
+        // TODO: Too many clones in this function! use `Arc<WireVertex>`
         let mut cache = self.0.write().map_err(|_| Error::WaitlistWriteLock)?;
-        for &parent_hash in slim_vertex.clone().parents.iter() {
+        for &parent_hash in &wire_vertex.parents {
             if let Some(parent_queue) = cache.get_mut(&parent_hash) {
                 // Add this vertex as a descendent in the parent's queue
-                parent_queue.push(slim_vertex.clone());
+                parent_queue.push(wire_vertex.clone());
             } else {
                 // Insert a new entry
-                if let Some(evicted) = cache.put(parent_hash, vec![slim_vertex.clone()]) {
+                if let Some(evicted) = cache.put(parent_hash, vec![wire_vertex.clone()]) {
                     warn!("Waitlist unexpectedly evicted vertices: {evicted:?}")
                 }
             }
@@ -774,7 +811,7 @@ impl WaitList {
     }
 
     /// Remove an entry from the list, and return the vertices which were waiting on it
-    fn remove(&mut self, vhash: &VertexHash) -> Result<Option<Vec<Arc<SlimVertex>>>> {
+    fn remove(&mut self, vhash: &VertexHash) -> Result<Option<Vec<Arc<WireVertex>>>> {
         Ok(self
             .0
             .write()
