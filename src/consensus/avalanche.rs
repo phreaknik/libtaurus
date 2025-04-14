@@ -436,7 +436,6 @@ impl Dag {
         wire_vertex: &WireVertex,
         sender: Option<PeerId>,
     ) -> Result<()> {
-        // TODO: check waitlist before requesting!
         // Lookup any missing parents
         let missing_parents: Vec<VertexHash> = wire_vertex
             .parents
@@ -639,7 +638,7 @@ impl Dag {
             .collect::<Vec<_>>();
         for pref in overtaken {
             // Reset the conflicting vertex's confidence
-            self.reset_confidence(rw_vertex.clone());
+            self.reset_confidence(rw_vertex.clone()).unwrap();
             // Reset the preferred spender of each UTXO spent by the overtaken vertex
             let conflict = pref.read().unwrap();
             for txo_hash in &conflict.block.inputs {
@@ -674,17 +673,22 @@ impl Dag {
     }
 
     /// Reset the convidence of this vertex and any children
-    pub fn reset_confidence(&mut self, rw_vertex: Arc<TracingRwLock<Vertex>>) {
+    pub fn reset_confidence(&mut self, rw_vertex: Arc<TracingRwLock<Vertex>>) -> Result<()> {
         let mut vertex = rw_vertex.write().unwrap();
         vertex.strongly_preferred = false;
         vertex.confidence = 0;
         vertex.chit = 0;
-        // TODO: According to avalanche, children of a non-virtuous transaction should be retried
-        // with new parents closer to genesis. Not doing so results in a liveness failure.
         for child in vertex.known_children.values() {
             // TODO paralellize this walk
-            self.reset_confidence(child.clone());
+            let block = child
+                .read()
+                .map_err(|_| Error::VertexReadLock)?
+                .block
+                .clone();
+            self.reset_confidence(child.clone())?;
+            self.events_ch.send(Event::StalledBlock(block))?;
         }
+        Ok(())
     }
 
     /// Handle any avalanche requests or responses
@@ -812,7 +816,7 @@ impl Dag {
                         // Vote completed, vertex is NOT preferred amongst peers
                         Some(false) => {
                             if let Some(v) = self.undecided_vertices.get(&vhash) {
-                                self.reset_confidence(v.clone());
+                                self.reset_confidence(v.clone())?;
                             }
                         }
                         // Vote is still open

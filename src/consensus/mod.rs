@@ -17,6 +17,7 @@ use libp2p::multihash::Multihash;
 use libp2p::PeerId;
 use randomx_rs::RandomXFlag;
 use std::iter::once;
+use std::ops::Deref;
 use std::path::PathBuf;
 use std::result;
 use std::sync::Arc;
@@ -36,6 +37,10 @@ pub const CONSENSUS_EVENT_CHAN_CAPACITY: usize = 32;
 pub enum Event {
     /// The DAG frontier has updated
     NewFrontier(Vec<VertexHash>),
+    /// If a block's vertex has parents which become non-virtuous, it will be impossible for this
+    /// block's vertex to be accepted. According to Avalanche consensus, we should dynamically
+    /// select parents to retry submitting the block.
+    StalledBlock(Arc<Block>),
 }
 
 /// Actions that can be performed by the consensus process
@@ -200,8 +205,10 @@ impl Runtime {
         );
 
         // Handle consensus events
+        let mut internal_events = self.events_out.subscribe();
         loop {
             select! {
+                // Handle P2P events
                 event = self.p2p_event_ch.recv() => {
                     match event {
                         Ok(p2p::Event::Pubsub(msg)) => {
@@ -222,9 +229,10 @@ impl Runtime {
                                 Err(e) => error!("Error while handling Avalanche message: {e}"),
                             }
                         }
-                        Err(e) => return error!("Stopping due to p2p_action channel error: {e}"),
+                        Err(e) => return error!("Stopping due to p2p_event channel error: {e}"),
                     }
                 },
+                // Handle requested actions
                 Some(action) = self.actions_in.recv() => {
                     match action {
                         Action::SubmitBlock(block) => {
@@ -243,6 +251,23 @@ impl Runtime {
                         }
                     }
                 },
+                // Handle internally generated events
+                event = internal_events.recv() => {
+                    match event {
+                        Ok(Event::NewFrontier(_)) => {},
+                        Ok(Event::StalledBlock(block)) => {
+                            let bhash = block.hash();
+                            if let Err(e) = self
+                                .dag
+                                .write()
+                                .map_err(|_| Error::DagWriteLock)
+                                .and_then(|mut dag| dag.try_insert_block(block.deref().clone(), true).map_err(Error::from)) {
+                                    warn!("Error resubmitting stalled block {bhash}: {e}");
+                                }
+                        },
+                        Err(e) => return error!("Stopping due to consensus_event channel error: {e}"),
+                    }
+                }
             }
         }
     }
