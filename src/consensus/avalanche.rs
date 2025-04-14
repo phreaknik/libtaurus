@@ -15,7 +15,10 @@ use crate::{
 };
 use cached::{Cached, TimedCache};
 use libp2p::PeerId;
-use std::{collections::HashMap, iter::once, num::NonZeroUsize, path::PathBuf, result, sync::Arc};
+use std::{
+    collections::HashMap, iter::once, num::NonZeroUsize, ops::DerefMut, path::PathBuf, result,
+    sync::Arc,
+};
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::{debug, error, info, trace, warn};
 use tracing_mutex::stdsync::TracingRwLock;
@@ -215,11 +218,13 @@ impl Dag {
     where
         V: IntoIterator<Item = Arc<WireVertex>>,
     {
-        // TODO: sort incoming vertices to avoid silly sequencing errors
+        // Collect and sort vertices to avoid silly insertion sequence errors
+        let mut insert_list: Vec<_> = vertices.into_iter().collect();
+        insert_list.deref_mut().sort();
 
         // Try to insert the given vertices
         let mut successful = Vec::new();
-        for wire_vertex in vertices {
+        for wire_vertex in insert_list {
             wire_vertex.sanity_checks()?;
             let vhash = wire_vertex.hash();
             let bhash = wire_vertex.bhash;

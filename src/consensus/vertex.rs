@@ -240,6 +240,35 @@ impl WireVertex {
     }
 }
 
+impl PartialEq for WireVertex {
+    fn eq(&self, other: &Self) -> bool {
+        self.version == other.version && self.parents == other.parents && self.bhash == other.bhash
+    }
+}
+
+impl Eq for WireVertex {}
+
+impl PartialOrd for WireVertex {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        if self.parents.contains(&other.hash()) {
+            Some(std::cmp::Ordering::Greater)
+        } else if other.parents.contains(&self.hash()) {
+            Some(std::cmp::Ordering::Less)
+        } else {
+            None
+        }
+    }
+}
+
+impl Ord for WireVertex {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match self.partial_cmp(other) {
+            None => std::cmp::Ordering::Equal,
+            Some(order) => order,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct PrettyVertex {
     version: u32,
