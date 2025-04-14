@@ -52,53 +52,57 @@ impl WaitList {
         missing_parents: Option<Vec<VertexHash>>,
         missing_block: Option<BlockHash>,
     ) -> Result<()> {
-        // TODO: need to prevent duplication
-
         let vhash = wire_vertex.hash();
         // Add vertex hash to the list of waiting vertexes
-        self.manifest
+        if !self
+            .manifest
             .write()
             .map_err(|_| Error::WaitlistWriteLock)?
-            .insert(vhash);
-        // Add this vertex to its partens' wait queues
-        if let Some(parents) = missing_parents {
-            let mut pcache = self
-                .by_parent
-                .write()
-                .map_err(|_| Error::WaitlistWriteLock)?;
-            for parent_hash in parents {
-                if let Some(parent_queue) = pcache.get_mut(&parent_hash) {
-                    // Add this vertex as a descendent in the parent's queue
-                    parent_queue.insert(vhash, wire_vertex.clone());
+            .insert(vhash)
+        {
+            // Already in the list
+            Ok(())
+        } else {
+            // Add this vertex to its partens' wait queues
+            if let Some(parents) = missing_parents {
+                let mut pcache = self
+                    .by_parent
+                    .write()
+                    .map_err(|_| Error::WaitlistWriteLock)?;
+                for parent_hash in parents {
+                    if let Some(parent_queue) = pcache.get_mut(&parent_hash) {
+                        // Add this vertex as a descendent in the parent's queue
+                        parent_queue.insert(vhash, wire_vertex.clone());
+                    } else {
+                        // Insert a new entry
+                        if let Some(evicted) =
+                            pcache.put(parent_hash, once((vhash, wire_vertex.clone())).collect())
+                        {
+                            warn!("Waitlist unexpectedly evicted vertices: {evicted:?}")
+                        }
+                    }
+                }
+            }
+            // Add this vertex to its block's wait queue
+            if let Some(bhash) = missing_block {
+                let mut bcache = self
+                    .by_block
+                    .write()
+                    .map_err(|_| Error::WaitlistWriteLock)?;
+                if let Some(block_queue) = bcache.get_mut(&bhash) {
+                    // Add this vertex as a descendent in the block's queue
+                    block_queue.insert(vhash, wire_vertex.clone());
                 } else {
                     // Insert a new entry
                     if let Some(evicted) =
-                        pcache.put(parent_hash, once((vhash, wire_vertex.clone())).collect())
+                        bcache.put(bhash, once((vhash, wire_vertex.clone())).collect())
                     {
                         warn!("Waitlist unexpectedly evicted vertices: {evicted:?}")
                     }
                 }
             }
+            Ok(())
         }
-        // Add this vertex to its block's wait queue
-        if let Some(bhash) = missing_block {
-            let mut bcache = self
-                .by_block
-                .write()
-                .map_err(|_| Error::WaitlistWriteLock)?;
-            if let Some(block_queue) = bcache.get_mut(&bhash) {
-                // Add this vertex as a descendent in the block's queue
-                block_queue.insert(vhash, wire_vertex.clone());
-            } else {
-                // Insert a new entry
-                if let Some(evicted) =
-                    bcache.put(bhash, once((vhash, wire_vertex.clone())).collect())
-                {
-                    warn!("Waitlist unexpectedly evicted vertices: {evicted:?}")
-                }
-            }
-        }
-        Ok(())
     }
 
     /// Check if the waitlist contains the specified vertex

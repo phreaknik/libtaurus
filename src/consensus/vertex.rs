@@ -126,7 +126,6 @@ impl Vertex {
 
     /// Compute the hash of the vertex
     pub fn hash(&self) -> Result<VertexHash> {
-        // TODO: cache this result?
         Ok(self.to_wire()?.slim().1.hash())
     }
 
