@@ -73,7 +73,7 @@ pub struct Block {
     pub outputs: Vec<Txo>,
 
     /// Time when the miner claims to have solved this proof-of-work
-    pub time: DateTime<Utc>, // TODO: don't need a timestamp... might be nice in Vertex though
+    pub time: DateTime<Utc>,
 
     /// Nonce used in proof-of-work
     pub nonce: u64,
