@@ -303,8 +303,6 @@ impl Dag {
         sender: Option<PeerId>,
         broadcast: bool,
     ) -> Result<bool> {
-        // TODO: need to check difficulty, block validity, etc
-
         let vhash = wire_vertex.hash();
         debug!("Vertex submitted: {vhash} = {wire_vertex}");
 
@@ -381,8 +379,6 @@ impl Dag {
                 error!("Registered duplicate txo: {txo_hash}");
             }
         }
-
-        // TODO: How do we verify if this vertex ties back to genesis... Do we need to?
 
         // Broadcast to peers if this vertex didn't already come from our peers
         if broadcast {
