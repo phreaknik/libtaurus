@@ -838,6 +838,7 @@ impl Dag {
             // Only finalize the block if it has no undecided parents
             if vertex.undecided_parents.len() == 0 {
                 // Remove this block from its children's undecided_parents lists
+                let mut txn = None;
                 for child in vertex.known_children.values() {
                     child
                         .write()
@@ -846,14 +847,12 @@ impl Dag {
                         .remove(&vertex.hash()?);
                 }
                 // Write the block to the database
-                // TODO: Figure out how to batch these database writes
-                self.database
-                    .write_vertex(None, vertex.to_wire()?)?
-                    .commit()?;
+                txn = Some(self.database.write_vertex(txn, vertex.to_wire()?)?);
                 // Remove this block's inputs from the set of undecided_txos
                 for txo_hash in &vertex.block.inputs {
                     self.undecided_txos.remove(txo_hash);
                 }
+                txn.unwrap().commit()?;
             }
         }
         Ok(())

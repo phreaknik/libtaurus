@@ -21,9 +21,6 @@ impl RandomXVMInstance {
         let cache = RandomXCache::new(flags, key).unwrap();
         let vm = RandomXVM::new(flags, Some(cache), None)?;
 
-        // TODO: Today only light mode is enabled. Add option for fullmode, utilizing
-        // RandomXFlag::FULL_MEM and RandomXFlag::LARGE_PAGES if possible
-
         Ok(Self {
             instance: Arc::new(TracingRwLock::new(vm)),
         })
