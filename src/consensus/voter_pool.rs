@@ -1,6 +1,6 @@
 use crate::{
     params::{AVALANCHE_QUORUM, VOTER_EXPERATION_HRS, VOTER_REGISTRATION_WINDOW_HRS},
-    Block,
+    Block, VertexHash,
 };
 use chrono::{Duration, Utc};
 use libp2p::PeerId;
@@ -9,8 +9,11 @@ use rand::{
     thread_rng,
 };
 use std::{collections::HashMap, result, sync::Arc};
+use tokio::sync::broadcast;
 use tracing::{debug, trace};
 use tracing_mutex::stdsync::TracingRwLock;
+
+use super::Event;
 
 /// Error type for VoterPool errors
 #[derive(thiserror::Error, Debug)]
@@ -159,19 +162,30 @@ impl VoterRecord {
 
 /// A scorecard to count votes received from peers during a round of queries
 pub struct Scorecard {
+    /// Hash of the vertex being queried
+    vhash: VertexHash,
+    /// Events channel to notify of query events
+    events_ch: broadcast::Sender<Event>,
     /// Peers that still need to vote
-    pub pending: HashMap<PeerId, Arc<TracingRwLock<VoterRecord>>>,
+    pending: HashMap<PeerId, Arc<TracingRwLock<VoterRecord>>>,
     /// Total score from peers which have voted
-    pub score: usize,
+    score: usize,
 }
 
 impl Scorecard {
-    /// Create a new scoreard for a running vote among the given voters
-    pub fn new_with_voters<P>(voters: P) -> Scorecard
+    /// Create a new scoreard for a running vote among the given voters, querying the preference of
+    /// the specified vertex
+    pub fn new_with_voters<P>(
+        vhash: VertexHash,
+        voters: P,
+        events_ch: broadcast::Sender<Event>,
+    ) -> Scorecard
     where
         P: IntoIterator<Item = Arc<TracingRwLock<VoterRecord>>>,
     {
         Scorecard {
+            vhash,
+            events_ch,
             pending: voters
                 .into_iter()
                 .map(|rw_record| {
@@ -182,7 +196,6 @@ impl Scorecard {
             score: 0,
         }
     }
-
     /// Register the vote from a voter.
     ///
     /// Votes is only counted if this voter is one of the allowed voters and has not voted already.
@@ -208,6 +221,8 @@ impl Scorecard {
 
 impl Drop for Scorecard {
     fn drop(&mut self) {
+        // Notify system that query has completed
+        let _ = self.events_ch.send(Event::QueryCompleted(self.vhash));
         // Record a timeout for each peer which did not respond in time
         for (_id, record) in &self.pending {
             record.write().unwrap().count_timeout();

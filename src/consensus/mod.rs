@@ -41,6 +41,8 @@ pub enum Event {
     /// block's vertex to be accepted. According to Avalanche consensus, we should dynamically
     /// select parents to retry submitting the block.
     StalledBlock(Arc<Block>),
+    /// Indicates the specified vertex has been queried, and the query is complete.
+    QueryCompleted(VertexHash),
 }
 
 /// Actions that can be performed by the consensus process
@@ -263,6 +265,14 @@ impl Runtime {
                                 .map_err(|_| Error::DagWriteLock)
                                 .and_then(|mut dag| dag.try_insert_block(block.deref().clone(), true).map_err(Error::from)) {
                                     warn!("Error resubmitting stalled block {bhash}: {e}");
+                                }
+                        },
+                        Ok(Event::QueryCompleted(vhash)) => {
+                             if let Ok(mut dag) = self
+                                .dag
+                                .write()
+                                .map_err(|_| Error::DagWriteLock) {
+                                    dag.clear_pending_query(&vhash);
                                 }
                         },
                         Err(e) => return error!("Stopping due to consensus_event channel error: {e}"),

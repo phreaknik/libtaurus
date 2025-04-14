@@ -16,7 +16,12 @@ use crate::{
 use cached::{Cached, TimedCache};
 use libp2p::PeerId;
 use std::{
-    collections::HashMap, iter::once, num::NonZeroUsize, ops::DerefMut, path::PathBuf, result,
+    collections::{HashMap, HashSet},
+    iter::once,
+    num::NonZeroUsize,
+    ops::DerefMut,
+    path::PathBuf,
+    result,
     sync::Arc,
 };
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
@@ -119,11 +124,14 @@ pub struct Dag {
     /// Voter pool to select from for Avalanche queries
     voter_pool: VoterPool,
 
-    /// Database for block storage
-    database: ConsensusDb,
+    /// List of vertices actively being queried
+    pending_queries: HashSet<VertexHash>,
 
     /// Collection of scorecards tracking the progress of pending queries
     scorecards: TimedCache<VertexHash, Scorecard>,
+
+    /// Database for block storage
+    database: ConsensusDb,
 
     /// RandomX VM instance for verifying proof-of-work
     randomx_vm: RandomXVMInstance,
@@ -151,9 +159,10 @@ impl Dag {
             waitlist: WaitList::new(config.waitlist_cap),
             frontier: HashMap::new(),
             voter_pool: VoterPool::new(),
+            pending_queries: HashSet::new(),
+            scorecards: TimedCache::with_lifespan(QUERY_TIMEOUT_SEC),
             database: ConsensusDb::open(&config.data_dir.join(DATABASE_DIR), true)
                 .expect("Failed to open consensus database"),
-            scorecards: TimedCache::with_lifespan(QUERY_TIMEOUT_SEC),
             randomx_vm,
             p2p_action_ch,
             events_ch,
@@ -560,18 +569,26 @@ impl Dag {
 
     /// Begin querying our peers for their preference for the specified vertex
     fn query_peer_preferences(&mut self, vhash: VertexHash) -> Result<()> {
-        // TODO: this query could be initiated multiple times, if a block goes through waitlist
-        // several times. Fix this. It should only happen once.
-        let voters = self.voter_pool.select(AVALANCHE_QUERY_COUNT)?;
-        for voter in &voters {
-            self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
-                voter.read().unwrap().id(),
-                avalanche_rpc::Request::GetPreference(vhash),
-            ))?;
+        if !self.pending_queries.contains(&vhash) {
+            let voters = self.voter_pool.select(AVALANCHE_QUERY_COUNT)?;
+            for voter in &voters {
+                self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
+                    voter.read().unwrap().id(),
+                    avalanche_rpc::Request::GetPreference(vhash),
+                ))?;
+            }
+            self.scorecards.cache_set(
+                vhash,
+                Scorecard::new_with_voters(vhash, voters, self.events_ch.clone()),
+            );
+            self.pending_queries.insert(vhash);
         }
-        self.scorecards
-            .cache_set(vhash, Scorecard::new_with_voters(voters));
         Ok(())
+    }
+
+    /// Remove completed query from pending queries
+    pub fn clear_pending_query(&mut self, vhash: &VertexHash) {
+        self.pending_queries.remove(vhash);
     }
 
     /// Look up a block from the DAG
