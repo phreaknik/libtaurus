@@ -482,7 +482,7 @@ impl Dag {
                 missing_str += &format!(", {}", missing);
             }
             missing_str += "]";
-            info!(
+            debug!(
                 "Missing parents for vertex {}: {missing_str}",
                 wire_vertex.hash()
             );
