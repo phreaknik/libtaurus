@@ -217,11 +217,10 @@ impl Dag {
     {
         // TODO: sort incoming vertices to avoid silly sequencing errors
 
-        // TODO: need to check if have parents! and other sanities too
-
         // Try to insert the given vertices
         let mut successful = Vec::new();
         for wire_vertex in vertices {
+            wire_vertex.sanity_checks()?;
             let vhash = wire_vertex.hash();
             let bhash = wire_vertex.bhash;
             match self.try_insert_vertex(wire_vertex.clone(), sender, broadcast) {

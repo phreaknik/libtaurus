@@ -10,10 +10,14 @@ pub const VERSION: u32 = 32;
 /// Error type for vertex errors
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[error("bad hash")]
-    BadHash,
+    #[error("block hash does not match self.bhash")]
+    BadBlockHash,
+    #[error("bad vertex version")]
+    BadVertexVersion,
     #[error(transparent)]
     Block(#[from] block::Error),
+    #[error("vertex does not specify any parents")]
+    EmptyParents,
     #[error(transparent)]
     Hash(#[from] crate::hash::Error),
     #[error("missing block")]
@@ -169,6 +173,23 @@ impl WireVertex {
                 .try_collect()?,
             block: if full { Some(block) } else { None },
         })
+    }
+
+    /// Make sure the vertex passes all basic sanity checks
+    pub fn sanity_checks(&self) -> Result<()> {
+        if self.version != VERSION {
+            Err(Error::BadVertexVersion)
+        } else if self.parents.len() <= 0 {
+            Err(Error::EmptyParents)
+        } else if let Some(block) = &self.block {
+            if block.hash() != self.bhash {
+                Err(Error::BadBlockHash)
+            } else {
+                Ok(block.sanity_checks()?)
+            }
+        } else {
+            Ok(())
+        }
     }
 
     /// Compute the hash of the vertex

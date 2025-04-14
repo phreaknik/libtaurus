@@ -17,6 +17,8 @@ pub const VERSION: u32 = 0;
 /// Error type for block errors
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    #[error("bad block version")]
+    BadBlockVersion,
     #[error(transparent)]
     Chrono(#[from] chrono::ParseError),
     #[error(transparent)]
@@ -91,6 +93,17 @@ impl Block {
             outputs: Vec::new(),
             time: Utc::now(),
             nonce: 0,
+        }
+    }
+
+    /// Make sure the block passes all basic sanity checks
+    pub fn sanity_checks(&self) -> Result<()> {
+        if self.version != VERSION {
+            Err(Error::BadBlockVersion)
+        } else if self.difficulty < GENESIS_DIFFICULTY {
+            Err(Error::InvalidDifficulty)
+        } else {
+            Ok(())
         }
     }
 
