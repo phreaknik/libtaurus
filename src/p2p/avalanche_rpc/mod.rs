@@ -38,10 +38,6 @@ pub enum Error {
     #[error("response message is missing data")]
     IncompleteResponse,
     #[error(transparent)]
-    MsgPackDecode(#[from] rmp_serde::decode::Error),
-    #[error(transparent)]
-    MsgPackEncode(#[from] rmp_serde::encode::Error),
-    #[error(transparent)]
     Vertex(#[from] vertex::Error),
 }
 

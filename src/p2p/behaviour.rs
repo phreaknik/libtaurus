@@ -1,4 +1,4 @@
-use super::{avalanche_rpc, Event, MessageData, PeerDatabase, PeerInfo};
+use super::{avalanche_rpc, BroadcastData, Event, PeerDatabase, PeerInfo};
 use libp2p::allow_block_list;
 use libp2p::core::Endpoint;
 use libp2p::gossipsub::{self, MessageAcceptance, MessageAuthenticity, MessageId, Sha256Topic};
@@ -47,7 +47,7 @@ impl<'a> InnerBehaviour {
             config.gossipsub_cfg,
         )
         .unwrap();
-        for m in MessageData::iter() {
+        for m in BroadcastData::iter() {
             let topic = Sha256Topic::from(&m);
             debug!("Subscribed to {topic} topic");
             gossipsub.subscribe(&topic)?;
@@ -90,14 +90,10 @@ impl<'a> Behaviour {
     }
 
     /// Publish message to gossipsub network
-    pub fn publish(&mut self, message: MessageData) -> crate::p2p::Result<MessageId> {
+    pub fn publish(&mut self, message: BroadcastData) -> crate::p2p::Result<MessageId> {
         self.inner
             .gossipsub
-            .publish(Sha256Topic::from(&message), rmp_serde::to_vec(&message)?) // TODO: should
-            // protobuf
-            // encode/decode,
-            // just like
-            // request/response
+            .publish(Sha256Topic::from(&message), message.to_bytes()?)
             .map_err(crate::p2p::Error::from)
     }
 

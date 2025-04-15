@@ -55,10 +55,6 @@ pub enum Error {
     MissingParents(Vec<VertexHash>),
     #[error("missing the previously mined block from this miner")]
     MissingPrevMined(BlockHash),
-    #[error(transparent)]
-    MsgPackDecode(#[from] rmp_serde::decode::Error),
-    #[error(transparent)]
-    MsgPackEncode(#[from] rmp_serde::encode::Error),
     #[error("new block channel error")]
     NewBlockCh(#[from] tokio::sync::mpsc::error::SendError<Block>),
     #[error("data not found")]
@@ -394,7 +390,7 @@ impl Dag {
         // Broadcast to peers if this vertex didn't already come from our peers
         if broadcast {
             self.p2p_action_ch
-                .send(p2p::Action::Broadcast(p2p::MessageData::Vertex(
+                .send(p2p::Action::Broadcast(p2p::BroadcastData::Vertex(
                     wire_vertex.as_ref().clone(),
                 )))?;
         }

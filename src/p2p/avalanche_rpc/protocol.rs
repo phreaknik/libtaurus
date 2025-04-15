@@ -48,14 +48,14 @@ impl request_response::Codec for AvalancheRpcCodec {
         io.read_to_end(&mut bytes).await?;
         let mut protobuf = BytesReader::from_bytes(&bytes);
         match proto::Request::from_reader(&mut protobuf, &bytes) {
-            Err(_) => Err(io::Error::new(
+            Err(e) => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "unable to read request message",
+                format!("unable to read request message: {e}"),
             )),
-            Ok(protobuf) => Request::from_protobuf(protobuf).map_err(|_| {
+            Ok(protobuf) => Request::from_protobuf(protobuf).map_err(|e| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
-                    "parsed request message is missing data",
+                    format!("parsed request message is missing data: {e}"),
                 )
             }),
         }
@@ -73,14 +73,14 @@ impl request_response::Codec for AvalancheRpcCodec {
         io.read_to_end(&mut bytes).await?;
         let mut protobuf = BytesReader::from_bytes(&bytes);
         match proto::Response::from_reader(&mut protobuf, &bytes) {
-            Err(_) => Err(io::Error::new(
+            Err(e) => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "unable to read response message",
+                format!("unable to read response message: {e}"),
             )),
-            Ok(protobuf) => Response::from_protobuf(protobuf).map_err(|_| {
+            Ok(protobuf) => Response::from_protobuf(protobuf).map_err(|e| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
-                    "parsed response message is missing data",
+                    format!("parsed response message is missing data: {e}"),
                 )
             }),
         }
@@ -97,16 +97,16 @@ impl request_response::Codec for AvalancheRpcCodec {
     {
         let mut bytes = Vec::new();
         let mut writer = Writer::new(&mut bytes);
-        let protobuf = data.to_protobuf().map_err(|_| {
+        let protobuf = data.to_protobuf().map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                "unable to convert request to protobuf",
+                format!("unable to convert request to protobuf: {e}"),
             )
         })?;
-        protobuf.write_message(&mut writer).map_err(|_| {
+        protobuf.write_message(&mut writer).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                "unable to write request message",
+                format!("unable to write request message: {e}"),
             )
         })?;
         io.write_all(bytes.as_slice()).await?;
@@ -124,16 +124,16 @@ impl request_response::Codec for AvalancheRpcCodec {
     {
         let mut bytes = Vec::new();
         let mut writer = Writer::new(&mut bytes);
-        let protobuf = data.to_protobuf().map_err(|_| {
+        let protobuf = data.to_protobuf().map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                "unable to convert response to protobuf",
+                format!("unable to convert response to protobuf: {e}"),
             )
         })?;
-        protobuf.write_message(&mut writer).map_err(|_| {
+        protobuf.write_message(&mut writer).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                "unable to write response message",
+                format!("unable to write response message: {e}"),
             )
         })?;
         io.write_all(bytes.as_slice()).await?;

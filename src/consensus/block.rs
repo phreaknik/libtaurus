@@ -4,7 +4,7 @@ use crate::{
     params::{self, FUTURE_BLOCK_LIMIT_SECS, GENESIS_DIFFICULTY},
     randomx::{self, RandomXVMInstance},
 };
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use heed::{BytesDecode, BytesEncode};
 use libp2p::{multihash::Multihash, PeerId};
 use num::{BigUint, FromPrimitive};
@@ -152,7 +152,7 @@ impl Block {
                 .iter()
                 .map(|txo| Txo::from_protobuf(txo))
                 .try_collect()?,
-            time: rmp_serde::from_slice(&block.time)?,
+            time: DateTime::parse_from_rfc3339(&String::from_utf8(block.time)?)?.into(),
             nonce: block.nonce,
         };
         block.sanity_checks()?;
@@ -180,7 +180,10 @@ impl Block {
                 .iter()
                 .map(|txo| txo.to_protobuf())
                 .try_collect()?,
-            time: rmp_serde::to_vec(&self.time)?,
+            time: self
+                .time
+                .to_rfc3339_opts(SecondsFormat::Secs, true)
+                .into_bytes(),
             nonce: self.nonce,
         })
     }

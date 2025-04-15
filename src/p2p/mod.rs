@@ -16,7 +16,7 @@ use libp2p::{
     swarm::{SwarmBuilder, SwarmEvent},
     Multiaddr, PeerId,
 };
-pub use message::{Message, MessageData, MessageValidationReport};
+pub use message::{BroadcastData, Message, MessageValidationReport};
 use std::{io, net::Ipv4Addr, path::PathBuf};
 use thiserror;
 use tokio::{
@@ -47,7 +47,7 @@ pub enum Event {
 #[derive(Debug)]
 pub enum Action {
     BlockPeer(PeerId),
-    Broadcast(MessageData),
+    Broadcast(BroadcastData),
     GetLocalPeerId(oneshot::Sender<PeerId>),
     ReportMessageValidity(MessageValidationReport),
     AvalancheRequest(PeerId, avalanche_rpc::Request),
@@ -62,10 +62,6 @@ pub enum Error {
     #[error(transparent)]
     Heed(#[from] heed::Error),
     #[error(transparent)]
-    MsgPackDecode(#[from] rmp_serde::decode::Error),
-    #[error(transparent)]
-    MsgPackEncode(#[from] rmp_serde::encode::Error),
-    #[error(transparent)]
     Multiaddr(#[from] libp2p::multiaddr::Error),
     #[error(transparent)]
     Io(#[from] io::Error),
@@ -79,6 +75,8 @@ pub enum Error {
     NoKnownPeers(#[from] kad::NoKnownPeers),
     #[error("data is not a message")]
     NotAMessage,
+    #[error(transparent)]
+    Vertex(#[from] crate::consensus::vertex::Error),
 }
 
 /// Result type for cordelia-p2p

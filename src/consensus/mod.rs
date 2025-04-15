@@ -66,10 +66,6 @@ pub enum Error {
     Heed(#[from] heed::Error),
     #[error(transparent)]
     Io(#[from] std::io::Error),
-    #[error(transparent)]
-    MsgPackDecode(#[from] rmp_serde::decode::Error),
-    #[error(transparent)]
-    MsgPackEncode(#[from] rmp_serde::encode::Error),
     #[error("new block channel error")]
     NewBlockCh(#[from] tokio::sync::mpsc::error::SendError<Block>),
     #[error("p2p action channel error")]
@@ -289,7 +285,7 @@ impl Runtime {
         let ignore = msg.ignore();
         let reject = msg.reject();
         match msg.data {
-            p2p::MessageData::Vertex(wire_vertex) => {
+            p2p::BroadcastData::Vertex(wire_vertex) => {
                 let mut dag = self.dag.write().map_err(|_| Error::DagWriteLock)?;
                 match dag.try_insert_vertices(
                     once(Arc::new(wire_vertex)),

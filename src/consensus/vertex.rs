@@ -22,10 +22,6 @@ pub enum Error {
     Hash(#[from] crate::hash::Error),
     #[error("missing block")]
     MissingBlock,
-    #[error(transparent)]
-    MsgPackDecode(#[from] rmp_serde::decode::Error),
-    #[error(transparent)]
-    MsgPackEncode(#[from] rmp_serde::encode::Error),
     #[error("error decoding from protobuf")]
     ProtoDecode(String),
     #[error("error acquiring read lock on a vertex")]

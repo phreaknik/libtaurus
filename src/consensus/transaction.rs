@@ -4,12 +4,7 @@ use std::result;
 
 /// Error type for transaction errors
 #[derive(thiserror::Error, Debug)]
-pub enum Error {
-    #[error(transparent)]
-    MsgPackDecode(#[from] rmp_serde::decode::Error),
-    #[error(transparent)]
-    MsgPackEncode(#[from] rmp_serde::encode::Error),
-}
+pub enum Error {}
 
 /// Result type for vertex errors
 pub type Result<T> = result::Result<T, Error>;
