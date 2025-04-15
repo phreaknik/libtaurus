@@ -348,7 +348,6 @@ impl Dag {
         }?;
 
         // Make sure the block referenced in this vertex can be spent
-        // TODO: be sure to check this _at the parent state. Retry if fail.
         let (conflict_free, opt_block) = self.check_conflicts(&wire_vertex)?;
 
         // Create a mutex protected vertex for inserting into the DAG structure
