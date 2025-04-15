@@ -7,21 +7,26 @@ pub use behaviour::Behaviour;
 use core::result;
 pub use database::{PeerDatabase, PeerInfo};
 use futures::StreamExt;
-use libp2p::gossipsub;
-use libp2p::identity::Keypair;
-use libp2p::kad;
-use libp2p::multiaddr::Protocol;
-use libp2p::request_response::RequestId;
-use libp2p::swarm::{SwarmBuilder, SwarmEvent};
-use libp2p::{Multiaddr, PeerId};
+use libp2p::{
+    gossipsub,
+    identity::Keypair,
+    kad,
+    multiaddr::Protocol,
+    request_response::RequestId,
+    swarm::{SwarmBuilder, SwarmEvent},
+    Multiaddr, PeerId,
+};
 pub use message::{Message, MessageData, MessageValidationReport};
-use std::io;
-use std::net::Ipv4Addr;
-use std::path::PathBuf;
+use std::{io, net::Ipv4Addr, path::PathBuf};
 use thiserror;
-use tokio::select;
-use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
-use tokio::sync::{broadcast, oneshot};
+use tokio::{
+    select,
+    sync::{
+        broadcast,
+        mpsc::{self, UnboundedReceiver, UnboundedSender},
+        oneshot,
+    },
+};
 use tracing::{debug, error, info};
 
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
@@ -109,6 +114,7 @@ async fn task_fn(
     mut actions_in: UnboundedReceiver<Action>,
     events_out: broadcast::Sender<Event>,
 ) {
+    // TODO: enable UPnP port mapping
     info!("Starting p2p client...");
     // Open the peer database
     let peer_db = PeerDatabase::open(&config.data_dir.join(DATABASE_DIR), true)
@@ -128,7 +134,6 @@ async fn task_fn(
         local_peer_id,
     )
     .build();
-
     // Listen for inbound connections
     let local_addr = Multiaddr::empty()
         .with(Protocol::Ip4(Ipv4Addr::UNSPECIFIED))
