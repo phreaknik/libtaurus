@@ -40,6 +40,7 @@ use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
 use libp2p::identity::Keypair;
 use p2p::PeerDatabase;
 use std::{fs, path::PathBuf};
+use time::macros::format_description;
 use tokio::{self, select};
 use tracing::{error, trace};
 use tracing_subscriber::{fmt::time::UtcTime, EnvFilter};
@@ -179,8 +180,8 @@ fn parse_cli_args() -> ArgMatches {
 
 /// Set up logger
 fn setup_logger<'a>(args: &'a ArgMatches) {
-    tracing_subscriber::fmt()
-        .with_timer(UtcTime::rfc_3339()) // TODO: shorter timestamps
+    let debug_verbosity = args.get_count("verbosity") > 0;
+    let mut logger = tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env().add_directive(
             match args.get_count("verbosity") {
                 1 => "cordelia=debug".parse().unwrap(),
@@ -188,7 +189,16 @@ fn setup_logger<'a>(args: &'a ArgMatches) {
                 _ => "cordelia=info".parse().unwrap(),
             },
         ))
-        .init();
+        .with_target(debug_verbosity);
+    if debug_verbosity {
+        logger.with_timer(UtcTime::rfc_3339()).init();
+    } else {
+        logger
+            .with_timer(UtcTime::new(format_description!(
+                "[hour]:[minute]:[second]"
+            )))
+            .init();
+    }
 }
 
 /// Determine system directories for the application to use
