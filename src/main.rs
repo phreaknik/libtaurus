@@ -181,7 +181,7 @@ fn parse_cli_args() -> ArgMatches {
 /// Set up logger
 fn setup_logger<'a>(args: &'a ArgMatches) {
     let debug_verbosity = args.get_count("verbosity") > 0;
-    let mut logger = tracing_subscriber::fmt()
+    let logger = tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env().add_directive(
             match args.get_count("verbosity") {
                 1 => "cordelia=debug".parse().unwrap(),

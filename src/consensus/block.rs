@@ -1,10 +1,10 @@
 use super::transaction::{self, Txo, TxoHash};
 use crate::{
     p2p,
-    params::{self, GENESIS_DIFFICULTY},
+    params::{self, FUTURE_BLOCK_LIMIT_SECS, GENESIS_DIFFICULTY},
     randomx::{self, RandomXVMInstance},
 };
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use heed::{BytesDecode, BytesEncode};
 use libp2p::{multihash::Multihash, PeerId};
 use num::{BigUint, FromPrimitive};
@@ -21,6 +21,8 @@ pub enum Error {
     BadBlockVersion,
     #[error(transparent)]
     Chrono(#[from] chrono::ParseError),
+    #[error("block has timestamp in the future")]
+    FutureTime,
     #[error(transparent)]
     Hash(#[from] crate::hash::Error),
     #[error("invalid difficulty")]
@@ -49,13 +51,6 @@ pub type BlockHash = crate::hash::Hash;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Block {
-    /// TODO: Need block validation rules. Not much though:
-    ///    * version must match
-    ///    * difficulty must be valid (maybe DAA control average DAG width, not production time?)
-    ///        * ^ this is actually very interesting. Feedback loop regulates for network
-    ///        efficiency, instead of for block production time as a proxy for efficiency.
-    ///    * time must be relatively recent and not future
-
     /// Block format revision number
     pub version: u32,
 
@@ -102,6 +97,8 @@ impl Block {
             Err(Error::BadBlockVersion)
         } else if self.difficulty < GENESIS_DIFFICULTY {
             Err(Error::InvalidDifficulty)
+        } else if self.time - Utc::now() > Duration::seconds(FUTURE_BLOCK_LIMIT_SECS) {
+            Err(Error::FutureTime)
         } else {
             Ok(())
         }
@@ -137,7 +134,7 @@ impl Block {
 
     /// Deserialize from protobuf format
     pub fn from_protobuf(block: p2p::avalanche_rpc::proto::Block) -> Result<Block> {
-        Ok(Block {
+        let block = Block {
             version: block.version,
             difficulty: block.difficulty,
             miner: PeerId::from_bytes(&block.miner)?,
@@ -157,11 +154,14 @@ impl Block {
                 .try_collect()?,
             time: rmp_serde::from_slice(&block.time)?,
             nonce: block.nonce,
-        })
+        };
+        block.sanity_checks()?;
+        Ok(block)
     }
 
     /// Serialize into protobuf format
     pub fn to_protobuf(&self) -> Result<p2p::avalanche_rpc::proto::Block> {
+        self.sanity_checks()?;
         Ok(p2p::avalanche_rpc::proto::Block {
             version: self.version,
             difficulty: self.difficulty,

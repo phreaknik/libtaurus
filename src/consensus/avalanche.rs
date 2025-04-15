@@ -234,7 +234,6 @@ impl Dag {
         // Try to insert the given vertices
         let mut successful = Vec::new();
         for wire_vertex in insert_list {
-            wire_vertex.sanity_checks()?;
             let vhash = wire_vertex.hash();
             let bhash = wire_vertex.bhash;
             match self.try_insert_vertex(wire_vertex.clone(), sender, broadcast) {

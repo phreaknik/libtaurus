@@ -214,7 +214,7 @@ impl WireVertex {
 
     /// Deserialize from protobuf format
     pub fn from_protobuf(vertex: p2p::avalanche_rpc::proto::Vertex) -> Result<WireVertex> {
-        Ok(WireVertex {
+        let vertex = WireVertex {
             version: vertex.version,
             parents: vertex
                 .parents
@@ -227,11 +227,14 @@ impl WireVertex {
                     .block_hash
                     .ok_or(Error::ProtoDecode("missing block_hash".to_string()))?,
             )?,
-        })
+        };
+        vertex.sanity_checks()?;
+        Ok(vertex)
     }
 
     /// Serialize into protobuf format
     pub fn to_protobuf(&self) -> Result<p2p::avalanche_rpc::proto::Vertex> {
+        self.sanity_checks()?;
         Ok(p2p::avalanche_rpc::proto::Vertex {
             version: self.version,
             parents: self.parents.iter().map(|p| p.to_protobuf()).try_collect()?,
