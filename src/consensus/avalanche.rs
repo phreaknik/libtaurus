@@ -625,14 +625,17 @@ impl Dag {
         &mut self,
         rw_vertex: Arc<TracingRwLock<Vertex>>,
     ) -> Vec<VertexHash> {
-        let mut vertex = rw_vertex.write().unwrap();
         // Recursively compute confidence as sum of chits in progeny
-        vertex.confidence = vertex.chit
-            + vertex
-                .known_children
-                .values()
-                .map(|v| v.read().unwrap().confidence)
-                .sum::<usize>();
+        {
+            let mut vertex = rw_vertex.write().unwrap();
+            vertex.confidence = vertex.chit
+                + vertex
+                    .known_children
+                    .values()
+                    .map(|v| v.read().unwrap().confidence)
+                    .sum::<usize>();
+        }
+        let vertex = rw_vertex.read().unwrap();
         // Check if this vertex's confidence has surpassed that of any vertices in its conflict set
         let overtaken = vertex
             .block
@@ -696,8 +699,8 @@ impl Dag {
                 .map_err(|_| Error::VertexReadLock)?
                 .block
                 .clone();
-            self.reset_confidence(child.clone())?;
             self.events_ch.send(Event::StalledBlock(block))?;
+            self.reset_confidence(child.clone())?;
         }
         Ok(())
     }
