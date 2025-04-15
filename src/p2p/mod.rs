@@ -41,6 +41,7 @@ pub enum Event {
 /// Actions that can be performed by the p2p client
 #[derive(Debug)]
 pub enum Action {
+    BlockPeer(PeerId),
     Broadcast(MessageData),
     GetLocalPeerId(oneshot::Sender<PeerId>),
     ReportMessageValidity(MessageValidationReport),
@@ -174,11 +175,14 @@ async fn task_fn(
 
             // Handle requested actions
             action = actions_in.recv() => match action {
+                Some(Action::BlockPeer(peer)) => {
+                    swarm.behaviour_mut().block_peer(peer);
+                },
                 Some(Action::Broadcast(message)) => {
                     if let Err(e) = swarm.behaviour_mut().publish(message) {
                         error!("Failed to publish p2p message: {e}");
                     }
-                }
+                },
                 Some(Action::GetLocalPeerId(resp_ch)) => resp_ch.send(local_peer_id).unwrap(),
                 Some(Action::ReportMessageValidity(MessageValidationReport{
                     msg_id, msg_source, acceptance,

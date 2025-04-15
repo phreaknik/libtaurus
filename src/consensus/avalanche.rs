@@ -795,8 +795,8 @@ impl Dag {
                 debug!("Received block response {bhash}={block}");
                 match self.register_block(block) {
                     Err(Error::Block(block::Error::InvalidPoW)) => {
-                        // TODO: ban this peer for sending us a block with invalid POW
-                        todo!()
+                        // Block the peer for sending us an un-worked block
+                        self.p2p_action_ch.send(p2p::Action::BlockPeer(from_peer))?
                     }
                     Err(e) => debug!("Unable to insert requested block {bhash}: {e}"),
                     _ => {}

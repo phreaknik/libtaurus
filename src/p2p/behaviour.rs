@@ -1,5 +1,5 @@
 use super::{avalanche_rpc, Event, MessageData, PeerDatabase, PeerInfo};
-
+use libp2p::allow_block_list;
 use libp2p::core::Endpoint;
 use libp2p::gossipsub::{self, MessageAcceptance, MessageAuthenticity, MessageId, Sha256Topic};
 use libp2p::identity::Keypair;
@@ -36,6 +36,7 @@ pub struct InnerBehaviour {
     kademlia: Kademlia<MemoryStore>,
     gossipsub: gossipsub::Behaviour,
     avalanche_rpc: avalanche_rpc::Behaviour,
+    block_lists: allow_block_list::Behaviour<allow_block_list::BlockedPeers>,
 }
 
 impl<'a> InnerBehaviour {
@@ -60,6 +61,7 @@ impl<'a> InnerBehaviour {
             ),
             gossipsub,
             avalanche_rpc: avalanche_rpc::Behaviour::new(config.avalanche_rpc_cfg),
+            block_lists: allow_block_list::Behaviour::default(),
         })
     }
 }
@@ -162,6 +164,11 @@ impl<'a> Behaviour {
             }
         }
         wtxn.commit().unwrap();
+    }
+
+    /// Block and refuse all connections to the specified peer.
+    pub fn block_peer(&mut self, peer: PeerId) {
+        self.inner.block_lists.block_peer(peer)
     }
 
     /// Send a request to a peer via the ['avalanche_rpc'] protocol
