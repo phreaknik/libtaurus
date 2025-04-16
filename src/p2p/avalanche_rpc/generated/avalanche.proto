@@ -48,7 +48,8 @@ message Block {
 message Vertex {
   uint32 version = 0;
 	repeated Hash parents = 1;
-  Hash block_hash = 2;
+  optional Hash block_hash = 2;
+  optional Block block = 3;
 }
 
 message Txo {

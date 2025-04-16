@@ -301,6 +301,7 @@ pub struct Vertex {
     pub version: u32,
     pub parents: Vec<avalanche::proto::Hash>,
     pub block_hash: Option<avalanche::proto::Hash>,
+    pub block: Option<avalanche::proto::Block>,
 }
 
 impl<'a> MessageRead<'a> for Vertex {
@@ -311,6 +312,7 @@ impl<'a> MessageRead<'a> for Vertex {
                 Ok(0) => msg.version = r.read_uint32(bytes)?,
                 Ok(10) => msg.parents.push(r.read_message::<avalanche::proto::Hash>(bytes)?),
                 Ok(18) => msg.block_hash = Some(r.read_message::<avalanche::proto::Hash>(bytes)?),
+                Ok(26) => msg.block = Some(r.read_message::<avalanche::proto::Block>(bytes)?),
                 Ok(t) => { r.read_unknown(bytes, t)?; }
                 Err(e) => return Err(e),
             }
@@ -325,12 +327,14 @@ impl MessageWrite for Vertex {
         + if self.version == 0u32 { 0 } else { 1 + sizeof_varint(*(&self.version) as u64) }
         + self.parents.iter().map(|s| 1 + sizeof_len((s).get_size())).sum::<usize>()
         + self.block_hash.as_ref().map_or(0, |m| 1 + sizeof_len((m).get_size()))
+        + self.block.as_ref().map_or(0, |m| 1 + sizeof_len((m).get_size()))
     }
 
     fn write_message<W: WriterBackend>(&self, w: &mut Writer<W>) -> Result<()> {
         if self.version != 0u32 { w.write_with_tag(0, |w| w.write_uint32(*&self.version))?; }
         for s in &self.parents { w.write_with_tag(10, |w| w.write_message(s))?; }
         if let Some(ref s) = self.block_hash { w.write_with_tag(18, |w| w.write_message(s))?; }
+        if let Some(ref s) = self.block { w.write_with_tag(26, |w| w.write_message(s))?; }
         Ok(())
     }
 }

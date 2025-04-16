@@ -340,7 +340,7 @@ impl Dag {
                 Err(Error::MissingParents(parents))
             }
             Err(e) => Err(e),
-            Ok(filled) => Ok(filled),
+            Ok(()) => Ok(()),
         }?;
 
         // Make sure the block referenced in this vertex can be spent
