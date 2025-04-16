@@ -1,5 +1,5 @@
 use super::{
-    avalanche_rpc::proto::{self, mod_Broadcast::OneOfBroadcastData},
+    avalanche_rpc::proto::{self, Broadcast},
     Error, Result,
 };
 use crate::consensus::WireVertex;
@@ -87,14 +87,14 @@ pub enum BroadcastData {
 impl BroadcastData {
     /// Deserialize from bytes
     pub fn from_bytes(bytes: &Vec<u8>) -> Result<BroadcastData> {
-        let mut protobuf = BytesReader::from_bytes(bytes);
-        let protobuf = proto::Broadcast::from_reader(&mut protobuf, &bytes).map_err(|e| {
+        let protobuf = proto::Broadcast::from_reader(&mut BytesReader::from_bytes(bytes), &bytes)
+            .map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("unable to read broadcast data message: {e}"),
             )
         })?;
-        BroadcastData::from_protobuf(protobuf.BroadcastData)
+        BroadcastData::from_protobuf(protobuf)
     }
 
     /// Serialize into bytes
@@ -107,42 +107,29 @@ impl BroadcastData {
                 "unable to convert broadcast data to protobuf",
             )
         })?;
-        match protobuf {
-            OneOfBroadcastData::vertex(v) => v.write_message(&mut writer).map_err(|_| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "unable to write broadcast data message",
-                )
-            })?,
-            OneOfBroadcastData::None => Err(io::Error::new(
+        protobuf.write_message(&mut writer).map_err(|_| {
+            io::Error::new(
                 io::ErrorKind::InvalidData,
                 "unable to write broadcast data message",
-            ))?,
-        }
+            )
+        })?;
         Ok(bytes)
     }
 
     /// Deserialize from protobuf format
-    pub fn from_protobuf(data: OneOfBroadcastData) -> Result<BroadcastData> {
-        let data = match data {
-            OneOfBroadcastData::vertex(proto) => {
-                let v = WireVertex::from_protobuf(proto)?;
-                v.sanity_checks()?;
-                Ok(BroadcastData::Vertex(v))
-            }
-            OneOfBroadcastData::None => Err(Error::NotAMessage),
-        }?;
-        Ok(data)
+    pub fn from_protobuf(data: Broadcast) -> Result<BroadcastData> {
+        let v = WireVertex::from_protobuf(data.vertex.unwrap())?;
+        v.sanity_checks()?;
+        Ok(BroadcastData::Vertex(v))
     }
 
     /// Serialize into protobuf format
-    pub fn to_protobuf(&self) -> Result<OneOfBroadcastData> {
-        match self {
-            BroadcastData::Vertex(v) => {
-                v.sanity_checks()?;
-                Ok(OneOfBroadcastData::vertex(v.to_protobuf()?))
-            }
-        }
+    pub fn to_protobuf(&self) -> Result<Broadcast> {
+        let BroadcastData::Vertex(v) = self;
+        v.sanity_checks()?;
+        Ok(Broadcast {
+            vertex: Some(v.to_protobuf()?),
+        })
     }
 }
 

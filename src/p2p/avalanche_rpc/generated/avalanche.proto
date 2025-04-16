@@ -3,9 +3,7 @@ package avalanche.proto;
 
 // Broadcast message type
 message Broadcast {
-	oneof BroadcastData {
-		Vertex vertex = 0;
-	}
+	Vertex vertex = 0;
 }
 
 // Request message type

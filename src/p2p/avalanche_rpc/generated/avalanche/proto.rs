@@ -16,7 +16,7 @@ use super::super::*;
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct Broadcast {
-    pub BroadcastData: avalanche::proto::mod_Broadcast::OneOfBroadcastData,
+    pub vertex: Option<avalanche::proto::Vertex>,
 }
 
 impl<'a> MessageRead<'a> for Broadcast {
@@ -24,7 +24,7 @@ impl<'a> MessageRead<'a> for Broadcast {
         let mut msg = Self::default();
         while !r.is_eof() {
             match r.next_tag(bytes) {
-                Ok(2) => msg.BroadcastData = avalanche::proto::mod_Broadcast::OneOfBroadcastData::vertex(r.read_message::<avalanche::proto::Vertex>(bytes)?),
+                Ok(2) => msg.vertex = Some(r.read_message::<avalanche::proto::Vertex>(bytes)?),
                 Ok(t) => { r.read_unknown(bytes, t)?; }
                 Err(e) => return Err(e),
             }
@@ -36,34 +36,13 @@ impl<'a> MessageRead<'a> for Broadcast {
 impl MessageWrite for Broadcast {
     fn get_size(&self) -> usize {
         0
-        + match self.BroadcastData {
-            avalanche::proto::mod_Broadcast::OneOfBroadcastData::vertex(ref m) => 1 + sizeof_len((m).get_size()),
-            avalanche::proto::mod_Broadcast::OneOfBroadcastData::None => 0,
-    }    }
+        + self.vertex.as_ref().map_or(0, |m| 1 + sizeof_len((m).get_size()))
+    }
 
     fn write_message<W: WriterBackend>(&self, w: &mut Writer<W>) -> Result<()> {
-        match self.BroadcastData {            avalanche::proto::mod_Broadcast::OneOfBroadcastData::vertex(ref m) => { w.write_with_tag(2, |w| w.write_message(m))? },
-            avalanche::proto::mod_Broadcast::OneOfBroadcastData::None => {},
-    }        Ok(())
+        if let Some(ref s) = self.vertex { w.write_with_tag(2, |w| w.write_message(s))?; }
+        Ok(())
     }
-}
-
-pub mod mod_Broadcast {
-
-use super::*;
-
-#[derive(Debug, PartialEq, Clone)]
-pub enum OneOfBroadcastData {
-    vertex(avalanche::proto::Vertex),
-    None,
-}
-
-impl Default for OneOfBroadcastData {
-    fn default() -> Self {
-        OneOfBroadcastData::None
-    }
-}
-
 }
 
 #[allow(clippy::derive_partial_eq_without_eq)]
