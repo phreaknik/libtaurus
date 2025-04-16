@@ -23,8 +23,10 @@ pub enum Error {
 /// Result type for hash errors
 pub type Result<T> = result::Result<T, Error>;
 
+pub const HASH_LEN: usize = blake3::OUT_LEN;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
-pub struct Hash([u8; blake3::OUT_LEN]);
+pub struct Hash([u8; HASH_LEN]);
 
 impl Hash {
     /// Format the Hash as a hex string
@@ -48,6 +50,17 @@ impl Hash {
     /// Deserialize from protobuf format
     pub fn from_protobuf(proto: &p2p::avalanche_rpc::proto::Hash) -> Result<Hash> {
         Ok(Hash(rmp_serde::from_slice(&proto.hash)?))
+    }
+
+    /// The raw bytes of the `Hash`.
+    #[inline]
+    pub const fn as_bytes(&self) -> &[u8; HASH_LEN] {
+        &self.0
+    }
+
+    /// Create a `Hash` from its raw bytes representation.
+    pub const fn from_bytes(bytes: [u8; HASH_LEN]) -> Self {
+        Self(bytes)
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::consensus::Block;
+use crate::consensus::{block, Block};
 use crate::randomx::{self, RandomXVMInstance};
 use crate::{consensus, util};
 use libp2p::identity::Keypair;
@@ -37,6 +37,8 @@ pub enum Action {}
 /// Error type for mining errors
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    #[error(transparent)]
+    Block(#[from] block::Error),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
     #[error(transparent)]
@@ -185,7 +187,7 @@ fn mine(
     loop {
         let loop_count = 1_000;
         for i in 0..loop_count {
-            let hash = randomx_vm.calculate_hash(&rmp_serde::to_vec(&block).unwrap())?;
+            let hash = randomx_vm.calculate_hash(&block.to_bytes()?)?;
             if BigUint::from_bytes_be(&hash) < target {
                 results_ch.send(block.clone())?;
                 sols_count_ch.send(i).unwrap();

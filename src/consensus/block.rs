@@ -1,6 +1,6 @@
 use super::transaction::{self, Txo, TxoHash};
 use crate::{
-    p2p,
+    p2p::avalanche_rpc::proto,
     params::{self, FUTURE_BLOCK_LIMIT_SECS, GENESIS_DIFFICULTY},
     randomx::{self, RandomXVMInstance},
 };
@@ -8,8 +8,9 @@ use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use heed::{BytesDecode, BytesEncode};
 use libp2p::{multihash::Multihash, PeerId};
 use num::{BigUint, FromPrimitive};
+use quick_protobuf::{BytesReader, MessageRead, MessageWrite, Writer};
 use serde_derive::{Deserialize, Serialize};
-use std::result;
+use std::{io, result};
 
 /// Current version of the block structure
 pub const VERSION: u32 = 0;
@@ -29,6 +30,8 @@ pub enum Error {
     InvalidDifficulty,
     #[error("invalid proof-of-work")]
     InvalidPoW,
+    #[error(transparent)]
+    Io(#[from] io::Error),
     #[error(transparent)]
     MsgPackDecode(#[from] rmp_serde::decode::Error),
     #[error(transparent)]
@@ -123,7 +126,7 @@ impl Block {
 
     /// Check if the block has valid proof-of-work
     pub fn verify_pow(&self, randomx: &RandomXVMInstance) -> Result<()> {
-        if BigUint::from_bytes_be(&randomx.calculate_hash(&rmp_serde::to_vec(self)?)?)
+        if BigUint::from_bytes_be(&randomx.calculate_hash(&self.to_bytes()?)?)
             < self.mining_target()?
         {
             Ok(())
@@ -133,7 +136,7 @@ impl Block {
     }
 
     /// Deserialize from protobuf format
-    pub fn from_protobuf(block: p2p::avalanche_rpc::proto::Block) -> Result<Block> {
+    pub fn from_protobuf(block: proto::Block) -> Result<Block> {
         let block = Block {
             version: block.version,
             difficulty: block.difficulty,
@@ -160,9 +163,9 @@ impl Block {
     }
 
     /// Serialize into protobuf format
-    pub fn to_protobuf(&self) -> Result<p2p::avalanche_rpc::proto::Block> {
+    pub fn to_protobuf(&self) -> Result<proto::Block> {
         self.sanity_checks()?;
-        Ok(p2p::avalanche_rpc::proto::Block {
+        Ok(proto::Block {
             version: self.version,
             difficulty: self.difficulty,
             miner: self.miner.to_bytes(),
@@ -182,10 +185,41 @@ impl Block {
                 .try_collect()?,
             time: self
                 .time
-                .to_rfc3339_opts(SecondsFormat::Secs, true)
+                .to_rfc3339_opts(SecondsFormat::Secs, false)
                 .into_bytes(),
             nonce: self.nonce,
         })
+    }
+
+    /// Deserialize from bytes
+    pub fn from_bytes(bytes: &Vec<u8>) -> Result<Block> {
+        let protobuf = proto::Block::from_reader(&mut BytesReader::from_bytes(bytes), &bytes)
+            .map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("unable to parse block from bytes: {e}"),
+                )
+            })?;
+        Block::from_protobuf(protobuf)
+    }
+
+    /// Serialize into bytes
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        let mut writer = Writer::new(&mut bytes);
+        let protobuf = self.to_protobuf().map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unable to convert broadcast data to protobuf",
+            )
+        })?;
+        protobuf.write_message(&mut writer).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unable to write broadcast data message",
+            )
+        })?;
+        Ok(bytes)
     }
 }
 
