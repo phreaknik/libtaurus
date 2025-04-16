@@ -803,7 +803,7 @@ impl Dag {
                 match self.register_block(block) {
                     Err(Error::Block(block::Error::InvalidPoW)) => {
                         // Block the peer for sending us an un-worked block
-                        debug!("Blocking peer for sending unworked block");
+                        warn!("Blocking peer for sending block with insufficient Prrof-of-Work");
                         self.p2p_action_ch.send(p2p::Action::BlockPeer(from_peer))?
                     }
                     Err(e) => debug!("Unable to insert requested block {bhash}: {e}"),
