@@ -1,7 +1,11 @@
 use super::block;
-use crate::{p2p, Block, BlockHash};
+use crate::{
+    p2p::{self, avalanche_rpc::proto},
+    Block, BlockHash,
+};
+use quick_protobuf::{BytesReader, MessageRead, MessageWrite, Writer};
 use serde_derive::{Deserialize, Serialize};
-use std::{collections::HashMap, result, sync::Arc};
+use std::{collections::HashMap, io, result, sync::Arc};
 use tracing_mutex::stdsync::TracingRwLock;
 
 /// Current revision of the vertex structure
@@ -20,6 +24,8 @@ pub enum Error {
     EmptyParents,
     #[error(transparent)]
     Hash(#[from] crate::hash::Error),
+    #[error(transparent)]
+    Io(#[from] io::Error),
     #[error("missing block")]
     MissingBlock,
     #[error("error decoding from protobuf")]
@@ -236,6 +242,37 @@ impl WireVertex {
             parents: self.parents.iter().map(|p| p.to_protobuf()).try_collect()?,
             block_hash: Some(self.bhash.to_protobuf()?),
         })
+    }
+
+    /// Deserialize from bytes
+    pub fn from_bytes(bytes: &Vec<u8>) -> Result<WireVertex> {
+        let protobuf = proto::Vertex::from_reader(&mut BytesReader::from_bytes(bytes), &bytes)
+            .map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("unable to parse vertex from bytes: {e}"),
+                )
+            })?;
+        WireVertex::from_protobuf(protobuf)
+    }
+
+    /// Serialize into bytes
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        let mut writer = Writer::new(&mut bytes);
+        let protobuf = self.to_protobuf().map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unable to convert broadcast data to protobuf",
+            )
+        })?;
+        protobuf.write_message(&mut writer).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unable to write broadcast data message",
+            )
+        })?;
+        Ok(bytes)
     }
 }
 

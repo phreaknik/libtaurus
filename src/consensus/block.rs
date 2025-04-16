@@ -109,7 +109,7 @@ impl Block {
 
     /// Compute the hash of the block
     pub fn hash(&self) -> BlockHash {
-        blake3::hash(&rmp_serde::to_vec(self).expect("Serde encode failure in hash")).into()
+        blake3::hash(&self.to_bytes().expect("Serde encode failure in hash")).into()
     }
 
     /// Compute the mining target from the given difficulty
