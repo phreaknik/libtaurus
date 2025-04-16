@@ -33,10 +33,6 @@ pub enum Error {
     #[error(transparent)]
     Io(#[from] io::Error),
     #[error(transparent)]
-    MsgPackDecode(#[from] rmp_serde::decode::Error),
-    #[error(transparent)]
-    MsgPackEncode(#[from] rmp_serde::encode::Error),
-    #[error(transparent)]
     Multihash(#[from] libp2p::multihash::Error),
     #[error(transparent)]
     RandomX(#[from] randomx::Error),
@@ -304,7 +300,11 @@ impl From<&Block> for PrettyBlock {
                 .iter()
                 .map(|txo| txo.hash().to_hex())
                 .collect(),
-            time: block.time,
+            time: DateTime::parse_from_rfc3339(
+                &block.time.to_rfc3339_opts(SecondsFormat::Secs, false),
+            )
+            .unwrap()
+            .into(),
             nonce: block.nonce,
         }
     }
