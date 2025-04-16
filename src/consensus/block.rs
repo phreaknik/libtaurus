@@ -281,7 +281,9 @@ struct PrettyBlock {
     version: u32,
     difficulty: u64,
     miner: PeerId,
+    prev_mined: Vec<String>,
     inputs: Vec<String>,
+    outputs: Vec<String>,
     time: DateTime<Utc>,
     nonce: u64,
 }
@@ -290,9 +292,18 @@ impl From<&Block> for PrettyBlock {
     fn from(block: &Block) -> Self {
         PrettyBlock {
             version: block.version,
-            inputs: block.inputs.iter().map(|txo| txo.to_hex()).collect(),
             difficulty: block.difficulty,
             miner: block.miner,
+            prev_mined: block
+                .prev_mined
+                .map(|bhash| vec![bhash.to_hex()])
+                .unwrap_or(Vec::new()),
+            inputs: block.inputs.iter().map(|txo| txo.to_hex()).collect(),
+            outputs: block
+                .outputs
+                .iter()
+                .map(|txo| txo.hash().to_hex())
+                .collect(),
             time: block.time,
             nonce: block.nonce,
         }
