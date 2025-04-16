@@ -132,13 +132,13 @@ impl Block {
     }
 
     /// Deserialize from protobuf format
-    pub fn from_protobuf(block: proto::Block) -> Result<Block> {
+    pub fn from_protobuf(block: &proto::Block) -> Result<Block> {
         let block = Block {
             version: block.version,
             difficulty: block.difficulty,
             miner: PeerId::from_bytes(&block.miner)?,
-            prev_mined: match block.prev_mined {
-                Some(hash) => Some(BlockHash::from_protobuf(&hash)?),
+            prev_mined: match &block.prev_mined {
+                Some(hash) => Some(BlockHash::from_protobuf(hash)?),
                 None => None,
             },
             inputs: block
@@ -151,7 +151,7 @@ impl Block {
                 .iter()
                 .map(|txo| Txo::from_protobuf(txo))
                 .try_collect()?,
-            time: DateTime::parse_from_rfc3339(&String::from_utf8(block.time)?)?.into(),
+            time: DateTime::parse_from_rfc3339(&String::from_utf8(block.time.clone())?)?.into(),
             nonce: block.nonce,
         };
         block.sanity_checks()?;
@@ -196,7 +196,7 @@ impl Block {
                     format!("unable to parse block from bytes: {e}"),
                 )
             })?;
-        Block::from_protobuf(protobuf)
+        Block::from_protobuf(&protobuf)
     }
 
     /// Serialize into bytes

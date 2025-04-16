@@ -92,7 +92,7 @@ impl Response {
     pub fn from_protobuf(resp: proto::Response) -> Result<Self, Error> {
         match resp.ResponseData {
             proto::mod_Response::OneOfResponseData::block(b) => {
-                Ok(Response::Block(Block::from_protobuf(b)?))
+                Ok(Response::Block(Block::from_protobuf(&b)?))
             }
             proto::mod_Response::OneOfResponseData::vertex(v) => {
                 Ok(Response::Vertex(WireVertex::from_protobuf(v)?))

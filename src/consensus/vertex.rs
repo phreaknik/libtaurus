@@ -216,6 +216,16 @@ impl WireVertex {
 
     /// Deserialize from protobuf format
     pub fn from_protobuf(vertex: p2p::avalanche_rpc::proto::Vertex) -> Result<WireVertex> {
+        let (block, bhash) = if let Some(b) = &vertex.block {
+            let block = Block::from_protobuf(b)?;
+            let bhash = block.hash();
+            (Some(block), bhash)
+        } else {
+            (
+                None,
+                BlockHash::from_protobuf(&vertex.block_hash.expect("missing block_hash"))?,
+            )
+        };
         let vertex = WireVertex {
             version: vertex.version,
             parents: vertex
@@ -223,12 +233,8 @@ impl WireVertex {
                 .iter()
                 .map(|p| VertexHash::from_protobuf(&p))
                 .try_collect()?,
-            block: None,
-            bhash: BlockHash::from_protobuf(
-                &vertex
-                    .block_hash
-                    .ok_or(Error::ProtoDecode("missing block_hash".to_string()))?,
-            )?,
+            block,
+            bhash,
         };
         vertex.sanity_checks()?;
         Ok(vertex)
