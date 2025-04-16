@@ -688,19 +688,27 @@ impl Dag {
 
     /// Reset the convidence of this vertex and any children
     pub fn reset_confidence(&mut self, rw_vertex: Arc<TracingRwLock<Vertex>>) -> Result<()> {
-        let mut vertex = rw_vertex.write().unwrap();
-        vertex.strongly_preferred = false;
-        vertex.confidence = 0;
-        vertex.chit = 0;
-        for child in vertex.known_children.values() {
-            // TODO paralellize this walk
-            let block = child
-                .read()
-                .map_err(|_| Error::VertexReadLock)?
-                .block
-                .clone();
-            self.events_ch.send(Event::StalledBlock(block))?;
-            self.reset_confidence(child.clone())?;
+        let orig_confidnce = {
+            let mut vertex = rw_vertex.write().map_err(|_| Error::VertexWriteLock)?;
+            let orig_confidnce = vertex.confidence;
+            vertex.strongly_preferred = false;
+            vertex.confidence = 0;
+            vertex.chit = 0;
+            orig_confidnce
+        };
+        // Only need to continue resetting confidences if this vertex wasn't already reset
+        if orig_confidnce > 0 {
+            let vertex = rw_vertex.read().map_err(|_| Error::VertexReadLock)?;
+            for child in vertex.known_children.values() {
+                // TODO paralellize this walk
+                let block = child
+                    .read()
+                    .map_err(|_| Error::VertexReadLock)?
+                    .block
+                    .clone();
+                self.events_ch.send(Event::StalledBlock(block))?;
+                self.reset_confidence(child.clone())?;
+            }
         }
         Ok(())
     }
