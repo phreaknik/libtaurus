@@ -11,7 +11,7 @@ use libp2p::{
         ConnectionDenied, ConnectionId, FromSwarm, NetworkBehaviour, THandler, THandlerInEvent,
         THandlerOutEvent, ToSwarm,
     },
-    {identify, Multiaddr, PeerId},
+    upnp, {identify, Multiaddr, PeerId},
 };
 use std::{
     borrow::BorrowMut,
@@ -35,6 +35,7 @@ pub struct InnerBehaviour {
     gossipsub: gossipsub::Behaviour,
     consensus_rpc: consensus_rpc::Behaviour,
     block_lists: allow_block_list::Behaviour<allow_block_list::BlockedPeers>,
+    upnp: upnp::tokio::Behaviour,
 }
 
 impl<'a> InnerBehaviour {
@@ -60,6 +61,7 @@ impl<'a> InnerBehaviour {
             gossipsub,
             consensus_rpc: consensus_rpc::Behaviour::new(config.consensus_rpc_cfg),
             block_lists: allow_block_list::Behaviour::default(),
+            upnp: upnp::tokio::Behaviour::default(),
         })
     }
 }

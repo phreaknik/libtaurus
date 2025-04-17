@@ -107,7 +107,6 @@ async fn task_fn(
     mut actions_in: UnboundedReceiver<Action>,
     events_out: broadcast::Sender<Event>,
 ) {
-    // TODO: enable UPnP port mapping
     info!("Starting p2p client...");
 
     // Open the peer database
