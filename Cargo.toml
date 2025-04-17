@@ -7,22 +7,16 @@ edition = "2021"
 
 [dependencies]
 libp2p = { version = "0.53", features = [
-  "tcp",
   "dns",
   "kad",
   "tokio",
-  "noise",
-  "yamux",
-  "websocket",
   "ping",
   "macros",
   "identify",
   "request-response",
-  "autonat",
   "async-std",
   "serde",
   "gossipsub",
-  "ed25519",
   "quic",
   "tcp",
   "upnp",
