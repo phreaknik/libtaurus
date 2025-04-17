@@ -31,6 +31,10 @@ use tracing_mutex::stdsync::TracingRwLock;
 /// Path to the peer database, from within the peer data directory
 pub const DATABASE_DIR: &str = "blocks_db/";
 
+/// Time a block or vertex is allowed to remain undecided without making progress towards a
+/// decision.
+pub const DECISION_TIMEOUT_SEC: u64 = 60 * 60 * 24;
+
 /// Error type for avalanche errors
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -100,10 +104,10 @@ pub struct Dag {
     config: Config,
 
     /// Complete list of undecided blocks
-    undecided_blocks: HashMap<BlockHash, Arc<Block>>,
+    undecided_blocks: TimedCache<BlockHash, Arc<Block>>,
 
     /// Complete list of undecided vertices
-    undecided_vertices: HashMap<VertexHash, Arc<TracingRwLock<Vertex>>>,
+    undecided_vertices: TimedCache<VertexHash, Arc<TracingRwLock<Vertex>>>,
 
     /// List of transaction outputs being considered in the undecided portion of the DAG
     undecided_txos: HashMap<TxoHash, DagTxo>,
@@ -146,8 +150,8 @@ impl Dag {
     ) -> Dag {
         // Create DAG instance, initialized with genesis block in the frontier
         let mut dag = Dag {
-            undecided_blocks: HashMap::new(),
-            undecided_vertices: HashMap::new(),
+            undecided_blocks: TimedCache::with_lifespan_and_refresh(DECISION_TIMEOUT_SEC, true),
+            undecided_vertices: TimedCache::with_lifespan_and_refresh(DECISION_TIMEOUT_SEC, true),
             undecided_txos: HashMap::new(),
             waitlist: WaitList::new(config.waitlist_cap),
             frontier: HashMap::new(),
@@ -188,8 +192,7 @@ impl Dag {
         } else {
             let arc_block = Arc::new(block);
             // Add the block to the list of undecided blocks
-            // TODO: need to be lru to prevent growing without bound
-            self.undecided_blocks.insert(bhash, arc_block.clone());
+            self.undecided_blocks.cache_set(bhash, arc_block.clone());
             // Register this miner as a potential Avalanche voter
             self.voter_pool.register_from_block(arc_block);
             // Attempt to insert any vertices waiting on that block
@@ -346,13 +349,13 @@ impl Dag {
         // Create a mutex protected vertex for inserting into the DAG structure
         let rw_vertex = Arc::new(TracingRwLock::new(Vertex::new(
             wire_vertex.as_ref(),
-            &self.undecided_blocks,
-            &self.undecided_vertices,
+            &mut self.undecided_blocks,
+            &mut self.undecided_vertices,
             conflict_free,
         )?));
 
         // Add it to the collection of undecided vertices
-        self.undecided_vertices.insert(vhash, rw_vertex.clone());
+        self.undecided_vertices.cache_set(vhash, rw_vertex.clone());
 
         // If this vertex is conflict free, mark it as the preferred spender of its tx inputs
         if conflict_free {
@@ -442,7 +445,7 @@ impl Dag {
             .iter()
             .filter(|vhash| {
                 // Filter out any vertex already in the undecided DAG
-                self.undecided_vertices.get(vhash).is_none()
+                self.undecided_vertices.cache_get(vhash).is_none()
             })
             .filter(|vhash| {
                 // Filter out any vertex already finalized in the database
@@ -526,35 +529,31 @@ impl Dag {
         // according to Avalanche consensus rules, it will not be accepted unless its confidence
         // exceeds that of its conflicts.
 
-        let check_known_utxos = |b: &Block| {
-            if b.inputs
-                .iter()
-                .all(|txo_hash| self.undecided_txos.contains_key(txo_hash))
-            {
-                Ok(())
-            } else {
-                warn!("Received block spends unknown transaction outputs.");
-                Err(Error::UnknownTransactionInputs)
-            }
-        };
+        let bhash = wire_vertex.bhash;
+        let block = wire_vertex
+            .block
+            .as_ref()
+            .map(|b| Arc::new(b.clone()))
+            .unwrap_or(self.get_block(&bhash)?);
 
-        let conflict_free = |b: &Block| {
-            b.inputs.iter().all(|txo_hash| {
+        // Make sure each UTXO is in the UTXO set
+        if block
+            .inputs
+            .iter()
+            .any(|txo_hash| !self.undecided_txos.contains_key(txo_hash))
+        {
+            warn!("Received block spends unknown transaction outputs.");
+            Err(Error::UnknownTransactionInputs)
+        } else {
+            // Make sure none of the UTXOs are spent by a conflicting transaction
+            let conflict_free = block.inputs.iter().all(|txo_hash| {
                 self.undecided_txos
                     .get(txo_hash)
                     .expect("undecided vertex should already have validated inputs")
                     .preferred_spender
                     .is_none()
-            })
-        };
-
-        if let Some(block) = &wire_vertex.block {
-            check_known_utxos(block)?;
-            Ok((conflict_free(block), None))
-        } else {
-            let block = self.get_block(&wire_vertex.bhash)?;
-            check_known_utxos(&block)?;
-            Ok((conflict_free(&block), Some(block)))
+            });
+            Ok((conflict_free, Some(block)))
         }
     }
 
@@ -583,8 +582,8 @@ impl Dag {
     }
 
     /// Look up a block from the DAG
-    pub fn get_block(&self, bhash: &BlockHash) -> Result<Arc<Block>> {
-        match self.undecided_blocks.get(bhash) {
+    pub fn get_block(&mut self, bhash: &BlockHash) -> Result<Arc<Block>> {
+        match self.undecided_blocks.cache_get(bhash) {
             Some(block) => Ok(block.clone()),
             None => {
                 let vhash = self
@@ -604,7 +603,7 @@ impl Dag {
 
     /// Look up a vertex from the DAG, and indicate if this vertex is strongly preferred.
     pub fn get_vertex(&mut self, vhash: &VertexHash) -> Result<(WireVertex, bool)> {
-        match self.undecided_vertices.get(vhash) {
+        match self.undecided_vertices.cache_get(vhash) {
             Some(rw_vertex) => {
                 let vertex = rw_vertex.read().map_err(|_| Error::VertexReadLock)?;
                 Ok((vertex.to_wire()?, vertex.strongly_preferred))
@@ -823,7 +822,8 @@ impl Dag {
                         Some(true) => {
                             // Award a chit and cancel the vote.
                             let mut accepted_vertices = Vec::new();
-                            if let Some(v) = self.undecided_vertices.get(&vhash).map(|v| v.clone())
+                            if let Some(v) =
+                                self.undecided_vertices.cache_get(&vhash).map(|v| v.clone())
                             {
                                 let mut vertex = v.write().map_err(|_| Error::VertexWriteLock)?;
                                 vertex.chit = 1;
@@ -834,8 +834,10 @@ impl Dag {
                         }
                         // Vote completed, vertex is NOT preferred amongst peers
                         Some(false) => {
-                            if let Some(v) = self.undecided_vertices.get(&vhash) {
-                                self.reset_confidence(v.clone())?;
+                            if let Some(v) =
+                                self.undecided_vertices.cache_get(&vhash).map(|v| v.clone())
+                            {
+                                self.reset_confidence(v)?;
                             }
                         }
                         // Vote is still open
@@ -853,29 +855,28 @@ impl Dag {
 
     /// Finalize the specified blocks
     fn finalize_vertices(&mut self, hashes: Vec<VertexHash>) -> Result<()> {
-        for rw_vertex in hashes
-            .iter()
-            .filter_map(|hash| self.undecided_vertices.get(hash))
-        {
-            let vertex = rw_vertex.read().map_err(|_| Error::VertexWriteLock)?;
-            // Only finalize the block if it has no undecided parents
-            if vertex.undecided_parents.len() == 0 {
-                // Remove this block from its children's undecided_parents lists
-                let mut txn = None;
-                for child in vertex.known_children.values() {
-                    child
-                        .write()
-                        .unwrap()
-                        .undecided_parents
-                        .remove(&vertex.hash()?);
+        for hash in hashes {
+            if let Some(rw_vertex) = self.undecided_vertices.cache_get(&hash) {
+                let vertex = rw_vertex.read().map_err(|_| Error::VertexWriteLock)?;
+                // Only finalize the block if it has no undecided parents
+                if vertex.undecided_parents.len() == 0 {
+                    // Remove this block from its children's undecided_parents lists
+                    let mut txn = None;
+                    for child in vertex.known_children.values() {
+                        child
+                            .write()
+                            .unwrap()
+                            .undecided_parents
+                            .remove(&vertex.hash()?);
+                    }
+                    // Write the block to the database
+                    txn = Some(self.database.write_vertex(txn, vertex.to_wire()?)?);
+                    // Remove this block's inputs from the set of undecided_txos
+                    for txo_hash in &vertex.block.inputs {
+                        self.undecided_txos.remove(txo_hash);
+                    }
+                    txn.unwrap().commit()?;
                 }
-                // Write the block to the database
-                txn = Some(self.database.write_vertex(txn, vertex.to_wire()?)?);
-                // Remove this block's inputs from the set of undecided_txos
-                for txo_hash in &vertex.block.inputs {
-                    self.undecided_txos.remove(txo_hash);
-                }
-                txn.unwrap().commit()?;
             }
         }
         Ok(())

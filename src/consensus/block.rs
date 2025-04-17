@@ -1,7 +1,7 @@
 use super::transaction::{self, Txo, TxoHash};
 use crate::{
     p2p::avalanche_rpc::proto,
-    params::{self, FUTURE_BLOCK_LIMIT_SECS, GENESIS_DIFFICULTY},
+    params::{self, FUTURE_BLOCK_LIMIT_SECS, MIN_DIFFICULTY},
     randomx::{self, RandomXVMInstance},
 };
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
@@ -80,7 +80,7 @@ impl Block {
     pub fn new(miner: PeerId, prev_mined: Option<BlockHash>) -> Block {
         Block {
             version: VERSION,
-            difficulty: GENESIS_DIFFICULTY,
+            difficulty: MIN_DIFFICULTY,
             miner,
             prev_mined,
             inputs: Vec::new(),
@@ -94,7 +94,7 @@ impl Block {
     pub fn sanity_checks(&self) -> Result<()> {
         if self.version != VERSION {
             Err(Error::BadBlockVersion)
-        } else if self.difficulty < GENESIS_DIFFICULTY {
+        } else if self.difficulty < MIN_DIFFICULTY {
             Err(Error::InvalidDifficulty)
         } else if self.time - Utc::now() > Duration::seconds(FUTURE_BLOCK_LIMIT_SECS) {
             Err(Error::FutureTime)
@@ -241,7 +241,7 @@ impl Default for Block {
     fn default() -> Self {
         Block {
             version: VERSION,
-            difficulty: GENESIS_DIFFICULTY,
+            difficulty: MIN_DIFFICULTY,
             miner: PeerId::from_multihash(Multihash::default()).unwrap(),
             prev_mined: None,
             inputs: Vec::new(),

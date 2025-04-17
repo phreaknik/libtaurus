@@ -1,16 +1,8 @@
-use chrono::{DateTime, Utc};
-
 /// Minimum block difficulty
 pub const MIN_DIFFICULTY: u64 = 1_000;
 
-/// Difficulty of the genesis block
-pub const GENESIS_DIFFICULTY: u64 = MIN_DIFFICULTY;
-
 /// Max time into the future we will tolerate a block's timestamp
 pub const FUTURE_BLOCK_LIMIT_SECS: i64 = 5;
-
-/// Timestamp of the genesis block
-pub const GENESIS_TIMESTAMP: DateTime<Utc> = DateTime::<Utc>::MIN_UTC;
 
 /// Number of peers to query for block preference, according to Avalanche consensus.
 pub const AVALANCHE_QUERY_COUNT: usize = 16;

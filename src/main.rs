@@ -33,6 +33,7 @@ mod params;
 mod randomx;
 mod util;
 
+use chrono::DateTime;
 use clap::{arg, command, ArgMatches, Command};
 use consensus::{avalanche, GenesisConfig};
 pub use consensus::{Block, BlockHash, VertexHash, WireVertex};
@@ -239,8 +240,10 @@ fn build_p2p_cfg(args: &ArgMatches) -> p2p::Config {
 fn build_consensus_cfg(args: &ArgMatches) -> consensus::Config {
     let data_dir = parse_data_dir(args).join("consensus/");
     let genesis = GenesisConfig {
-        difficulty: params::GENESIS_DIFFICULTY,
-        time: params::GENESIS_TIMESTAMP,
+        difficulty: params::MIN_DIFFICULTY,
+        time: DateTime::parse_from_rfc2822("Wed, 18 Feb 2015 23:16:09 GMT")
+            .unwrap()
+            .into(),
     };
     consensus::Config {
         data_dir: data_dir.clone(),

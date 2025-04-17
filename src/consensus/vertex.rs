@@ -3,6 +3,7 @@ use crate::{
     p2p::{self, avalanche_rpc::proto},
     Block, BlockHash,
 };
+use cached::{Cached, TimedCache};
 use quick_protobuf::{BytesReader, MessageRead, MessageWrite, Writer};
 use serde_derive::{Deserialize, Serialize};
 use std::{collections::HashMap, io, result, sync::Arc};
@@ -93,14 +94,14 @@ impl Vertex {
     /// marked as strongly preferred.
     pub fn new(
         wire_vertex: &WireVertex,
-        undecided_blocks: &HashMap<BlockHash, Arc<Block>>,
-        undecided_vertices: &HashMap<VertexHash, Arc<TracingRwLock<Vertex>>>,
+        undecided_blocks: &mut TimedCache<BlockHash, Arc<Block>>,
+        undecided_vertices: &mut TimedCache<VertexHash, Arc<TracingRwLock<Vertex>>>,
         conflict_free: bool,
     ) -> Result<Vertex> {
         let undecided_parents: HashMap<VertexHash, Arc<TracingRwLock<Vertex>>> = wire_vertex
             .parents
             .iter()
-            .filter_map(|&k| undecided_vertices.get(&k).map(|v| (k, v.clone())))
+            .filter_map(|&k| undecided_vertices.cache_get(&k).map(|v| (k, v.clone())))
             .collect();
         // Strongly preferred if no conflicts and all undecided parents are also strongly preferred.
         let strongly_preferred = conflict_free
@@ -115,7 +116,7 @@ impl Vertex {
                     strongly_preferred.map(|sp| sp && all)
                 })?;
         let block = undecided_blocks
-            .get(&wire_vertex.bhash)
+            .cache_get(&wire_vertex.bhash)
             .cloned()
             .ok_or(Error::MissingBlock)?;
         Ok(Vertex {
