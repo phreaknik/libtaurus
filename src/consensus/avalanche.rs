@@ -700,7 +700,6 @@ impl Dag {
         if orig_confidnce > 0 {
             let vertex = rw_vertex.read().map_err(|_| Error::VertexReadLock)?;
             for child in vertex.known_children.values() {
-                // TODO paralellize this walk
                 let block = child
                     .read()
                     .map_err(|_| Error::VertexReadLock)?
