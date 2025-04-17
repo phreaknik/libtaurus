@@ -1,5 +1,5 @@
 syntax = "proto3";
-package avalanche.proto;
+package consensus.proto;
 
 // Broadcast message type
 message Broadcast {

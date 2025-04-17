@@ -1,5 +1,5 @@
-pub mod avalanche_rpc;
 mod behaviour;
+pub mod consensus_rpc;
 mod database;
 pub mod message;
 
@@ -8,13 +8,8 @@ use core::result;
 pub use database::{PeerDatabase, PeerInfo};
 use futures::StreamExt;
 use libp2p::{
-    gossipsub,
-    identity::Keypair,
-    kad,
-    multiaddr::Protocol,
-    request_response::RequestId,
-    swarm::{SwarmBuilder, SwarmEvent},
-    Multiaddr, PeerId,
+    gossipsub, identity::Keypair, kad, multiaddr::Protocol, request_response::InboundRequestId,
+    swarm::SwarmEvent, Multiaddr, PeerId,
 };
 pub use message::{BroadcastData, Message, MessageValidationReport};
 use std::{io, net::Ipv4Addr, path::PathBuf};
@@ -40,7 +35,7 @@ pub const DATABASE_DIR: &str = "peer_db/";
 #[derive(Debug, Clone)]
 pub enum Event {
     Pubsub(Message),
-    Avalanche(avalanche_rpc::Event),
+    Avalanche(consensus_rpc::Event),
 }
 
 /// Actions that can be performed by the p2p client
@@ -50,8 +45,8 @@ pub enum Action {
     Broadcast(BroadcastData),
     GetLocalPeerId(oneshot::Sender<PeerId>),
     ReportMessageValidity(MessageValidationReport),
-    AvalancheRequest(PeerId, avalanche_rpc::Request),
-    AvalancheResponse(RequestId, avalanche_rpc::Response),
+    AvalancheRequest(PeerId, consensus_rpc::Request),
+    AvalancheResponse(InboundRequestId, consensus_rpc::Response),
 }
 
 /// Error type for cordelia-p2p errors
@@ -114,33 +109,36 @@ async fn task_fn(
 ) {
     // TODO: enable UPnP port mapping
     info!("Starting p2p client...");
+
     // Open the peer database
     let peer_db = PeerDatabase::open(&config.data_dir.join(DATABASE_DIR), true)
         .expect("Failed to open peer database");
 
     // Build the swarm
-    // TODO: pick a different transport. development_transport() has features we likely don't want,
-    // e.g. noise encryption
-    let local_peer_id = PeerId::from(config.identity_key.public());
-    let mut swarm = SwarmBuilder::with_tokio_executor(
-        libp2p::tokio_development_transport(config.identity_key.clone()).unwrap(),
-        Behaviour::new(
-            behaviour::Config::new(config.identity_key, config.boot_nodes.clone()),
-            peer_db,
-        )
-        .unwrap(),
-        local_peer_id,
-    )
-    .build();
+    let mut swarm = libp2p::SwarmBuilder::with_existing_identity(config.identity_key.clone())
+        .with_tokio()
+        .with_quic()
+        .with_behaviour(|key| {
+            Behaviour::new(
+                behaviour::Config::new(key.clone(), config.boot_nodes.clone()),
+                peer_db,
+            )
+            .unwrap()
+        })
+        .unwrap()
+        .build();
+
     // Listen for inbound connections
     let local_addr = Multiaddr::empty()
         .with(Protocol::Ip4(Ipv4Addr::UNSPECIFIED))
-        .with(Protocol::Tcp(0));
+        .with(Protocol::Udp(0))
+        .with(Protocol::QuicV1);
     swarm
-        .listen_on(local_addr.clone())
+        .listen_on(local_addr)
         .expect("Cannot start listener on {local_addr}");
 
     // Main event loop
+    let local_peer_id = PeerId::from(config.identity_key.public());
     loop {
         select! {
             // Handle swarm events

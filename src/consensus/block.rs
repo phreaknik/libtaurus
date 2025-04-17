@@ -1,6 +1,6 @@
 use super::transaction::{self, Txo, TxoHash};
 use crate::{
-    p2p::avalanche_rpc::proto,
+    p2p::consensus_rpc::proto,
     params::{self, FUTURE_BLOCK_LIMIT_SECS, MIN_DIFFICULTY},
     randomx::{self, RandomXVMInstance},
 };
@@ -32,6 +32,8 @@ pub enum Error {
     InvalidPoW,
     #[error(transparent)]
     Io(#[from] io::Error),
+    #[error(transparent)]
+    Libp2pParse(#[from] libp2p::identity::ParseError),
     #[error(transparent)]
     Multihash(#[from] libp2p::multihash::Error),
     #[error(transparent)]

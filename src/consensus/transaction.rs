@@ -31,12 +31,12 @@ impl Txo {
     }
 
     /// Deserialize from protobuf format
-    pub fn from_protobuf(txo: &p2p::avalanche_rpc::proto::Txo) -> Result<Txo> {
+    pub fn from_protobuf(txo: &p2p::consensus_rpc::proto::Txo) -> Result<Txo> {
         Ok(Txo { value: txo.value })
     }
 
     /// Serialize into protobuf format
-    pub fn to_protobuf(&self) -> Result<p2p::avalanche_rpc::proto::Txo> {
-        Ok(p2p::avalanche_rpc::proto::Txo { value: self.value })
+    pub fn to_protobuf(&self) -> Result<p2p::consensus_rpc::proto::Txo> {
+        Ok(p2p::consensus_rpc::proto::Txo { value: self.value })
     }
 }

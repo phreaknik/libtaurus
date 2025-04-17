@@ -1,6 +1,6 @@
 use super::block;
 use crate::{
-    p2p::{self, avalanche_rpc::proto},
+    p2p::{self, consensus_rpc::proto},
     Block, BlockHash,
 };
 use cached::{Cached, TimedCache};
@@ -216,7 +216,7 @@ impl WireVertex {
     }
 
     /// Deserialize from protobuf format
-    pub fn from_protobuf(vertex: p2p::avalanche_rpc::proto::Vertex) -> Result<WireVertex> {
+    pub fn from_protobuf(vertex: p2p::consensus_rpc::proto::Vertex) -> Result<WireVertex> {
         let (block, bhash) = if let Some(b) = &vertex.block {
             let block = Block::from_protobuf(b)?;
             let bhash = block.hash();
@@ -242,14 +242,14 @@ impl WireVertex {
     }
 
     /// Serialize into protobuf format
-    pub fn to_protobuf(&self) -> Result<p2p::avalanche_rpc::proto::Vertex> {
+    pub fn to_protobuf(&self) -> Result<p2p::consensus_rpc::proto::Vertex> {
         self.sanity_checks()?;
         let (block, block_hash) = if let Some(b) = &self.block {
             (Some(b.to_protobuf()?), None)
         } else {
             (None, Some(self.bhash.to_protobuf()?))
         };
-        Ok(p2p::avalanche_rpc::proto::Vertex {
+        Ok(p2p::consensus_rpc::proto::Vertex {
             version: self.version,
             parents: self.parents.iter().map(|p| p.to_protobuf()).try_collect()?,
             block_hash,

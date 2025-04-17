@@ -1,20 +1,25 @@
-use super::{avalanche_rpc, BroadcastData, Event, PeerDatabase, PeerInfo};
-use libp2p::allow_block_list;
-use libp2p::core::Endpoint;
-use libp2p::gossipsub::{self, MessageAcceptance, MessageAuthenticity, MessageId, Sha256Topic};
-use libp2p::identity::Keypair;
-use libp2p::kad::store::MemoryStore;
-use libp2p::kad::{self, Kademlia, KademliaConfig, NoKnownPeers};
-use libp2p::request_response::RequestId;
-use libp2p::swarm::{
-    ConnectionDenied, ConnectionId, FromSwarm, NetworkBehaviour, PollParameters, THandler,
-    THandlerInEvent, THandlerOutEvent, ToSwarm,
+use super::{consensus_rpc, BroadcastData, Event, PeerDatabase, PeerInfo};
+use libp2p::{
+    allow_block_list,
+    core::Endpoint,
+    gossipsub::{self, MessageAcceptance, MessageAuthenticity, MessageId, Sha256Topic},
+    identity::Keypair,
+    kad::store::MemoryStore,
+    kad::{self, NoKnownPeers},
+    multiaddr::Protocol,
+    request_response::InboundRequestId,
+    swarm::{
+        ConnectionDenied, ConnectionId, FromSwarm, NetworkBehaviour, THandler, THandlerInEvent,
+        THandlerOutEvent, ToSwarm,
+    },
+    {identify, Multiaddr, PeerId},
 };
-use libp2p::{identify, Multiaddr, PeerId};
-use std::borrow::BorrowMut;
-use std::str;
-use std::task::{Context, Poll};
-use std::time::{Duration, Instant};
+use std::{
+    borrow::BorrowMut,
+    str,
+    task::{Context, Poll},
+    time::{Duration, Instant},
+};
 use strum::IntoEnumIterator;
 use tracing::{debug, error, trace, warn};
 
@@ -33,9 +38,9 @@ const DEFAULT_KAD_QUERY_TIMOUT: Duration = Duration::from_secs(60);
 #[derive(NetworkBehaviour)]
 pub struct InnerBehaviour {
     identify: identify::Behaviour,
-    kademlia: Kademlia<MemoryStore>,
+    kademlia: kad::Behaviour<MemoryStore>,
     gossipsub: gossipsub::Behaviour,
-    avalanche_rpc: avalanche_rpc::Behaviour,
+    consensus_rpc: consensus_rpc::Behaviour,
     block_lists: allow_block_list::Behaviour<allow_block_list::BlockedPeers>,
 }
 
@@ -54,13 +59,13 @@ impl<'a> InnerBehaviour {
         }
         Ok(InnerBehaviour {
             identify: identify::Behaviour::new(config.identify_cfg),
-            kademlia: Kademlia::with_config(
+            kademlia: kad::Behaviour::with_config(
                 local_peer_id,
                 MemoryStore::new(local_peer_id),
                 config.kad_cfg,
             ),
             gossipsub,
-            avalanche_rpc: avalanche_rpc::Behaviour::new(config.avalanche_rpc_cfg),
+            consensus_rpc: consensus_rpc::Behaviour::new(config.consensus_rpc_cfg),
             block_lists: allow_block_list::Behaviour::default(),
         })
     }
@@ -122,10 +127,13 @@ impl<'a> Behaviour {
             .boot_nodes
             .clone()
             .into_iter()
-            .map(|addr| {
-                let peer_id =
-                    PeerId::try_from_multiaddr(&addr).expect("Static peer has invalid multiaddr");
-                (peer_id, vec![addr])
+            .filter_map(|mut addr| {
+                if let Protocol::P2p(peer_id) = addr.pop().unwrap() {
+                    Some((peer_id, vec![addr]))
+                } else {
+                    warn!("Skipping incomplete bootnode address: {addr}");
+                    None
+                }
             })
             .chain(
                 // Chain the peer addresses of all saved peers
@@ -167,16 +175,20 @@ impl<'a> Behaviour {
         self.inner.block_lists.block_peer(peer)
     }
 
-    /// Send a request to a peer via the ['avalanche_rpc'] protocol
-    pub fn avalanche_request(&mut self, peer: &PeerId, request: avalanche_rpc::Request) {
+    /// Send a request to a peer via the ['consensus_rpc'] protocol
+    pub fn avalanche_request(&mut self, peer: &PeerId, request: consensus_rpc::Request) {
         trace!("Sending request: {request}");
-        self.inner.avalanche_rpc.send_request(peer, request)
+        self.inner.consensus_rpc.send_request(peer, request)
     }
 
-    /// Respond to a received avalanche request, via the ['avalanche_rpc'] protocol
-    pub fn avalanche_response(&mut self, request_id: RequestId, response: avalanche_rpc::Response) {
+    /// Respond to a received avalanche request, via the ['consensus_rpc'] protocol
+    pub fn avalanche_response(
+        &mut self,
+        request_id: InboundRequestId,
+        response: consensus_rpc::Response,
+    ) {
         trace!("Sending response: {response:?}");
-        self.inner.avalanche_rpc.send_response(request_id, response)
+        self.inner.consensus_rpc.send_response(request_id, response)
     }
 
     /// Handle peer identification events
@@ -223,18 +235,14 @@ impl<'a> Behaviour {
 
 impl<'a> NetworkBehaviour for Behaviour {
     type ConnectionHandler = <InnerBehaviour as NetworkBehaviour>::ConnectionHandler;
-    type OutEvent = Event;
+    type ToSwarm = Event;
 
-    fn poll(
-        &mut self,
-        cx: &mut Context<'_>,
-        params: &mut impl PollParameters,
-    ) -> Poll<SwarmAction> {
+    fn poll(&mut self, cx: &mut Context<'_>) -> Poll<SwarmAction> {
         // Periodically check if we need to re-bootstrap
         self.do_bootstrap();
 
         // Handle any events from the subprotocols
-        match self.inner.poll(cx, params) {
+        match self.inner.poll(cx) {
             //  Forward received identities out
             Poll::Ready(ToSwarm::GenerateEvent(InnerBehaviourEvent::Identify(
                 identify::Event::Received { peer_id, info },
@@ -249,7 +257,7 @@ impl<'a> NetworkBehaviour for Behaviour {
                 message.try_into().unwrap(),
             ))),
             // Forward avalanche messages out
-            Poll::Ready(ToSwarm::GenerateEvent(InnerBehaviourEvent::AvalancheRpc(message))) => {
+            Poll::Ready(ToSwarm::GenerateEvent(InnerBehaviourEvent::ConsensusRpc(message))) => {
                 Poll::Ready(ToSwarm::GenerateEvent(Event::Avalanche(message)))
             }
             // Trap all other generated events
@@ -314,7 +322,7 @@ impl<'a> NetworkBehaviour for Behaviour {
             .handle_established_outbound_connection(connection_id, peer, addr, role_override)
     }
 
-    fn on_swarm_event(&mut self, event: FromSwarm<Self::ConnectionHandler>) {
+    fn on_swarm_event(&mut self, event: FromSwarm) {
         self.inner.on_swarm_event(event);
     }
 
@@ -330,7 +338,7 @@ impl<'a> NetworkBehaviour for Behaviour {
 }
 
 type SwarmAction<'a> =
-    ToSwarm<<Behaviour as NetworkBehaviour>::OutEvent, THandlerInEvent<Behaviour>>;
+    ToSwarm<<Behaviour as NetworkBehaviour>::ToSwarm, THandlerInEvent<Behaviour>>;
 
 /// Configuration for the [`cordelia::Behaviour`](Behaviour).
 #[derive(Clone)]
@@ -340,18 +348,18 @@ pub struct Config {
     /// Identify protocol configuration
     identify_cfg: identify::Config,
     /// Kademlia protocol configuration
-    kad_cfg: KademliaConfig,
+    kad_cfg: kad::Config,
     /// Gossipsub protocol configuration
     gossipsub_cfg: gossipsub::Config,
     /// Peer RPC protocol configuration
-    avalanche_rpc_cfg: avalanche_rpc::Config,
+    consensus_rpc_cfg: consensus_rpc::Config,
     /// Bootstrap nodes to join the P2P network
     boot_nodes: Vec<Multiaddr>,
 }
 
 impl Config {
     pub fn new(keys: Keypair, boot_nodes: Vec<Multiaddr>) -> Self {
-        let mut kad_cfg = KademliaConfig::default();
+        let mut kad_cfg = kad::Config::default();
         kad_cfg.set_query_timeout(DEFAULT_KAD_QUERY_TIMOUT);
         let pubkey = keys.public();
         let gossipsub_cfg = gossipsub::ConfigBuilder::default()
@@ -365,7 +373,7 @@ impl Config {
                 pubkey,
             ),
             kad_cfg,
-            avalanche_rpc_cfg: avalanche_rpc::Config {},
+            consensus_rpc_cfg: consensus_rpc::Config {},
             gossipsub_cfg,
             boot_nodes,
         }

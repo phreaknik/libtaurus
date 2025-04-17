@@ -2,14 +2,14 @@ mod generated;
 mod message;
 mod protocol;
 
-use self::protocol::{AvalancheRpcCodec, AvalancheRpcProtocol};
+use self::protocol::{ConsensusRpcCodec, ConsensusRpcProtocol};
 use crate::consensus::{block, vertex};
-pub use generated::avalanche::proto;
+pub use generated::consensus::proto;
 use libp2p::core::Endpoint;
-use libp2p::request_response::{ProtocolSupport, RequestId, ResponseChannel};
+use libp2p::request_response::{InboundRequestId, ProtocolSupport, ResponseChannel};
 use libp2p::swarm::{
-    ConnectionDenied, ConnectionId, FromSwarm, NetworkBehaviour, PollParameters, THandler,
-    THandlerInEvent, THandlerOutEvent, ToSwarm,
+    ConnectionDenied, ConnectionId, FromSwarm, NetworkBehaviour, THandler, THandlerInEvent,
+    THandlerOutEvent, ToSwarm,
 };
 use libp2p::{request_response, Multiaddr, PeerId};
 pub use message::{Request, Response};
@@ -22,7 +22,7 @@ use tracing::{error, trace, warn};
 /// Event produced by [`Behaviour`].
 #[derive(Debug, Clone)]
 pub enum Event {
-    Requested(PeerId, RequestId, Request),
+    Requested(PeerId, InboundRequestId, Request),
     Responded(PeerId, Response),
 }
 
@@ -44,26 +44,23 @@ pub enum Error {
 /// [`NetworkBehaviour`] to implement the peer RPC message routing
 pub struct Behaviour {
     /// Inner behaviour for sending requests and receiving the response.
-    inner: request_response::Behaviour<AvalancheRpcCodec>,
+    inner: request_response::Behaviour<ConsensusRpcCodec>,
     /// Configuration parameters
     _config: Config,
     /// Map of response channels for pending requests
-    pending: HashMap<RequestId, ResponseChannel<Response>>,
+    // TODO: should be timedcache?
+    pending: HashMap<InboundRequestId, ResponseChannel<Response>>,
 }
 
 impl<'a> Behaviour {
     pub fn new(_config: Config) -> Self {
         let inner_protocols = iter::once((
-            AvalancheRpcProtocol::new(_config.clone()),
+            ConsensusRpcProtocol::new(_config.clone()),
             ProtocolSupport::Full,
         ));
         let inner_config = request_response::Config::default();
         Behaviour {
-            inner: request_response::Behaviour::new(
-                AvalancheRpcCodec,
-                inner_protocols,
-                inner_config,
-            ),
+            inner: request_response::Behaviour::new(inner_protocols, inner_config),
             _config,
             pending: HashMap::new(),
         }
@@ -83,7 +80,7 @@ impl<'a> Behaviour {
                 request,
                 channel,
             } => {
-                trace!("Received avalanche_rpc request from {peer_id}: {request:?}");
+                trace!("Received consensus_rpc request from {peer_id}: {request:?}");
                 // Save the response channel, so we can forward the response later
                 self.pending.insert(request_id, channel);
                 Poll::Ready(ToSwarm::GenerateEvent(Event::Requested(
@@ -91,7 +88,7 @@ impl<'a> Behaviour {
                 )))
             }
             request_response::Message::Response { response, .. } => {
-                trace!("Received avalanche_rpc response from {peer_id}: {response:?}");
+                trace!("Received consensus_rpc response from {peer_id}: {response:?}");
                 Poll::Ready(ToSwarm::GenerateEvent(Event::Responded(peer_id, response)))
             }
         }
@@ -101,7 +98,7 @@ impl<'a> Behaviour {
         self.inner.send_request(peer, request);
     }
 
-    pub fn send_response(&mut self, request_id: RequestId, response: Response) {
+    pub fn send_response(&mut self, request_id: InboundRequestId, response: Response) {
         if let Some(ch) = self.pending.remove(&request_id) {
             if let Err(_) = self.inner.send_response(ch, response) {
                 warn!("error responding to avalanche request");
@@ -112,15 +109,11 @@ impl<'a> Behaviour {
 
 impl NetworkBehaviour for Behaviour {
     type ConnectionHandler =
-        <request_response::Behaviour<AvalancheRpcCodec> as NetworkBehaviour>::ConnectionHandler;
-    type OutEvent = Event;
+        <request_response::Behaviour<ConsensusRpcCodec> as NetworkBehaviour>::ConnectionHandler;
+    type ToSwarm = Event;
 
-    fn poll(
-        &mut self,
-        cx: &mut Context<'_>,
-        params: &mut impl PollParameters,
-    ) -> Poll<SwarmAction> {
-        match self.inner.poll(cx, params) {
+    fn poll(&mut self, cx: &mut Context<'_>) -> Poll<SwarmAction> {
+        match self.inner.poll(cx) {
             Poll::Ready(ToSwarm::GenerateEvent(request_response::Event::Message {
                 peer,
                 message,
@@ -182,7 +175,7 @@ impl NetworkBehaviour for Behaviour {
             .handle_established_outbound_connection(connection_id, peer, addr, role_override)
     }
 
-    fn on_swarm_event(&mut self, event: FromSwarm<Self::ConnectionHandler>) {
+    fn on_swarm_event(&mut self, event: FromSwarm) {
         self.inner.on_swarm_event(event);
     }
 
@@ -198,8 +191,8 @@ impl NetworkBehaviour for Behaviour {
 }
 
 type SwarmAction<'a> =
-    ToSwarm<<Behaviour as NetworkBehaviour>::OutEvent, THandlerInEvent<Behaviour>>;
+    ToSwarm<<Behaviour as NetworkBehaviour>::ToSwarm, THandlerInEvent<Behaviour>>;
 
-/// Configuration for the ['avalanche_rpc::Behaviour'](Behaviour)
-#[derive(Debug, Clone)]
+/// Configuration for the ['consensus_rpc::Behaviour'](Behaviour)
+#[derive(Debug, Clone, Default)]
 pub struct Config {}

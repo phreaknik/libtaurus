@@ -8,7 +8,7 @@ use super::{
     Block, BlockHash, Event, Vertex,
 };
 use crate::{
-    p2p::{self, avalanche_rpc},
+    p2p::{self, consensus_rpc},
     params::{AVALANCHE_ACCEPTANCE_THRESHOLD, AVALANCHE_QUERY_COUNT, QUERY_TIMEOUT_SEC},
     randomx::RandomXVMInstance,
     VertexHash,
@@ -464,7 +464,7 @@ impl Dag {
                     debug!("Requesting missing parent {parent}");
                     self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
                         peer,
-                        avalanche_rpc::Request::GetVertex(parent),
+                        consensus_rpc::Request::GetVertex(parent),
                     ))?;
                 }
                 Ok::<_, Error>(parent)
@@ -492,7 +492,7 @@ impl Dag {
                     debug!("Requesting block {bhash}");
                     self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
                         peer,
-                        avalanche_rpc::Request::GetBlock(bhash),
+                        consensus_rpc::Request::GetBlock(bhash),
                     ))?;
                 }
                 Err(Error::MissingBlock(bhash))
@@ -509,7 +509,7 @@ impl Dag {
                         debug!("Requesting block {bhash}");
                         self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
                             peer,
-                            avalanche_rpc::Request::GetBlock(bhash),
+                            consensus_rpc::Request::GetBlock(bhash),
                         ))?;
                     }
                     Err(Error::MissingPrevMined(prev_hash))
@@ -564,7 +564,7 @@ impl Dag {
             for voter in &voters {
                 self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
                     voter.read().unwrap().id(),
-                    avalanche_rpc::Request::GetPreference(vhash),
+                    consensus_rpc::Request::GetPreference(vhash),
                 ))?;
             }
             self.scorecards.cache_set(
@@ -709,9 +709,9 @@ impl Dag {
     }
 
     /// Handle any avalanche requests or responses
-    pub fn handle_avalanche_message(&mut self, message: avalanche_rpc::Event) -> Result<()> {
+    pub fn handle_avalanche_message(&mut self, message: consensus_rpc::Event) -> Result<()> {
         match message {
-            avalanche_rpc::Event::Requested(peer, request_id, request) => {
+            consensus_rpc::Event::Requested(peer, request_id, request) => {
                 // Handle the request and respond to the requester
                 self.handle_avalanche_request(peer, request)
                     .and_then(|opt_response| match opt_response {
@@ -722,7 +722,7 @@ impl Dag {
                         None => Ok(()),
                     })
             }
-            avalanche_rpc::Event::Responded(peer, response) => {
+            consensus_rpc::Event::Responded(peer, response) => {
                 self.handle_avalanche_response(peer, response)
             }
         }
@@ -732,14 +732,14 @@ impl Dag {
     fn handle_avalanche_request(
         &mut self,
         from_peer: PeerId,
-        request: avalanche_rpc::Request,
-    ) -> Result<Option<avalanche_rpc::Response>> {
+        request: consensus_rpc::Request,
+    ) -> Result<Option<consensus_rpc::Response>> {
         trace!("Handling request: {request}");
         match request {
-            avalanche_rpc::Request::GetBlock(bhash) => match self.get_block(&bhash) {
+            consensus_rpc::Request::GetBlock(bhash) => match self.get_block(&bhash) {
                 Ok(block) => {
                     debug!("Sending block response {bhash}={block}");
-                    Ok(Some(avalanche_rpc::Response::Block((*block).clone())))
+                    Ok(Some(consensus_rpc::Response::Block((*block).clone())))
                 }
                 Err(Error::NotFound) => {
                     debug!("Unable to find requested block: {bhash}");
@@ -750,10 +750,10 @@ impl Dag {
                     Err(e.into())
                 }
             },
-            avalanche_rpc::Request::GetVertex(vhash) => match self.get_vertex(&vhash) {
+            consensus_rpc::Request::GetVertex(vhash) => match self.get_vertex(&vhash) {
                 Ok((vertex, _preferred)) => {
                     debug!("Sending vertex response {vhash}={vertex}");
-                    Ok(Some(avalanche_rpc::Response::Vertex(vertex)))
+                    Ok(Some(consensus_rpc::Response::Vertex(vertex)))
                 }
                 Err(Error::NotFound) => {
                     debug!("Unable to find requested vertex: {vhash}");
@@ -764,15 +764,15 @@ impl Dag {
                     Err(e.into())
                 }
             },
-            avalanche_rpc::Request::GetPreference(vhash) => {
+            consensus_rpc::Request::GetPreference(vhash) => {
                 self.get_vertex(&vhash)
-                    .map(|(_sv, pref)| Some(avalanche_rpc::Response::Preference(vhash, pref)))
+                    .map(|(_sv, pref)| Some(consensus_rpc::Response::Preference(vhash, pref)))
                     .map_err(|error| {
                         debug!("Unable to determine preference for {vhash}: {error}");
                         if let Error::NotFound = error {
                             match self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
                                 from_peer,
-                                avalanche_rpc::Request::GetVertex(vhash),
+                                consensus_rpc::Request::GetVertex(vhash),
                             )) {
                                 Ok(_) => error, // Bubble up the NotFound error
                                 Err(e) => e.into(),
@@ -789,10 +789,10 @@ impl Dag {
     fn handle_avalanche_response(
         &mut self,
         from_peer: PeerId,
-        response: avalanche_rpc::Response,
+        response: consensus_rpc::Response,
     ) -> Result<()> {
         Ok(match response {
-            avalanche_rpc::Response::Block(block) => {
+            consensus_rpc::Response::Block(block) => {
                 let bhash = block.hash();
                 debug!("Received block response {bhash}={block}");
                 match self.register_block(block) {
@@ -805,7 +805,7 @@ impl Dag {
                     _ => {}
                 }
             }
-            avalanche_rpc::Response::Vertex(wire_vertex) => {
+            consensus_rpc::Response::Vertex(wire_vertex) => {
                 let vhash = wire_vertex.hash();
                 debug!("Received vertex response {vhash}={wire_vertex}");
                 if let Err(e) =
@@ -814,7 +814,7 @@ impl Dag {
                     debug!("Unable to insert requested vertex {vhash}: {e}");
                 }
             }
-            avalanche_rpc::Response::Preference(vhash, preferred) => {
+            consensus_rpc::Response::Preference(vhash, preferred) => {
                 if let Some(scorecard) = self.scorecards.cache_get_mut(&vhash) {
                     // Process this peer's vote
                     match scorecard.register_vote(&from_peer, preferred)? {

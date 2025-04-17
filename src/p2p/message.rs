@@ -1,5 +1,5 @@
 use super::{
-    avalanche_rpc::proto::{self, Broadcast},
+    consensus_rpc::proto::{self, Broadcast},
     Error, Result,
 };
 use crate::consensus::WireVertex;

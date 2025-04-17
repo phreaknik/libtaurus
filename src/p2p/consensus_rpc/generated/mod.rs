@@ -1,2 +1,2 @@
 // Automatically generated mod.rs
-pub mod avalanche;
+pub mod consensus;

@@ -41,14 +41,14 @@ impl Hash {
     }
 
     /// Serialize into protobuf format
-    pub fn to_protobuf(&self) -> Result<p2p::avalanche_rpc::proto::Hash> {
-        Ok(p2p::avalanche_rpc::proto::Hash {
+    pub fn to_protobuf(&self) -> Result<p2p::consensus_rpc::proto::Hash> {
+        Ok(p2p::consensus_rpc::proto::Hash {
             hash: rmp_serde::to_vec(&self)?,
         })
     }
 
     /// Deserialize from protobuf format
-    pub fn from_protobuf(proto: &p2p::avalanche_rpc::proto::Hash) -> Result<Hash> {
+    pub fn from_protobuf(proto: &p2p::consensus_rpc::proto::Hash) -> Result<Hash> {
         Ok(Hash(rmp_serde::from_slice(&proto.hash)?))
     }
 

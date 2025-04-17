@@ -2,43 +2,42 @@ use super::{proto, Config, Request, Response};
 use async_trait::async_trait;
 use futures::prelude::*;
 use libp2p::request_response;
-use libp2p::request_response::ProtocolName;
 use quick_protobuf::{BytesReader, MessageRead, MessageWrite, Writer};
 use std::io;
 use thiserror::Error;
 use tracing::error;
 
-pub const PROTOCOL_NAME: &[u8] = b"/cordelia/avalanche_rpc/0.1.0";
+pub const PROTOCOL_NAME: &str = "/cordelia/consensus_rpc/0.1.0";
 
-#[derive(Clone, Debug)]
-pub struct AvalancheRpcProtocol {
+#[derive(Clone, Debug, Default)]
+pub struct ConsensusRpcProtocol {
     _config: Config,
 }
 
-impl AvalancheRpcProtocol {
+impl ConsensusRpcProtocol {
     pub fn new(_config: Config) -> Self {
-        AvalancheRpcProtocol { _config }
+        ConsensusRpcProtocol { _config }
     }
 }
 
-impl ProtocolName for AvalancheRpcProtocol {
-    fn protocol_name(&self) -> &[u8] {
+impl AsRef<str> for ConsensusRpcProtocol {
+    fn as_ref(&self) -> &str {
         PROTOCOL_NAME
     }
 }
 
-#[derive(Clone)]
-pub struct AvalancheRpcCodec;
+#[derive(Clone, Default)]
+pub struct ConsensusRpcCodec;
 
 #[async_trait]
-impl request_response::Codec for AvalancheRpcCodec {
-    type Protocol = AvalancheRpcProtocol;
+impl request_response::Codec for ConsensusRpcCodec {
+    type Protocol = ConsensusRpcProtocol;
     type Request = super::Request;
     type Response = super::Response;
 
     async fn read_request<T>(
         &mut self,
-        _: &AvalancheRpcProtocol,
+        _: &ConsensusRpcProtocol,
         io: &mut T,
     ) -> io::Result<Self::Request>
     where
@@ -63,7 +62,7 @@ impl request_response::Codec for AvalancheRpcCodec {
 
     async fn read_response<T>(
         &mut self,
-        _: &AvalancheRpcProtocol,
+        _: &ConsensusRpcProtocol,
         io: &mut T,
     ) -> io::Result<Self::Response>
     where
@@ -88,7 +87,7 @@ impl request_response::Codec for AvalancheRpcCodec {
 
     async fn write_request<T>(
         &mut self,
-        _protocol: &AvalancheRpcProtocol,
+        _protocol: &ConsensusRpcProtocol,
         io: &mut T,
         data: Self::Request,
     ) -> io::Result<()>
@@ -115,7 +114,7 @@ impl request_response::Codec for AvalancheRpcCodec {
 
     async fn write_response<T>(
         &mut self,
-        _: &AvalancheRpcProtocol,
+        _: &ConsensusRpcProtocol,
         io: &mut T,
         data: Self::Response,
     ) -> io::Result<()>
