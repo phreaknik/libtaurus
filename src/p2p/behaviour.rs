@@ -4,8 +4,7 @@ use libp2p::{
     core::Endpoint,
     gossipsub::{self, MessageAcceptance, MessageAuthenticity, MessageId, Sha256Topic},
     identity::Keypair,
-    kad::store::MemoryStore,
-    kad::{self, NoKnownPeers},
+    kad::{self, store::MemoryStore, NoKnownPeers},
     multiaddr::Protocol,
     request_response::InboundRequestId,
     swarm::{
@@ -18,18 +17,12 @@ use std::{
     borrow::BorrowMut,
     str,
     task::{Context, Poll},
-    time::{Duration, Instant},
+    time::Duration,
 };
 use strum::IntoEnumIterator;
 use tracing::{debug, error, trace, warn};
 
 pub const PROTOCOL_NAME: &[u8; 15] = b"/cordelia/0.1.0";
-
-/// Period to retry bootstrapping
-const BOOTSTRAP_PERIOD_SECS: u64 = 3600;
-
-/// The number of kademlia buckets a full routing table will hold
-const KADEMLIA_MAX_NUM_BUCKETS: usize = 256;
 
 /// Kademlia query timeout in seconds
 const DEFAULT_KAD_QUERY_TIMOUT: Duration = Duration::from_secs(60);
@@ -77,8 +70,6 @@ pub struct Behaviour {
     inner: InnerBehaviour,
     /// Peer database
     peer_db: PeerDatabase,
-    /// Time of last bootstrap
-    last_bootstrap: Option<Instant>,
 }
 
 impl<'a> Behaviour {
@@ -87,10 +78,8 @@ impl<'a> Behaviour {
         let mut b = Behaviour {
             peer_db,
             inner: InnerBehaviour::new(config.clone())?,
-            last_bootstrap: None,
         };
         b.add_boot_nodes(&config);
-        b.do_bootstrap();
         Ok(b)
     }
 
@@ -206,29 +195,10 @@ impl<'a> Behaviour {
         wtxn.commit().unwrap();
     }
 
-    /// Check if we need more peers, and re-bootstrap if so
-    fn do_bootstrap(&mut self) {
-        let t_now = Instant::now();
-        if self.last_bootstrap.is_none()
-            || t_now - self.last_bootstrap.unwrap() > Duration::from_secs(BOOTSTRAP_PERIOD_SECS)
-        {
-            // only re-bootstrap if we have any buckets that need more peers
-            if self.inner.kademlia.kbuckets().count() < KADEMLIA_MAX_NUM_BUCKETS
-                || self
-                    .inner
-                    .kademlia
-                    .kbuckets()
-                    .inspect(|b| println!("BUCKET HAS {} ENTRIES!", b.num_entries()))
-                    .any(|b| b.num_entries() < kad::K_VALUE.into())
-            {
-                self.last_bootstrap = Some(t_now);
-                match self.inner.kademlia.bootstrap() {
-                    Err(NoKnownPeers {}) => {
-                        warn!("No peers. Unable to join P2P network.");
-                    }
-                    Ok(_) => {}
-                }
-            }
+    /// Bootstrap into the P2P network
+    pub fn bootstrap(&mut self) {
+        if let Err(NoKnownPeers {}) = self.inner.kademlia.bootstrap() {
+            warn!("No peers. Unable to join DHT.");
         }
     }
 }
@@ -238,9 +208,6 @@ impl<'a> NetworkBehaviour for Behaviour {
     type ToSwarm = Event;
 
     fn poll(&mut self, cx: &mut Context<'_>) -> Poll<SwarmAction> {
-        // Periodically check if we need to re-bootstrap
-        self.do_bootstrap();
-
         // Handle any events from the subprotocols
         match self.inner.poll(cx) {
             //  Forward received identities out

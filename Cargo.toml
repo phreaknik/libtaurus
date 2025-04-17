@@ -24,6 +24,7 @@ libp2p = { version = "0.53", features = [
   "gossipsub",
   "ed25519",
   "quic",
+  "tcp",
 ] }
 tokio = { version = "1.27.0", features = ["sync", "macros"] }
 futures = "0.3"

@@ -137,6 +137,9 @@ async fn task_fn(
         .listen_on(local_addr)
         .expect("Cannot start listener on {local_addr}");
 
+    // Bootstrap into the P2P network
+    swarm.behaviour_mut().bootstrap();
+
     // Main event loop
     let local_peer_id = PeerId::from(config.identity_key.public());
     loop {
