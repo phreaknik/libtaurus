@@ -1,12 +1,12 @@
-use hyper;
-use hyper::service::{make_service_fn, service_fn};
-use hyper::{Body, Method, Request, Response, Server, StatusCode};
+use crate::{consensus, p2p};
+use hyper::{
+    self,
+    service::{make_service_fn, service_fn},
+    Body, Method, Request, Response, Server, StatusCode,
+};
 use std::sync::{Arc, Mutex};
-
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{error, info};
-
-use crate::{consensus, p2p};
 
 /// Error type for cordelia-p2p errors
 #[derive(thiserror::Error, Debug)]
