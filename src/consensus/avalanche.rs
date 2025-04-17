@@ -27,7 +27,6 @@ use std::{
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::{debug, error, info, trace, warn};
 use tracing_mutex::stdsync::TracingRwLock;
-//TODO: use RC instead of ARC. Don't need thread safety
 
 /// Path to the peer database, from within the peer data directory
 pub const DATABASE_DIR: &str = "blocks_db/";
@@ -76,8 +75,6 @@ pub enum Error {
     #[error(transparent)]
     WaitList(#[from] waitlist::Error),
 }
-
-// TODO: Mutexes likely not necessary around vertices, since entire DAG is guarded by mutex
 
 /// Result type for avalanche errors
 pub type Result<T> = result::Result<T, Error>;
