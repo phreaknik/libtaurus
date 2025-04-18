@@ -212,7 +212,7 @@ impl<'a> NetworkBehaviour for Behaviour {
     fn poll(&mut self, cx: &mut Context<'_>) -> Poll<SwarmAction> {
         // Handle any events from the subprotocols
         match self.inner.poll(cx) {
-            //  Forward received identities out
+            //  Handle received identities
             Poll::Ready(ToSwarm::GenerateEvent(InnerBehaviourEvent::Identify(
                 identify::Event::Received { peer_id, info },
             ))) => {
@@ -234,7 +234,6 @@ impl<'a> NetworkBehaviour for Behaviour {
                 trace!("internal event: {event:?}");
                 Poll::Pending
             }
-            // TODO: use the map_out() method to eliminate the bespoke routing cases above
             Poll::Ready(action) => Poll::Ready(action.map_out(|_| unreachable!())),
             Poll::Pending => Poll::Pending,
         }
