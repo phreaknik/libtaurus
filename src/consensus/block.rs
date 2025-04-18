@@ -205,18 +205,15 @@ impl Block {
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
         let mut bytes = Vec::new();
         let mut writer = Writer::new(&mut bytes);
-        let protobuf = self.to_protobuf().map_err(|_| {
+        let protobuf = self.to_protobuf().map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                "unable to convert broadcast data to protobuf",
+                format!("unable to convert Block to protobuf: {e}"),
             )
         })?;
-        protobuf.write_message(&mut writer).map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "unable to write broadcast data message",
-            )
-        })?;
+        protobuf
+            .write_message(&mut writer)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "unable to serialize Block"))?;
         Ok(bytes)
     }
 }

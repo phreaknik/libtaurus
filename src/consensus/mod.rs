@@ -11,8 +11,7 @@ pub mod vertex;
 mod voter_pool;
 mod waitlist;
 
-use crate::randomx::RandomXVMInstance;
-use crate::{p2p, randomx};
+use crate::{p2p, randomx, randomx::RandomXVMInstance, wire};
 pub use avalanche::*;
 pub use block::*;
 use chrono::{DateTime, Utc};
@@ -20,7 +19,6 @@ use libp2p::multihash::Multihash;
 use libp2p::PeerId;
 use randomx_rs::RandomXFlag;
 use std::iter::once;
-use std::ops::Deref;
 use std::path::PathBuf;
 use std::result;
 use std::sync::Arc;
@@ -102,7 +100,7 @@ pub struct GenesisConfig {
 
 impl GenesisConfig {
     /// Create a genesis block
-    pub fn to_vertex(&self) -> WireVertex {
+    pub fn to_vertex(&self) -> Arc<wire::Vertex> {
         let block = Block {
             version: 0,
             difficulty: self.difficulty,
@@ -113,12 +111,12 @@ impl GenesisConfig {
             time: self.time,
             nonce: 0,
         };
-        WireVertex {
+        Arc::new(wire::Vertex {
             version: 0,
             parents: Vec::new(),
             bhash: block.hash(),
-            block: Some(block),
-        }
+            block: Some(Arc::new(block)),
+        })
     }
 }
 
@@ -243,7 +241,7 @@ impl Runtime {
                                 .dag
                                 .write()
                                 .map_err(|_| Error::DagWriteLock)
-                                .and_then(|mut dag| dag.try_insert_block(block, true).map_err(Error::from))
+                                .and_then(|mut dag| dag.try_insert_block(Arc::new(block), true).map_err(Error::from))
                             {
                                 Ok(_) => {},
                                 Err(Error::P2pActionCh(e)) => return error!("Stopping due to p2p_action channel error: {e}"),
@@ -262,7 +260,7 @@ impl Runtime {
                                 .dag
                                 .write()
                                 .map_err(|_| Error::DagWriteLock)
-                                .and_then(|mut dag| dag.try_insert_block(block.deref().clone(), true).map_err(Error::from)) {
+                                .and_then(|mut dag| dag.try_insert_block(block, true).map_err(Error::from)) {
                                     warn!("Error resubmitting stalled block {bhash}: {e}");
                                 }
                         },

@@ -169,6 +169,63 @@ impl Default for OneOfResponseData {
 
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Debug, Default, PartialEq, Clone)]
+pub struct DbRecord {
+    pub RequestData: consensus::proto::mod_DbRecord::OneOfRequestData,
+}
+
+impl<'a> MessageRead<'a> for DbRecord {
+    fn from_reader(r: &mut BytesReader, bytes: &'a [u8]) -> Result<Self> {
+        let mut msg = Self::default();
+        while !r.is_eof() {
+            match r.next_tag(bytes) {
+                Ok(2) => msg.RequestData = consensus::proto::mod_DbRecord::OneOfRequestData::vertex(r.read_message::<consensus::proto::Vertex>(bytes)?),
+                Ok(10) => msg.RequestData = consensus::proto::mod_DbRecord::OneOfRequestData::link(r.read_message::<consensus::proto::Hash>(bytes)?),
+                Ok(t) => { r.read_unknown(bytes, t)?; }
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(msg)
+    }
+}
+
+impl MessageWrite for DbRecord {
+    fn get_size(&self) -> usize {
+        0
+        + match self.RequestData {
+            consensus::proto::mod_DbRecord::OneOfRequestData::vertex(ref m) => 1 + sizeof_len((m).get_size()),
+            consensus::proto::mod_DbRecord::OneOfRequestData::link(ref m) => 1 + sizeof_len((m).get_size()),
+            consensus::proto::mod_DbRecord::OneOfRequestData::None => 0,
+    }    }
+
+    fn write_message<W: WriterBackend>(&self, w: &mut Writer<W>) -> Result<()> {
+        match self.RequestData {            consensus::proto::mod_DbRecord::OneOfRequestData::vertex(ref m) => { w.write_with_tag(2, |w| w.write_message(m))? },
+            consensus::proto::mod_DbRecord::OneOfRequestData::link(ref m) => { w.write_with_tag(10, |w| w.write_message(m))? },
+            consensus::proto::mod_DbRecord::OneOfRequestData::None => {},
+    }        Ok(())
+    }
+}
+
+pub mod mod_DbRecord {
+
+use super::*;
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum OneOfRequestData {
+    vertex(consensus::proto::Vertex),
+    link(consensus::proto::Hash),
+    None,
+}
+
+impl Default for OneOfRequestData {
+    fn default() -> Self {
+        OneOfRequestData::None
+    }
+}
+
+}
+
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Debug, Default, PartialEq, Clone)]
 pub struct Hash {
     pub hash: Vec<u8>,
 }

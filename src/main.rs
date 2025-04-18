@@ -32,12 +32,12 @@ mod p2p;
 mod params;
 mod randomx;
 mod util;
-mod wire;
+pub mod wire;
 
 use chrono::DateTime;
 use clap::{arg, command, ArgMatches, Command};
 use consensus::{avalanche, GenesisConfig};
-pub use consensus::{Block, BlockHash, VertexHash, WireVertex};
+pub use consensus::{Block, BlockHash, VertexHash};
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
 use libp2p::identity::Keypair;
 use p2p::PeerDatabase;

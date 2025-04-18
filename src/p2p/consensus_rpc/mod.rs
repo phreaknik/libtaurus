@@ -4,6 +4,7 @@ mod protocol;
 
 use self::protocol::{ConsensusRpcCodec, ConsensusRpcProtocol};
 use crate::consensus::{block, vertex};
+use crate::wire;
 use cached::{Cached, TimedCache};
 pub use generated::consensus::proto;
 use libp2p::core::Endpoint;
@@ -42,6 +43,8 @@ pub enum Error {
     IncompleteResponse,
     #[error(transparent)]
     Vertex(#[from] vertex::Error),
+    #[error(transparent)]
+    Wire(#[from] wire::Error),
 }
 
 /// [`NetworkBehaviour`] to implement the peer RPC message routing

@@ -99,13 +99,13 @@ impl request_response::Codec for ConsensusRpcCodec {
         let protobuf = data.to_protobuf().map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("unable to convert request to protobuf: {e}"),
+                format!("unable to convert Request to protobuf: {e}"),
             )
         })?;
         protobuf.write_message(&mut writer).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("unable to write request message: {e}"),
+                format!("unable to serialize request message: {e}"),
             )
         })?;
         io.write_all(bytes.as_slice()).await?;
@@ -126,13 +126,13 @@ impl request_response::Codec for ConsensusRpcCodec {
         let protobuf = data.to_protobuf().map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("unable to convert response to protobuf: {e}"),
+                format!("unable to convert Response to protobuf: {e}"),
             )
         })?;
         protobuf.write_message(&mut writer).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("unable to write response message: {e}"),
+                format!("unable to serialize response message: {e}"),
             )
         })?;
         io.write_all(bytes.as_slice()).await?;

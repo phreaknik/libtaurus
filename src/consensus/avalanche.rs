@@ -2,7 +2,7 @@ use super::{
     block,
     database::ConsensusDb,
     transaction::{self, Txo, TxoHash},
-    vertex::{self, WireVertex},
+    vertex,
     voter_pool::{self, Scorecard, VoterPool},
     waitlist::{self, WaitList},
     Block, BlockHash, Event, Vertex,
@@ -11,7 +11,7 @@ use crate::{
     p2p::{self, consensus_rpc},
     params::{AVALANCHE_ACCEPTANCE_THRESHOLD, AVALANCHE_QUERY_COUNT, QUERY_TIMEOUT_SEC},
     randomx::RandomXVMInstance,
-    wire::WireFormat,
+    wire::{self, WireFormat},
     VertexHash,
 };
 use cached::{Cached, TimedCache};
@@ -79,6 +79,8 @@ pub enum Error {
     VoterPool(#[from] voter_pool::Error),
     #[error(transparent)]
     WaitList(#[from] waitlist::Error),
+    #[error(transparent)]
+    Wire(#[from] wire::Error),
 }
 
 /// Result type for avalanche errors
@@ -91,7 +93,7 @@ pub struct Config {
     pub data_dir: PathBuf,
 
     /// Genesis block to serve as root vertex in the DAG
-    pub genesis: WireVertex,
+    pub genesis: Arc<wire::Vertex>,
 
     /// Maximum number of vertices which can wait in the list
     pub waitlist_cap: NonZeroUsize,
@@ -184,18 +186,17 @@ impl Dag {
     }
 
     /// Register a block as available to be inserted into the DAG
-    fn register_block(&mut self, block: Block) -> Result<()> {
+    fn register_block(&mut self, block: Arc<Block>) -> Result<()> {
         // Check the block has sufficient proof-of-work
         block.verify_pow(&self.randomx_vm)?;
         let bhash = block.hash();
         if let Some(vhash) = self.database.lookup_vertex_for_block(&bhash)? {
             Err(Error::AlreadyDecided(vhash))
         } else {
-            let arc_block = Arc::new(block);
             // Add the block to the list of undecided blocks
-            self.undecided_blocks.cache_set(bhash, arc_block.clone());
+            self.undecided_blocks.cache_set(bhash, block.clone());
             // Register this miner as a potential Avalanche voter
-            self.voter_pool.register_from_block(arc_block);
+            self.voter_pool.register_from_block(block);
             // Attempt to insert any vertices waiting on that block
             if let Some(vertices) = self.waitlist.get_by_block(&bhash)? {
                 self.try_insert_vertices(vertices, None, false)?;
@@ -205,8 +206,8 @@ impl Dag {
     }
 
     /// Try to submit this block as a vertex at the frontier of the DAG
-    pub fn try_insert_block(&mut self, block: Block, broadcast: bool) -> Result<()> {
-        let wire_vertex = Arc::new(WireVertex::new(
+    pub fn try_insert_block(&mut self, block: Arc<Block>, broadcast: bool) -> Result<()> {
+        let wire_vertex = Arc::new(wire::Vertex::new(
             block,
             self.frontier.values().cloned(),
             true,
@@ -222,7 +223,7 @@ impl Dag {
         broadcast: bool,
     ) -> Result<()>
     where
-        V: IntoIterator<Item = Arc<WireVertex>>,
+        V: IntoIterator<Item = Arc<wire::Vertex>>,
     {
         // Collect and sort vertices to avoid silly insertion sequence errors
         let mut insert_list: Vec<_> = vertices.into_iter().collect();
@@ -260,7 +261,7 @@ impl Dag {
         while let Some((vhash, bhash)) = successful.pop() {
             let waiting_by_block = self.waitlist.get_by_block(&bhash)?;
             let waiting_by_vertex = self.waitlist.get_by_vertex(&vhash)?;
-            let mut try_insert_waiting = |wire_vertex: Arc<WireVertex>| -> Result<()> {
+            let mut try_insert_waiting = |wire_vertex: Arc<wire::Vertex>| -> Result<()> {
                 let vhash = wire_vertex.hash();
                 let bhash = wire_vertex.bhash;
                 // Exclude sender, because there is no expectation the sender can serve a
@@ -308,7 +309,7 @@ impl Dag {
     /// currently strongly preferred.
     fn try_insert_vertex(
         &mut self,
-        wire_vertex: Arc<WireVertex>,
+        wire_vertex: Arc<wire::Vertex>,
         sender: Option<PeerId>,
         broadcast: bool,
     ) -> Result<bool> {
@@ -345,11 +346,11 @@ impl Dag {
         }?;
 
         // Make sure the block referenced in this vertex can be spent
-        let (conflict_free, opt_block) = self.check_conflicts(&wire_vertex)?;
+        let (conflict_free, opt_block) = self.check_conflicts(wire_vertex.clone())?;
 
         // Create a mutex protected vertex for inserting into the DAG structure
         let rw_vertex = Arc::new(TracingRwLock::new(Vertex::new(
-            wire_vertex.as_ref(),
+            wire_vertex.clone(),
             &mut self.undecided_blocks,
             &mut self.undecided_vertices,
             conflict_free,
@@ -420,7 +421,7 @@ impl Dag {
 
         if vertex.strongly_preferred {
             // Remove its parents from the frontier, as they are no longer the youngest
-            for parent in &vertex.parents {
+            for parent in &vertex.inner.parents {
                 self.frontier.remove(parent);
             }
 
@@ -437,7 +438,7 @@ impl Dag {
     /// Check for missing data and request them from peers
     fn request_if_missing_data(
         &mut self,
-        wire_vertex: &WireVertex,
+        wire_vertex: &wire::Vertex,
         sender: Option<PeerId>,
     ) -> Result<()> {
         // Lookup any missing parents
@@ -522,8 +523,11 @@ impl Dag {
     }
 
     /// Check that the vertex uniquely spends UTXOs. Returns true if no conflicts. Also reurns a
-    /// reference to the block, if the block is not included in the WireVertex.
-    fn check_conflicts(&mut self, wire_vertex: &WireVertex) -> Result<(bool, Option<Arc<Block>>)> {
+    /// reference to the block, if the block is not included in the wire::Vertex.
+    fn check_conflicts(
+        &mut self,
+        wire_vertex: Arc<wire::Vertex>,
+    ) -> Result<(bool, Option<Arc<Block>>)> {
         // Make sure transaction inputs are in the txo set. If they are not in the txo set at all,
         // then reject this vertex entirely. If they are in the txo set, but spent by another
         // vertex, it is still possible to insert this vertex, but it will be in conflict and
@@ -534,7 +538,7 @@ impl Dag {
         let block = wire_vertex
             .block
             .as_ref()
-            .map(|b| Arc::new(b.clone()))
+            .cloned()
             .unwrap_or(self.get_block(&bhash)?);
 
         // Make sure each UTXO is in the UTXO set
@@ -591,23 +595,24 @@ impl Dag {
                     .database
                     .lookup_vertex_for_block(bhash)?
                     .ok_or(Error::NotFound)?;
-                Ok(Arc::new(
-                    self.database
-                        .read_vertex(&vhash)?
-                        .ok_or(Error::NotFound)?
-                        .block
-                        .unwrap(),
-                ))
+                Ok(self
+                    .database
+                    .read_vertex(&vhash)?
+                    .ok_or(Error::NotFound)?
+                    .block
+                    .as_ref()
+                    .unwrap()
+                    .clone())
             }
         }
     }
 
     /// Look up a vertex from the DAG, and indicate if this vertex is strongly preferred.
-    pub fn get_vertex(&mut self, vhash: &VertexHash) -> Result<(WireVertex, bool)> {
+    pub fn get_vertex(&mut self, vhash: &VertexHash) -> Result<(Arc<wire::Vertex>, bool)> {
         match self.undecided_vertices.cache_get(vhash) {
             Some(rw_vertex) => {
                 let vertex = rw_vertex.read().map_err(|_| Error::VertexReadLock)?;
-                Ok((vertex.to_wire()?, vertex.strongly_preferred))
+                Ok((vertex.inner.clone(), vertex.strongly_preferred))
             }
             None => Ok((
                 self.database.read_vertex(vhash)?.ok_or(Error::NotFound)?,
@@ -635,7 +640,10 @@ impl Dag {
         let vertex = rw_vertex.read().unwrap();
         // Check if this vertex's confidence has surpassed that of any vertices in its conflict set
         let overtaken = vertex
+            .inner
             .block
+            .as_ref()
+            .unwrap()
             .inputs
             .iter()
             .filter_map(|txo_hash| {
@@ -652,17 +660,24 @@ impl Dag {
             self.reset_confidence(rw_vertex.clone()).unwrap();
             // Reset the preferred spender of each UTXO spent by the overtaken vertex
             let conflict = pref.read().unwrap();
-            for txo_hash in &conflict.block.inputs {
+            for txo_hash in &conflict.inner.block.as_ref().unwrap().inputs {
                 self.undecided_txos
                     .get_mut(txo_hash)
                     .unwrap()
-                    .preferred_spender = match vertex.block.inputs.contains(txo_hash) {
+                    .preferred_spender = match vertex
+                    .inner
+                    .block
+                    .as_ref()
+                    .unwrap()
+                    .inputs
+                    .contains(txo_hash)
+                {
                     true => Some(rw_vertex.clone()),
                     false => None,
                 }
             }
             // Remove this vertex from the frontier, if needed
-            self.frontier.remove(&conflict.hash().unwrap());
+            self.frontier.remove(&conflict.hash());
         }
         // Increase confidence of parents and collect any ancestors which can be accepted
         let mut accepted = vertex
@@ -678,7 +693,7 @@ impl Dag {
         if vertex.undecided_parents.len() == 0
             && vertex.confidence >= AVALANCHE_ACCEPTANCE_THRESHOLD
         {
-            accepted.push(vertex.hash().unwrap());
+            accepted.push(vertex.hash());
         }
         accepted
     }
@@ -700,7 +715,10 @@ impl Dag {
                 let block = child
                     .read()
                     .map_err(|_| Error::VertexReadLock)?
+                    .inner
                     .block
+                    .as_ref()
+                    .unwrap()
                     .clone();
                 self.events_ch.send(Event::StalledBlock(block))?;
                 self.reset_confidence(child.clone())?;
@@ -796,7 +814,7 @@ impl Dag {
             consensus_rpc::Response::Block(block) => {
                 let bhash = block.hash();
                 debug!("Received block response {bhash}={block}");
-                match self.register_block(block) {
+                match self.register_block(Arc::new(block)) {
                     Err(Error::Block(block::Error::InvalidPoW)) => {
                         // Block the peer for sending us an un-worked block
                         warn!("Blocking peer for sending block with insufficient Prrof-of-Work");
@@ -809,8 +827,7 @@ impl Dag {
             consensus_rpc::Response::Vertex(wire_vertex) => {
                 let vhash = wire_vertex.hash();
                 debug!("Received vertex response {vhash}={wire_vertex}");
-                if let Err(e) =
-                    self.try_insert_vertices(once(Arc::new(wire_vertex)), Some(from_peer), false)
+                if let Err(e) = self.try_insert_vertices(once(wire_vertex), Some(from_peer), false)
                 {
                     debug!("Unable to insert requested vertex {vhash}: {e}");
                 }
@@ -868,12 +885,12 @@ impl Dag {
                             .write()
                             .unwrap()
                             .undecided_parents
-                            .remove(&vertex.hash()?);
+                            .remove(&vertex.hash());
                     }
                     // Write the block to the database
-                    txn = Some(self.database.write_vertex(txn, vertex.to_wire()?)?);
+                    txn = Some(self.database.write_vertex(txn, vertex.inner.clone())?);
                     // Remove this block's inputs from the set of undecided_txos
-                    for txo_hash in &vertex.block.inputs {
+                    for txo_hash in &vertex.inner.block.as_ref().unwrap().inputs {
                         self.undecided_txos.remove(txo_hash);
                     }
                     txn.unwrap().commit()?;

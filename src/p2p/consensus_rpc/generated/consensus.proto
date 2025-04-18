@@ -24,6 +24,14 @@ message Response {
 	}
 }
 
+// Database records
+message DbRecord {
+	oneof RequestData {
+		Vertex vertex = 0;
+		Hash link = 1;
+	}
+}
+
 // Inner message types
 message Hash {
   bytes hash = 0;

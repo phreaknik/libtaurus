@@ -2,18 +2,17 @@ use super::{
     consensus_rpc::proto::{self, Broadcast},
     Error, Result,
 };
-use crate::consensus::WireVertex;
+use crate::wire;
 use libp2p::{
     gossipsub::{self, MessageAcceptance, MessageId, Sha256Topic, TopicHash},
     PeerId,
 };
 use quick_protobuf::{BytesReader, MessageRead, MessageWrite, Writer};
-use serde::{Deserialize, Serialize};
 use std::io;
 use strum_macros::{AsRefStr, EnumIter};
 
 /// Messages that can be sent to/from the gossipsub network
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 pub struct Message {
     pub msg_id: MessageId,
     pub msg_source: PeerId,
@@ -79,9 +78,9 @@ pub struct MessageValidationReport {
     pub acceptance: MessageAcceptance,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, EnumIter, AsRefStr)]
+#[derive(Clone, Debug, EnumIter, AsRefStr)]
 pub enum BroadcastData {
-    Vertex(WireVertex),
+    Vertex(wire::Vertex),
 }
 
 impl BroadcastData {
@@ -101,16 +100,16 @@ impl BroadcastData {
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
         let mut bytes = Vec::new();
         let mut writer = Writer::new(&mut bytes);
-        let protobuf = self.to_protobuf().map_err(|_| {
+        let protobuf = self.to_protobuf().map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                "unable to convert broadcast data to protobuf",
+                format!("unable to convert BroadcastData to protobuf: {e}"),
             )
         })?;
         protobuf.write_message(&mut writer).map_err(|_| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                "unable to write broadcast data message",
+                "unable to serialize BroadcastData",
             )
         })?;
         Ok(bytes)
@@ -118,7 +117,7 @@ impl BroadcastData {
 
     /// Deserialize from protobuf format
     pub fn from_protobuf(data: Broadcast) -> Result<BroadcastData> {
-        let v = WireVertex::from_protobuf(data.vertex.unwrap())?;
+        let v = wire::Vertex::from_protobuf(&data.vertex.unwrap())?;
         v.sanity_checks()?;
         Ok(BroadcastData::Vertex(v))
     }

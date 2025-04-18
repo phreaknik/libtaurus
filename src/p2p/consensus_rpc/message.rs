@@ -1,9 +1,10 @@
 use super::proto;
 use super::Error;
 use crate::consensus::{Block, BlockHash};
+use crate::wire;
 use crate::VertexHash;
-use crate::WireVertex;
 use std::fmt;
+use std::sync::Arc;
 use strum_macros::EnumIter;
 
 /// Message type defining the peer RPC request messages
@@ -63,7 +64,7 @@ impl fmt::Display for Request {
 #[derive(Debug, Clone)]
 pub enum Response {
     Block(Block),
-    Vertex(WireVertex),
+    Vertex(Arc<wire::Vertex>),
     Preference(VertexHash, bool),
 }
 
@@ -95,7 +96,7 @@ impl Response {
                 Ok(Response::Block(Block::from_protobuf(&b)?))
             }
             proto::mod_Response::OneOfResponseData::vertex(v) => {
-                Ok(Response::Vertex(WireVertex::from_protobuf(v)?))
+                Ok(Response::Vertex(Arc::new(wire::Vertex::from_protobuf(&v)?)))
             }
             proto::mod_Response::OneOfResponseData::preference(h) => Ok(Response::Preference(
                 VertexHash::from_protobuf(&h.hash.ok_or(Error::IncompleteResponse)?)?,

@@ -72,6 +72,8 @@ pub enum Error {
     NotAMessage,
     #[error(transparent)]
     Vertex(#[from] crate::consensus::vertex::Error),
+    #[error(transparent)]
+    Wire(#[from] crate::wire::Error),
 }
 
 /// Result type for cordelia-p2p
