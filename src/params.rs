@@ -22,3 +22,16 @@ pub const VOTER_EXPERATION_HRS: i64 = 72;
 
 /// Time we allow for each peer in a query to respond
 pub const QUERY_TIMEOUT_SEC: u64 = 10;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tests some basic constraints which should not be violated when selecting parameters
+    #[test]
+    fn constraints() {
+        assert!(AVALANCHE_QUORUM <= AVALANCHE_QUERY_COUNT);
+        assert!(AVALANCHE_ACCEPTANCE_THRESHOLD > 0);
+        assert!(VOTER_REGISTRATION_WINDOW_HRS <= VOTER_EXPERATION_HRS);
+    }
+}
