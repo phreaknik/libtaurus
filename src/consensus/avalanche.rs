@@ -11,6 +11,7 @@ use crate::{
     p2p::{self, consensus_rpc},
     params::{AVALANCHE_ACCEPTANCE_THRESHOLD, AVALANCHE_QUERY_COUNT, QUERY_TIMEOUT_SEC},
     randomx::RandomXVMInstance,
+    wire::WireFormat,
     VertexHash,
 };
 use cached::{Cached, TimedCache};

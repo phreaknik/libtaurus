@@ -32,6 +32,7 @@ mod p2p;
 mod params;
 mod randomx;
 mod util;
+mod wire;
 
 use chrono::DateTime;
 use clap::{arg, command, ArgMatches, Command};

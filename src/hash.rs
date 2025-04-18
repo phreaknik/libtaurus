@@ -1,4 +1,5 @@
 use crate::p2p;
+use crate::wire::WireFormat;
 use heed::{BytesDecode, BytesEncode};
 use serde_derive::{Deserialize, Serialize};
 use std::fmt;
@@ -37,28 +38,28 @@ impl Hash {
         format!("{}..", hex::encode(&self.0[..4]))
     }
 
-    /// The raw bytes of the `Hash`.
-    #[inline]
-    pub const fn as_bytes(&self) -> &[u8; HASH_LEN] {
-        &self.0
-    }
-
-    /// Create a `Hash` from its raw bytes representation.
-    #[inline]
-    pub const fn from_bytes(bytes: [u8; HASH_LEN]) -> Self {
-        Self(bytes)
-    }
-
     /// Serialize into protobuf format
     pub fn to_protobuf(&self) -> Result<p2p::consensus_rpc::proto::Hash> {
         Ok(p2p::consensus_rpc::proto::Hash {
-            hash: self.as_bytes().to_vec(),
+            hash: self.0.to_vec(),
         })
     }
 
     /// Deserialize from protobuf format
     pub fn from_protobuf(proto: &p2p::consensus_rpc::proto::Hash) -> Result<Hash> {
         Ok(Hash(proto.hash[..].try_into()?))
+    }
+}
+
+impl WireFormat for Hash {
+    type Error = Error;
+
+    fn to_wire(&self) -> result::Result<Vec<u8>, Self::Error> {
+        Ok(self.0.to_vec())
+    }
+
+    fn from_wire(bytes: &[u8]) -> result::Result<Self, Self::Error> {
+        Ok(Hash(bytes.try_into()?))
     }
 }
 
@@ -92,7 +93,7 @@ impl<'a> BytesEncode<'a> for Hash {
     fn bytes_encode(
         item: &'a Self::EItem,
     ) -> std::result::Result<std::borrow::Cow<'a, [u8]>, Box<dyn std::error::Error>> {
-        Ok(item.as_bytes().to_vec().into())
+        Ok(item.to_wire()?.into())
     }
 }
 
@@ -102,7 +103,7 @@ impl<'a> BytesDecode<'a> for Hash {
     fn bytes_decode(
         bytes: &'a [u8],
     ) -> std::result::Result<Self::DItem, Box<dyn std::error::Error>> {
-        Ok(Hash::from_bytes(bytes.try_into()?))
+        Ok(Hash::from_wire(bytes.try_into()?)?)
     }
 }
 

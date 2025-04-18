@@ -1,5 +1,5 @@
 use super::{block, vertex, BlockHash};
-use crate::{VertexHash, WireVertex};
+use crate::{wire::WireFormat, VertexHash, WireVertex};
 use heed::{BytesDecode, BytesEncode, Database, Env, EnvOpenOptions, RwTxn};
 use serde_derive::{Deserialize, Serialize};
 use std::{fs, path::PathBuf, result};

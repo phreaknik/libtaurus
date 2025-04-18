@@ -1,6 +1,7 @@
 use super::block;
 use crate::{
     p2p::{self, consensus_rpc::proto},
+    wire::WireFormat,
     Block, BlockHash,
 };
 use cached::{Cached, TimedCache};
@@ -195,20 +196,6 @@ impl WireVertex {
         }
     }
 
-    /// Compute the hash of the vertex
-    /// This performs a copy, which could be expensive.
-    pub fn hash(&self) -> VertexHash {
-        blake3::hash(
-            &self
-                .clone()
-                .slim()
-                .1
-                .to_bytes()
-                .expect("Serde encode failure in hash"),
-        )
-        .into()
-    }
-
     /// Slim this vertex by removing the block
     pub fn slim(mut self) -> (Option<Block>, WireVertex) {
         if let Some(block) = self.block {
@@ -261,21 +248,12 @@ impl WireVertex {
             block,
         })
     }
+}
 
-    /// Deserialize from bytes
-    pub fn from_bytes(bytes: &Vec<u8>) -> Result<WireVertex> {
-        let protobuf = proto::Vertex::from_reader(&mut BytesReader::from_bytes(bytes), &bytes)
-            .map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("unable to parse vertex from bytes: {e}"),
-                )
-            })?;
-        WireVertex::from_protobuf(protobuf)
-    }
+impl WireFormat for WireVertex {
+    type Error = Error;
 
-    /// Serialize into bytes
-    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+    fn to_wire(&self) -> result::Result<Vec<u8>, Self::Error> {
         let mut bytes = Vec::new();
         let mut writer = Writer::new(&mut bytes);
         let protobuf = self.to_protobuf().map_err(|_| {
@@ -291,6 +269,17 @@ impl WireVertex {
             )
         })?;
         Ok(bytes)
+    }
+
+    fn from_wire(bytes: &[u8]) -> result::Result<Self, Self::Error> {
+        let protobuf = proto::Vertex::from_reader(&mut BytesReader::from_bytes(bytes), &bytes)
+            .map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("unable to parse vertex from bytes: {e}"),
+                )
+            })?;
+        WireVertex::from_protobuf(protobuf)
     }
 }
 

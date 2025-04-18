@@ -1,4 +1,4 @@
-use crate::{BlockHash, VertexHash, WireVertex};
+use crate::{wire::WireFormat, BlockHash, VertexHash, WireVertex};
 use lru::LruCache;
 use std::{
     collections::{HashMap, HashSet},
