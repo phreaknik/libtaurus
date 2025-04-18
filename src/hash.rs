@@ -1,6 +1,5 @@
 use crate::p2p;
-use heed::BytesDecode;
-use heed::BytesEncode;
+use heed::{BytesDecode, BytesEncode};
 use serde_derive::{Deserialize, Serialize};
 use std::fmt;
 use std::result;
@@ -10,12 +9,10 @@ use std::result;
 pub enum Error {
     #[error("bad hash")]
     BadHash,
-    #[error(transparent)]
-    MsgPackDecode(#[from] rmp_serde::decode::Error),
-    #[error(transparent)]
-    MsgPackEncode(#[from] rmp_serde::encode::Error),
     #[error("error decoding from protobuf")]
     ProtoDecode(String),
+    #[error(transparent)]
+    TryFromSlice(#[from] std::array::TryFromSliceError),
     #[error("error acquiring read lock on a vertex")]
     VertexReadLock,
 }
@@ -40,18 +37,6 @@ impl Hash {
         format!("{}..", hex::encode(&self.0[..4]))
     }
 
-    /// Serialize into protobuf format
-    pub fn to_protobuf(&self) -> Result<p2p::consensus_rpc::proto::Hash> {
-        Ok(p2p::consensus_rpc::proto::Hash {
-            hash: rmp_serde::to_vec(&self)?,
-        })
-    }
-
-    /// Deserialize from protobuf format
-    pub fn from_protobuf(proto: &p2p::consensus_rpc::proto::Hash) -> Result<Hash> {
-        Ok(Hash(rmp_serde::from_slice(&proto.hash)?))
-    }
-
     /// The raw bytes of the `Hash`.
     #[inline]
     pub const fn as_bytes(&self) -> &[u8; HASH_LEN] {
@@ -59,8 +44,21 @@ impl Hash {
     }
 
     /// Create a `Hash` from its raw bytes representation.
+    #[inline]
     pub const fn from_bytes(bytes: [u8; HASH_LEN]) -> Self {
         Self(bytes)
+    }
+
+    /// Serialize into protobuf format
+    pub fn to_protobuf(&self) -> Result<p2p::consensus_rpc::proto::Hash> {
+        Ok(p2p::consensus_rpc::proto::Hash {
+            hash: self.as_bytes().to_vec(),
+        })
+    }
+
+    /// Deserialize from protobuf format
+    pub fn from_protobuf(proto: &p2p::consensus_rpc::proto::Hash) -> Result<Hash> {
+        Ok(Hash(proto.hash[..].try_into()?))
     }
 }
 
@@ -94,7 +92,7 @@ impl<'a> BytesEncode<'a> for Hash {
     fn bytes_encode(
         item: &'a Self::EItem,
     ) -> std::result::Result<std::borrow::Cow<'a, [u8]>, Box<dyn std::error::Error>> {
-        Ok(rmp_serde::to_vec(item)?.into())
+        Ok(item.as_bytes().to_vec().into())
     }
 }
 
@@ -104,12 +102,89 @@ impl<'a> BytesDecode<'a> for Hash {
     fn bytes_decode(
         bytes: &'a [u8],
     ) -> std::result::Result<Self::DItem, Box<dyn std::error::Error>> {
-        Ok(rmp_serde::from_slice(bytes)?)
+        Ok(Hash::from_bytes(bytes.try_into()?))
     }
 }
 
 impl Default for Hash {
     fn default() -> Self {
         Hash([0; blake3::OUT_LEN])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TestCase<'a> {
+        input: Hash,
+        long_hex: &'a str,
+        short_hex: &'a str,
+    }
+    const TESTS: &[TestCase] = &[
+        TestCase {
+            input: Hash([
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0,
+            ]),
+            long_hex: "0000000000000000000000000000000000000000000000000000000000000000",
+            short_hex: "00000000..",
+        },
+        TestCase {
+            input: Hash([
+                128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0,
+            ]),
+            long_hex: "8000000000000000000000000000000000000000000000000000000000000000",
+            short_hex: "80000000..",
+        },
+        TestCase {
+            input: Hash([
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 1,
+            ]),
+            long_hex: "0000000000000000000000000000000000000000000000000000000000000001",
+            short_hex: "00000000..",
+        },
+        TestCase {
+            input: Hash([
+                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            ]),
+            long_hex: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            short_hex: "ffffffff..",
+        },
+        TestCase {
+            input: Hash([
+                127, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            ]),
+            long_hex: "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            short_hex: "7fffffff..",
+        },
+        TestCase {
+            input: Hash([
+                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 254,
+            ]),
+            long_hex: "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe",
+            short_hex: "ffffffff..",
+        },
+    ];
+
+    #[test]
+    fn to_hex() -> Result<()> {
+        for test in TESTS {
+            assert_eq!(test.input.to_hex(), test.long_hex);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn to_short_hex() -> Result<()> {
+        for test in TESTS {
+            assert_eq!(test.input.to_short_hex(), test.short_hex);
+        }
+        Ok(())
     }
 }
