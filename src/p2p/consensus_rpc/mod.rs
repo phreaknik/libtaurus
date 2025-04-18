@@ -4,6 +4,7 @@ mod protocol;
 
 use self::protocol::{ConsensusRpcCodec, ConsensusRpcProtocol};
 use crate::consensus::{block, vertex};
+use cached::{Cached, TimedCache};
 pub use generated::consensus::proto;
 use libp2p::core::Endpoint;
 use libp2p::request_response::{InboundRequestId, ProtocolSupport, ResponseChannel};
@@ -13,11 +14,13 @@ use libp2p::swarm::{
 };
 use libp2p::{request_response, Multiaddr, PeerId};
 pub use message::{Request, Response};
-use std::collections::HashMap;
 use std::iter;
 use std::task::{Context, Poll};
 use thiserror;
 use tracing::{error, trace, warn};
+
+/// How long before a pending request times out
+const REQUEST_TIMEOUT_SECS: u64 = 60;
 
 /// Event produced by [`Behaviour`].
 #[derive(Debug, Clone)]
@@ -48,8 +51,7 @@ pub struct Behaviour {
     /// Configuration parameters
     _config: Config,
     /// Map of response channels for pending requests
-    // TODO: should be timedcache?
-    pending: HashMap<InboundRequestId, ResponseChannel<Response>>,
+    pending: TimedCache<InboundRequestId, ResponseChannel<Response>>,
 }
 
 impl<'a> Behaviour {
@@ -62,7 +64,7 @@ impl<'a> Behaviour {
         Behaviour {
             inner: request_response::Behaviour::new(inner_protocols, inner_config),
             _config,
-            pending: HashMap::new(),
+            pending: TimedCache::with_lifespan(REQUEST_TIMEOUT_SECS),
         }
     }
 
@@ -82,7 +84,7 @@ impl<'a> Behaviour {
             } => {
                 trace!("Received consensus_rpc request from {peer_id}: {request:?}");
                 // Save the response channel, so we can forward the response later
-                self.pending.insert(request_id, channel);
+                self.pending.cache_set(request_id, channel);
                 Poll::Ready(ToSwarm::GenerateEvent(Event::Requested(
                     peer_id, request_id, request,
                 )))
@@ -99,7 +101,7 @@ impl<'a> Behaviour {
     }
 
     pub fn send_response(&mut self, request_id: InboundRequestId, response: Response) {
-        if let Some(ch) = self.pending.remove(&request_id) {
+        if let Some(ch) = self.pending.cache_remove(&request_id) {
             if let Err(_) = self.inner.send_response(ch, response) {
                 warn!("error responding to avalanche request");
             }
