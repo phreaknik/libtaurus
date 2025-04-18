@@ -190,7 +190,7 @@ impl Block {
     }
 
     /// Deserialize from bytes
-    pub fn from_bytes(bytes: &Vec<u8>) -> Result<Block> {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Block> {
         let protobuf = proto::Block::from_reader(&mut BytesReader::from_bytes(bytes), &bytes)
             .map_err(|e| {
                 io::Error::new(
@@ -260,7 +260,7 @@ impl<'a> BytesEncode<'a> for Block {
     fn bytes_encode(
         item: &'a Self::EItem,
     ) -> std::result::Result<std::borrow::Cow<'a, [u8]>, Box<dyn std::error::Error>> {
-        Ok(rmp_serde::to_vec(item)?.into())
+        Ok(item.to_bytes()?.into())
     }
 }
 
@@ -270,7 +270,7 @@ impl<'a> BytesDecode<'a> for Block {
     fn bytes_decode(
         bytes: &'a [u8],
     ) -> std::result::Result<Self::DItem, Box<dyn std::error::Error>> {
-        Ok(rmp_serde::from_slice(bytes)?)
+        Ok(Block::from_bytes(bytes)?)
     }
 }
 

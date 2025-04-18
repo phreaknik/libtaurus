@@ -199,7 +199,12 @@ impl WireVertex {
     /// This performs a copy, which could be expensive.
     pub fn hash(&self) -> VertexHash {
         blake3::hash(
-            &rmp_serde::to_vec(&self.clone().slim().1).expect("Serde encode failure in hash"),
+            &self
+                .clone()
+                .slim()
+                .1
+                .to_bytes()
+                .expect("Serde encode failure in hash"),
         )
         .into()
     }

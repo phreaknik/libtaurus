@@ -1,4 +1,4 @@
-use crate::p2p;
+use crate::{hash::HASH_LEN, p2p};
 use serde_derive::{Deserialize, Serialize};
 use std::result;
 
@@ -26,17 +26,32 @@ pub struct Txo {
 
 impl Txo {
     /// Compute the hash of the transaction output
+    // TODO: don't reimplement hash 69 times. Create a blanked implementation over some AsBytes
+    // type. Maybe an entire 'wire' module, which encapsultes (de)serializing things from/to the
+    // wire.
     pub fn hash(&self) -> TxoHash {
-        blake3::hash(&rmp_serde::to_vec(self).expect("Serde encode failure in hash")).into()
+        blake3::hash(self.to_bytes()).into()
     }
 
-    /// Deserialize from protobuf format
-    pub fn from_protobuf(txo: &p2p::consensus_rpc::proto::Txo) -> Result<Txo> {
-        Ok(Txo { value: txo.value })
+    /// The raw bytes of the `Hash`.
+    #[inline]
+    pub fn to_bytes(&self) -> &[u8; HASH_LEN] {
+        b"todotodotodotodotodotodotodotodo"
+    }
+
+    /// Create a `Hash` from its raw bytes representation.
+    #[inline]
+    pub const fn from_bytes(_bytes: [u8; HASH_LEN]) -> Self {
+        todo!()
     }
 
     /// Serialize into protobuf format
     pub fn to_protobuf(&self) -> Result<p2p::consensus_rpc::proto::Txo> {
         Ok(p2p::consensus_rpc::proto::Txo { value: self.value })
+    }
+
+    /// Deserialize from protobuf format
+    pub fn from_protobuf(txo: &p2p::consensus_rpc::proto::Txo) -> Result<Txo> {
+        Ok(Txo { value: txo.value })
     }
 }
