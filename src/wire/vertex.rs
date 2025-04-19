@@ -7,7 +7,7 @@ use tracing_mutex::stdsync::TracingRwLock;
 use super::{Error, Result, WireFormat};
 
 /// Current revision of the vertex structure
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 0;
 
 #[derive(Clone, Default)]
 pub struct Vertex {
