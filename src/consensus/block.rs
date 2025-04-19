@@ -152,7 +152,7 @@ impl Block {
             outputs: block
                 .outputs
                 .iter()
-                .map(|txo| Txo::from_protobuf(txo))
+                .map(|txo| Txo::from_protobuf(txo, check))
                 .try_collect()?,
             time: DateTime::parse_from_rfc3339(&String::from_utf8(block.time.clone())?)?.into(),
             nonce: block.nonce,
@@ -184,7 +184,7 @@ impl Block {
             outputs: self
                 .outputs
                 .iter()
-                .map(|txo| txo.to_protobuf())
+                .map(|txo| txo.to_protobuf(check))
                 .try_collect()?,
             time: self
                 .time
