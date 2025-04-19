@@ -1,4 +1,4 @@
-// Automatically generated rust module for 'consensus.proto' file
+// Automatically generated rust module for 'wire.proto' file
 
 #![allow(non_snake_case)]
 #![allow(non_upper_case_globals)]
@@ -16,7 +16,7 @@ use super::super::*;
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct Broadcast {
-    pub vertex: Option<consensus::proto::Vertex>,
+    pub vertex: Option<generated::proto::Vertex>,
 }
 
 impl<'a> MessageRead<'a> for Broadcast {
@@ -24,7 +24,7 @@ impl<'a> MessageRead<'a> for Broadcast {
         let mut msg = Self::default();
         while !r.is_eof() {
             match r.next_tag(bytes) {
-                Ok(2) => msg.vertex = Some(r.read_message::<consensus::proto::Vertex>(bytes)?),
+                Ok(2) => msg.vertex = Some(r.read_message::<generated::proto::Vertex>(bytes)?),
                 Ok(t) => { r.read_unknown(bytes, t)?; }
                 Err(e) => return Err(e),
             }
@@ -48,7 +48,7 @@ impl MessageWrite for Broadcast {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct Request {
-    pub RequestData: consensus::proto::mod_Request::OneOfRequestData,
+    pub RequestData: generated::proto::mod_Request::OneOfRequestData,
 }
 
 impl<'a> MessageRead<'a> for Request {
@@ -56,9 +56,9 @@ impl<'a> MessageRead<'a> for Request {
         let mut msg = Self::default();
         while !r.is_eof() {
             match r.next_tag(bytes) {
-                Ok(2) => msg.RequestData = consensus::proto::mod_Request::OneOfRequestData::get_block(r.read_message::<consensus::proto::Hash>(bytes)?),
-                Ok(10) => msg.RequestData = consensus::proto::mod_Request::OneOfRequestData::get_vertex(r.read_message::<consensus::proto::Hash>(bytes)?),
-                Ok(18) => msg.RequestData = consensus::proto::mod_Request::OneOfRequestData::get_preference(r.read_message::<consensus::proto::Hash>(bytes)?),
+                Ok(2) => msg.RequestData = generated::proto::mod_Request::OneOfRequestData::get_block(r.read_message::<generated::proto::Hash>(bytes)?),
+                Ok(10) => msg.RequestData = generated::proto::mod_Request::OneOfRequestData::get_vertex(r.read_message::<generated::proto::Hash>(bytes)?),
+                Ok(18) => msg.RequestData = generated::proto::mod_Request::OneOfRequestData::get_preference(r.read_message::<generated::proto::Hash>(bytes)?),
                 Ok(t) => { r.read_unknown(bytes, t)?; }
                 Err(e) => return Err(e),
             }
@@ -71,17 +71,17 @@ impl MessageWrite for Request {
     fn get_size(&self) -> usize {
         0
         + match self.RequestData {
-            consensus::proto::mod_Request::OneOfRequestData::get_block(ref m) => 1 + sizeof_len((m).get_size()),
-            consensus::proto::mod_Request::OneOfRequestData::get_vertex(ref m) => 1 + sizeof_len((m).get_size()),
-            consensus::proto::mod_Request::OneOfRequestData::get_preference(ref m) => 1 + sizeof_len((m).get_size()),
-            consensus::proto::mod_Request::OneOfRequestData::None => 0,
+            generated::proto::mod_Request::OneOfRequestData::get_block(ref m) => 1 + sizeof_len((m).get_size()),
+            generated::proto::mod_Request::OneOfRequestData::get_vertex(ref m) => 1 + sizeof_len((m).get_size()),
+            generated::proto::mod_Request::OneOfRequestData::get_preference(ref m) => 1 + sizeof_len((m).get_size()),
+            generated::proto::mod_Request::OneOfRequestData::None => 0,
     }    }
 
     fn write_message<W: WriterBackend>(&self, w: &mut Writer<W>) -> Result<()> {
-        match self.RequestData {            consensus::proto::mod_Request::OneOfRequestData::get_block(ref m) => { w.write_with_tag(2, |w| w.write_message(m))? },
-            consensus::proto::mod_Request::OneOfRequestData::get_vertex(ref m) => { w.write_with_tag(10, |w| w.write_message(m))? },
-            consensus::proto::mod_Request::OneOfRequestData::get_preference(ref m) => { w.write_with_tag(18, |w| w.write_message(m))? },
-            consensus::proto::mod_Request::OneOfRequestData::None => {},
+        match self.RequestData {            generated::proto::mod_Request::OneOfRequestData::get_block(ref m) => { w.write_with_tag(2, |w| w.write_message(m))? },
+            generated::proto::mod_Request::OneOfRequestData::get_vertex(ref m) => { w.write_with_tag(10, |w| w.write_message(m))? },
+            generated::proto::mod_Request::OneOfRequestData::get_preference(ref m) => { w.write_with_tag(18, |w| w.write_message(m))? },
+            generated::proto::mod_Request::OneOfRequestData::None => {},
     }        Ok(())
     }
 }
@@ -92,9 +92,9 @@ use super::*;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum OneOfRequestData {
-    get_block(consensus::proto::Hash),
-    get_vertex(consensus::proto::Hash),
-    get_preference(consensus::proto::Hash),
+    get_block(generated::proto::Hash),
+    get_vertex(generated::proto::Hash),
+    get_preference(generated::proto::Hash),
     None,
 }
 
@@ -109,7 +109,7 @@ impl Default for OneOfRequestData {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct Response {
-    pub ResponseData: consensus::proto::mod_Response::OneOfResponseData,
+    pub ResponseData: generated::proto::mod_Response::OneOfResponseData,
 }
 
 impl<'a> MessageRead<'a> for Response {
@@ -117,9 +117,9 @@ impl<'a> MessageRead<'a> for Response {
         let mut msg = Self::default();
         while !r.is_eof() {
             match r.next_tag(bytes) {
-                Ok(2) => msg.ResponseData = consensus::proto::mod_Response::OneOfResponseData::block(r.read_message::<consensus::proto::Block>(bytes)?),
-                Ok(10) => msg.ResponseData = consensus::proto::mod_Response::OneOfResponseData::vertex(r.read_message::<consensus::proto::Vertex>(bytes)?),
-                Ok(18) => msg.ResponseData = consensus::proto::mod_Response::OneOfResponseData::preference(r.read_message::<consensus::proto::Preference>(bytes)?),
+                Ok(2) => msg.ResponseData = generated::proto::mod_Response::OneOfResponseData::block(r.read_message::<generated::proto::Block>(bytes)?),
+                Ok(10) => msg.ResponseData = generated::proto::mod_Response::OneOfResponseData::vertex(r.read_message::<generated::proto::Vertex>(bytes)?),
+                Ok(18) => msg.ResponseData = generated::proto::mod_Response::OneOfResponseData::preference(r.read_message::<generated::proto::Preference>(bytes)?),
                 Ok(t) => { r.read_unknown(bytes, t)?; }
                 Err(e) => return Err(e),
             }
@@ -132,17 +132,17 @@ impl MessageWrite for Response {
     fn get_size(&self) -> usize {
         0
         + match self.ResponseData {
-            consensus::proto::mod_Response::OneOfResponseData::block(ref m) => 1 + sizeof_len((m).get_size()),
-            consensus::proto::mod_Response::OneOfResponseData::vertex(ref m) => 1 + sizeof_len((m).get_size()),
-            consensus::proto::mod_Response::OneOfResponseData::preference(ref m) => 1 + sizeof_len((m).get_size()),
-            consensus::proto::mod_Response::OneOfResponseData::None => 0,
+            generated::proto::mod_Response::OneOfResponseData::block(ref m) => 1 + sizeof_len((m).get_size()),
+            generated::proto::mod_Response::OneOfResponseData::vertex(ref m) => 1 + sizeof_len((m).get_size()),
+            generated::proto::mod_Response::OneOfResponseData::preference(ref m) => 1 + sizeof_len((m).get_size()),
+            generated::proto::mod_Response::OneOfResponseData::None => 0,
     }    }
 
     fn write_message<W: WriterBackend>(&self, w: &mut Writer<W>) -> Result<()> {
-        match self.ResponseData {            consensus::proto::mod_Response::OneOfResponseData::block(ref m) => { w.write_with_tag(2, |w| w.write_message(m))? },
-            consensus::proto::mod_Response::OneOfResponseData::vertex(ref m) => { w.write_with_tag(10, |w| w.write_message(m))? },
-            consensus::proto::mod_Response::OneOfResponseData::preference(ref m) => { w.write_with_tag(18, |w| w.write_message(m))? },
-            consensus::proto::mod_Response::OneOfResponseData::None => {},
+        match self.ResponseData {            generated::proto::mod_Response::OneOfResponseData::block(ref m) => { w.write_with_tag(2, |w| w.write_message(m))? },
+            generated::proto::mod_Response::OneOfResponseData::vertex(ref m) => { w.write_with_tag(10, |w| w.write_message(m))? },
+            generated::proto::mod_Response::OneOfResponseData::preference(ref m) => { w.write_with_tag(18, |w| w.write_message(m))? },
+            generated::proto::mod_Response::OneOfResponseData::None => {},
     }        Ok(())
     }
 }
@@ -153,9 +153,9 @@ use super::*;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum OneOfResponseData {
-    block(consensus::proto::Block),
-    vertex(consensus::proto::Vertex),
-    preference(consensus::proto::Preference),
+    block(generated::proto::Block),
+    vertex(generated::proto::Vertex),
+    preference(generated::proto::Preference),
     None,
 }
 
@@ -170,7 +170,7 @@ impl Default for OneOfResponseData {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct DbRecord {
-    pub RequestData: consensus::proto::mod_DbRecord::OneOfRequestData,
+    pub RequestData: generated::proto::mod_DbRecord::OneOfRequestData,
 }
 
 impl<'a> MessageRead<'a> for DbRecord {
@@ -178,8 +178,8 @@ impl<'a> MessageRead<'a> for DbRecord {
         let mut msg = Self::default();
         while !r.is_eof() {
             match r.next_tag(bytes) {
-                Ok(2) => msg.RequestData = consensus::proto::mod_DbRecord::OneOfRequestData::vertex(r.read_message::<consensus::proto::Vertex>(bytes)?),
-                Ok(10) => msg.RequestData = consensus::proto::mod_DbRecord::OneOfRequestData::link(r.read_message::<consensus::proto::Hash>(bytes)?),
+                Ok(2) => msg.RequestData = generated::proto::mod_DbRecord::OneOfRequestData::vertex(r.read_message::<generated::proto::Vertex>(bytes)?),
+                Ok(10) => msg.RequestData = generated::proto::mod_DbRecord::OneOfRequestData::link(r.read_message::<generated::proto::Hash>(bytes)?),
                 Ok(t) => { r.read_unknown(bytes, t)?; }
                 Err(e) => return Err(e),
             }
@@ -192,15 +192,15 @@ impl MessageWrite for DbRecord {
     fn get_size(&self) -> usize {
         0
         + match self.RequestData {
-            consensus::proto::mod_DbRecord::OneOfRequestData::vertex(ref m) => 1 + sizeof_len((m).get_size()),
-            consensus::proto::mod_DbRecord::OneOfRequestData::link(ref m) => 1 + sizeof_len((m).get_size()),
-            consensus::proto::mod_DbRecord::OneOfRequestData::None => 0,
+            generated::proto::mod_DbRecord::OneOfRequestData::vertex(ref m) => 1 + sizeof_len((m).get_size()),
+            generated::proto::mod_DbRecord::OneOfRequestData::link(ref m) => 1 + sizeof_len((m).get_size()),
+            generated::proto::mod_DbRecord::OneOfRequestData::None => 0,
     }    }
 
     fn write_message<W: WriterBackend>(&self, w: &mut Writer<W>) -> Result<()> {
-        match self.RequestData {            consensus::proto::mod_DbRecord::OneOfRequestData::vertex(ref m) => { w.write_with_tag(2, |w| w.write_message(m))? },
-            consensus::proto::mod_DbRecord::OneOfRequestData::link(ref m) => { w.write_with_tag(10, |w| w.write_message(m))? },
-            consensus::proto::mod_DbRecord::OneOfRequestData::None => {},
+        match self.RequestData {            generated::proto::mod_DbRecord::OneOfRequestData::vertex(ref m) => { w.write_with_tag(2, |w| w.write_message(m))? },
+            generated::proto::mod_DbRecord::OneOfRequestData::link(ref m) => { w.write_with_tag(10, |w| w.write_message(m))? },
+            generated::proto::mod_DbRecord::OneOfRequestData::None => {},
     }        Ok(())
     }
 }
@@ -211,8 +211,8 @@ use super::*;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum OneOfRequestData {
-    vertex(consensus::proto::Vertex),
-    link(consensus::proto::Hash),
+    vertex(generated::proto::Vertex),
+    link(generated::proto::Hash),
     None,
 }
 
@@ -222,6 +222,46 @@ impl Default for OneOfRequestData {
     }
 }
 
+}
+
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Debug, Default, PartialEq, Clone)]
+pub struct PeerInfo {
+    pub protocol_version: String,
+    pub agent_version: String,
+    pub addresses: Vec<String>,
+}
+
+impl<'a> MessageRead<'a> for PeerInfo {
+    fn from_reader(r: &mut BytesReader, bytes: &'a [u8]) -> Result<Self> {
+        let mut msg = Self::default();
+        while !r.is_eof() {
+            match r.next_tag(bytes) {
+                Ok(2) => msg.protocol_version = r.read_string(bytes)?.to_owned(),
+                Ok(10) => msg.agent_version = r.read_string(bytes)?.to_owned(),
+                Ok(18) => msg.addresses.push(r.read_string(bytes)?.to_owned()),
+                Ok(t) => { r.read_unknown(bytes, t)?; }
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(msg)
+    }
+}
+
+impl MessageWrite for PeerInfo {
+    fn get_size(&self) -> usize {
+        0
+        + if self.protocol_version == String::default() { 0 } else { 1 + sizeof_len((&self.protocol_version).len()) }
+        + if self.agent_version == String::default() { 0 } else { 1 + sizeof_len((&self.agent_version).len()) }
+        + self.addresses.iter().map(|s| 1 + sizeof_len((s).len())).sum::<usize>()
+    }
+
+    fn write_message<W: WriterBackend>(&self, w: &mut Writer<W>) -> Result<()> {
+        if self.protocol_version != String::default() { w.write_with_tag(2, |w| w.write_string(&**&self.protocol_version))?; }
+        if self.agent_version != String::default() { w.write_with_tag(10, |w| w.write_string(&**&self.agent_version))?; }
+        for s in &self.addresses { w.write_with_tag(18, |w| w.write_string(&**s))?; }
+        Ok(())
+    }
 }
 
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -259,7 +299,7 @@ impl MessageWrite for Hash {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct Preference {
-    pub hash: Option<consensus::proto::Hash>,
+    pub hash: Option<generated::proto::Hash>,
     pub preferred: bool,
 }
 
@@ -268,7 +308,7 @@ impl<'a> MessageRead<'a> for Preference {
         let mut msg = Self::default();
         while !r.is_eof() {
             match r.next_tag(bytes) {
-                Ok(2) => msg.hash = Some(r.read_message::<consensus::proto::Hash>(bytes)?),
+                Ok(2) => msg.hash = Some(r.read_message::<generated::proto::Hash>(bytes)?),
                 Ok(8) => msg.preferred = r.read_bool(bytes)?,
                 Ok(t) => { r.read_unknown(bytes, t)?; }
                 Err(e) => return Err(e),
@@ -298,9 +338,9 @@ pub struct Block {
     pub version: u32,
     pub difficulty: u64,
     pub miner: Vec<u8>,
-    pub prev_mined: Option<consensus::proto::Hash>,
-    pub inputs: Vec<consensus::proto::Hash>,
-    pub outputs: Vec<consensus::proto::Txo>,
+    pub prev_mined: Option<generated::proto::Hash>,
+    pub inputs: Vec<generated::proto::Hash>,
+    pub outputs: Vec<generated::proto::Txo>,
     pub time: Vec<u8>,
     pub nonce: u64,
 }
@@ -313,9 +353,9 @@ impl<'a> MessageRead<'a> for Block {
                 Ok(0) => msg.version = r.read_uint32(bytes)?,
                 Ok(8) => msg.difficulty = r.read_uint64(bytes)?,
                 Ok(18) => msg.miner = r.read_bytes(bytes)?.to_owned(),
-                Ok(26) => msg.prev_mined = Some(r.read_message::<consensus::proto::Hash>(bytes)?),
-                Ok(34) => msg.inputs.push(r.read_message::<consensus::proto::Hash>(bytes)?),
-                Ok(42) => msg.outputs.push(r.read_message::<consensus::proto::Txo>(bytes)?),
+                Ok(26) => msg.prev_mined = Some(r.read_message::<generated::proto::Hash>(bytes)?),
+                Ok(34) => msg.inputs.push(r.read_message::<generated::proto::Hash>(bytes)?),
+                Ok(42) => msg.outputs.push(r.read_message::<generated::proto::Txo>(bytes)?),
                 Ok(50) => msg.time = r.read_bytes(bytes)?.to_owned(),
                 Ok(56) => msg.nonce = r.read_uint64(bytes)?,
                 Ok(t) => { r.read_unknown(bytes, t)?; }
@@ -356,9 +396,9 @@ impl MessageWrite for Block {
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct Vertex {
     pub version: u32,
-    pub parents: Vec<consensus::proto::Hash>,
-    pub block_hash: Option<consensus::proto::Hash>,
-    pub block: Option<consensus::proto::Block>,
+    pub parents: Vec<generated::proto::Hash>,
+    pub block_hash: Option<generated::proto::Hash>,
+    pub block: Option<generated::proto::Block>,
 }
 
 impl<'a> MessageRead<'a> for Vertex {
@@ -367,9 +407,9 @@ impl<'a> MessageRead<'a> for Vertex {
         while !r.is_eof() {
             match r.next_tag(bytes) {
                 Ok(0) => msg.version = r.read_uint32(bytes)?,
-                Ok(10) => msg.parents.push(r.read_message::<consensus::proto::Hash>(bytes)?),
-                Ok(18) => msg.block_hash = Some(r.read_message::<consensus::proto::Hash>(bytes)?),
-                Ok(26) => msg.block = Some(r.read_message::<consensus::proto::Block>(bytes)?),
+                Ok(10) => msg.parents.push(r.read_message::<generated::proto::Hash>(bytes)?),
+                Ok(18) => msg.block_hash = Some(r.read_message::<generated::proto::Hash>(bytes)?),
+                Ok(26) => msg.block = Some(r.read_message::<generated::proto::Block>(bytes)?),
                 Ok(t) => { r.read_unknown(bytes, t)?; }
                 Err(e) => return Err(e),
             }

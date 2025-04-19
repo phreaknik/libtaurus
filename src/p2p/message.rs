@@ -1,8 +1,9 @@
-use super::{
-    consensus_rpc::proto::{self, Broadcast},
-    Error, Result,
+use super::{Error, Result};
+use crate::wire::{
+    self,
+    proto::{self, Broadcast},
+    WireFormat,
 };
-use crate::wire;
 use libp2p::{
     gossipsub::{self, MessageAcceptance, MessageId, Sha256Topic, TopicHash},
     PeerId,

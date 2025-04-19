@@ -1,4 +1,5 @@
-use super::Result;
+use super::{Error, Result};
+use crate::wire::{proto, WireFormat};
 use core::fmt;
 use heed::{BytesDecode, BytesEncode, Database, Env, EnvOpenOptions};
 use libp2p::{identify, Multiaddr, PeerId};
@@ -83,13 +84,37 @@ pub struct PeerInfo {
     pub addresses: Vec<Multiaddr>,
 }
 
+impl<'a> WireFormat<'a, proto::PeerInfo> for PeerInfo {
+    type Error = Error;
+
+    fn to_protobuf(&self, _check: bool) -> Result<proto::PeerInfo> {
+        Ok(proto::PeerInfo {
+            protocol_version: self.protocol_version.clone(),
+            agent_version: self.agent_version.clone(),
+            addresses: self.addresses.iter().map(|a| a.to_string()).collect(),
+        })
+    }
+
+    fn from_protobuf(record: &proto::PeerInfo, _check: bool) -> Result<PeerInfo> {
+        Ok(PeerInfo {
+            protocol_version: record.protocol_version.clone(),
+            agent_version: record.agent_version.clone(),
+            addresses: record
+                .addresses
+                .iter()
+                .map(|a| Multiaddr::try_from(a.as_str()))
+                .try_collect()?,
+        })
+    }
+}
+
 impl<'a> BytesEncode<'a> for PeerInfo {
     type EItem = PeerInfo;
 
     fn bytes_encode(
         item: &'a Self::EItem,
     ) -> std::result::Result<std::borrow::Cow<'a, [u8]>, Box<dyn std::error::Error>> {
-        Ok(rmp_serde::to_vec(item)?.into())
+        Ok(item.to_wire(false)?.into())
     }
 }
 
@@ -99,7 +124,7 @@ impl<'a> BytesDecode<'a> for PeerInfo {
     fn bytes_decode(
         bytes: &'a [u8],
     ) -> std::result::Result<Self::DItem, Box<dyn std::error::Error>> {
-        Ok(rmp_serde::from_slice(bytes)?)
+        Ok(PeerInfo::from_wire(bytes, false)?)
     }
 }
 

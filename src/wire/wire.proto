@@ -1,5 +1,5 @@
 syntax = "proto3";
-package consensus.proto;
+package generated.proto;
 
 // Broadcast message type
 message Broadcast {
@@ -30,6 +30,12 @@ message DbRecord {
 		Vertex vertex = 0;
 		Hash link = 1;
 	}
+}
+
+message PeerInfo {
+	string protocol_version = 0;
+	string agent_version = 1;
+	repeated string addresses = 2;
 }
 
 // Inner message types

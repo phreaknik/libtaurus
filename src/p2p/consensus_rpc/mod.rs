@@ -1,4 +1,3 @@
-mod generated;
 mod message;
 mod protocol;
 
@@ -6,7 +5,6 @@ use self::protocol::{ConsensusRpcCodec, ConsensusRpcProtocol};
 use crate::consensus::{block, vertex};
 use crate::wire;
 use cached::{Cached, TimedCache};
-pub use generated::consensus::proto;
 use libp2p::core::Endpoint;
 use libp2p::request_response::{InboundRequestId, ProtocolSupport, ResponseChannel};
 use libp2p::swarm::{
@@ -15,8 +13,8 @@ use libp2p::swarm::{
 };
 use libp2p::{request_response, Multiaddr, PeerId};
 pub use message::{Request, Response};
-use std::iter;
 use std::task::{Context, Poll};
+use std::{io, iter};
 use thiserror;
 use tracing::{error, trace, warn};
 
@@ -41,6 +39,8 @@ pub enum Error {
     IncompleteRequest,
     #[error("response message is missing data")]
     IncompleteResponse,
+    #[error(transparent)]
+    Io(#[from] io::Error),
     #[error(transparent)]
     Vertex(#[from] vertex::Error),
     #[error(transparent)]

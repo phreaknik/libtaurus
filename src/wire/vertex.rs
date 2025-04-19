@@ -1,10 +1,8 @@
-use crate::{consensus, p2p::consensus_rpc::proto, Block, BlockHash, VertexHash};
-use quick_protobuf::{BytesReader, MessageRead, MessageWrite, Writer};
+use super::{proto, Error, Result, WireFormat};
+use crate::{consensus, Block, BlockHash, VertexHash};
 use serde_derive::{Deserialize, Serialize};
-use std::{io, result, sync::Arc};
+use std::sync::Arc;
 use tracing_mutex::stdsync::TracingRwLock;
-
-use super::{Error, Result, WireFormat};
 
 /// Current revision of the vertex structure
 pub const VERSION: u32 = 0;
@@ -74,52 +72,6 @@ impl Vertex {
             (None, self)
         }
     }
-
-    /// Deserialize from protobuf format
-    pub fn from_protobuf(vertex: &proto::Vertex, check: bool) -> Result<Vertex> {
-        let (block, bhash) = if let Some(b) = &vertex.block {
-            let block = Block::from_protobuf(b, check)?;
-            let bhash = block.hash();
-            (Some(Arc::new(block)), bhash)
-        } else {
-            (
-                None,
-                BlockHash::from_protobuf(&vertex.block_hash.as_ref().expect("missing block_hash"))?,
-            )
-        };
-        let vertex = Vertex {
-            version: vertex.version,
-            parents: vertex
-                .parents
-                .iter()
-                .map(|p| VertexHash::from_protobuf(&p))
-                .try_collect()?,
-            block,
-            bhash,
-        };
-        if check {
-            vertex.sanity_checks()?;
-        }
-        Ok(vertex)
-    }
-
-    /// Serialize into protobuf format
-    pub fn to_protobuf(&self, check: bool) -> Result<proto::Vertex> {
-        if check {
-            self.sanity_checks()?;
-        }
-        let (block, block_hash) = if let Some(b) = &self.block {
-            (Some(b.to_protobuf(check)?), None)
-        } else {
-            (None, Some(self.bhash.to_protobuf()?))
-        };
-        Ok(proto::Vertex {
-            version: self.version,
-            parents: self.parents.iter().map(|p| p.to_protobuf()).try_collect()?,
-            block_hash,
-            block,
-        })
-    }
 }
 
 impl From<consensus::Vertex> for Vertex {
@@ -133,36 +85,58 @@ impl From<consensus::Vertex> for Vertex {
     }
 }
 
-impl WireFormat for Vertex {
+impl<'a> WireFormat<'a, proto::Vertex> for Vertex {
     type Error = Error;
 
-    fn to_wire(&self, check: bool) -> result::Result<Vec<u8>, Self::Error> {
-        let mut bytes = Vec::new();
-        let mut writer = Writer::new(&mut bytes);
-        let protobuf = self.to_protobuf(check).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("unable to consensuss::Vertex to protobuf: {e}"),
-            )
-        })?;
-        protobuf.write_message(&mut writer).map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "unable to serialize consensus::Vertex",
-            )
-        })?;
-        Ok(bytes)
+    fn to_protobuf(&self, check: bool) -> Result<proto::Vertex> {
+        if check {
+            self.sanity_checks()?;
+        }
+        let (block, block_hash) = if let Some(b) = &self.block {
+            (Some(b.to_protobuf(check)?), None)
+        } else {
+            (None, Some(self.bhash.to_protobuf(check)?))
+        };
+        Ok(proto::Vertex {
+            version: self.version,
+            parents: self
+                .parents
+                .iter()
+                .map(|p| p.to_protobuf(check))
+                .try_collect()?,
+            block_hash,
+            block,
+        })
     }
 
-    fn from_wire(bytes: &[u8], check: bool) -> result::Result<Self, Self::Error> {
-        let protobuf = proto::Vertex::from_reader(&mut BytesReader::from_bytes(bytes), &bytes)
-            .map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("unable to parse vertex from bytes: {e}"),
-                )
-            })?;
-        Vertex::from_protobuf(&protobuf, check)
+    fn from_protobuf(vertex: &proto::Vertex, check: bool) -> Result<Vertex> {
+        let (block, bhash) = if let Some(b) = &vertex.block {
+            let block = Block::from_protobuf(b, check)?;
+            let bhash = block.hash();
+            (Some(Arc::new(block)), bhash)
+        } else {
+            (
+                None,
+                BlockHash::from_protobuf(
+                    &vertex.block_hash.as_ref().expect("missing block_hash"),
+                    check,
+                )?,
+            )
+        };
+        let vertex = Vertex {
+            version: vertex.version,
+            parents: vertex
+                .parents
+                .iter()
+                .map(|p| VertexHash::from_protobuf(&p, check))
+                .try_collect()?,
+            block,
+            bhash,
+        };
+        if check {
+            vertex.sanity_checks()?;
+        }
+        Ok(vertex)
     }
 }
 

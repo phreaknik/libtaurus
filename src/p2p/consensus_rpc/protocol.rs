@@ -1,4 +1,5 @@
-use super::{proto, Config, Request, Response};
+use super::{Config, Request, Response};
+use crate::wire::{proto, WireFormat};
 use async_trait::async_trait;
 use futures::prelude::*;
 use libp2p::request_response;
@@ -51,7 +52,7 @@ impl request_response::Codec for ConsensusRpcCodec {
                 io::ErrorKind::InvalidData,
                 format!("unable to read request message: {e}"),
             )),
-            Ok(protobuf) => Request::from_protobuf(protobuf).map_err(|e| {
+            Ok(protobuf) => Request::from_protobuf(&protobuf, true).map_err(|e| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!("parsed request message is missing data: {e}"),
@@ -76,7 +77,7 @@ impl request_response::Codec for ConsensusRpcCodec {
                 io::ErrorKind::InvalidData,
                 format!("unable to read response message: {e}"),
             )),
-            Ok(protobuf) => Response::from_protobuf(protobuf).map_err(|e| {
+            Ok(protobuf) => Response::from_protobuf(&protobuf, true).map_err(|e| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!("parsed response message is missing data: {e}"),
@@ -96,7 +97,7 @@ impl request_response::Codec for ConsensusRpcCodec {
     {
         let mut bytes = Vec::new();
         let mut writer = Writer::new(&mut bytes);
-        let protobuf = data.to_protobuf().map_err(|e| {
+        let protobuf = data.to_protobuf(true).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("unable to convert Request to protobuf: {e}"),
@@ -123,7 +124,7 @@ impl request_response::Codec for ConsensusRpcCodec {
     {
         let mut bytes = Vec::new();
         let mut writer = Writer::new(&mut bytes);
-        let protobuf = data.to_protobuf().map_err(|e| {
+        let protobuf = data.to_protobuf(true).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("unable to convert Response to protobuf: {e}"),

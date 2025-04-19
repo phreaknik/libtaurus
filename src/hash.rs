@@ -1,8 +1,8 @@
-use crate::p2p;
-use crate::wire::WireFormat;
+use crate::wire::{proto, WireFormat};
 use heed::{BytesDecode, BytesEncode};
 use serde_derive::{Deserialize, Serialize};
 use std::fmt;
+use std::io;
 use std::result;
 
 /// Error type for vertex errors
@@ -10,6 +10,8 @@ use std::result;
 pub enum Error {
     #[error("bad hash")]
     BadHash,
+    #[error(transparent)]
+    Io(#[from] io::Error),
     #[error("error decoding from protobuf")]
     ProtoDecode(String),
     #[error(transparent)]
@@ -37,29 +39,19 @@ impl Hash {
     pub fn to_short_hex(&self) -> String {
         format!("{}..", hex::encode(&self.0[..4]))
     }
+}
 
-    /// Serialize into protobuf format
-    pub fn to_protobuf(&self) -> Result<p2p::consensus_rpc::proto::Hash> {
-        Ok(p2p::consensus_rpc::proto::Hash {
+impl<'a> WireFormat<'a, proto::Hash> for Hash {
+    type Error = Error;
+
+    fn to_protobuf(&self, _check: bool) -> Result<proto::Hash> {
+        Ok(proto::Hash {
             hash: self.0.to_vec(),
         })
     }
 
-    /// Deserialize from protobuf format
-    pub fn from_protobuf(proto: &p2p::consensus_rpc::proto::Hash) -> Result<Hash> {
+    fn from_protobuf(proto: &proto::Hash, _check: bool) -> Result<Hash> {
         Ok(Hash(proto.hash[..].try_into()?))
-    }
-}
-
-impl WireFormat for Hash {
-    type Error = Error;
-
-    fn to_wire(&self, _check: bool) -> result::Result<Vec<u8>, Self::Error> {
-        Ok(self.0.to_vec())
-    }
-
-    fn from_wire(bytes: &[u8], _check: bool) -> result::Result<Self, Self::Error> {
-        Ok(Hash(bytes.try_into()?))
     }
 }
 

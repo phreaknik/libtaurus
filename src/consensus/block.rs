@@ -1,15 +1,13 @@
 use super::transaction::{self, Txo, TxoHash};
 use crate::{
-    p2p::consensus_rpc::proto,
     params::{self, FUTURE_BLOCK_LIMIT_SECS, MIN_DIFFICULTY},
     randomx::{self, RandomXVMInstance},
-    wire::WireFormat,
+    wire::{proto, WireFormat},
 };
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use heed::{BytesDecode, BytesEncode};
 use libp2p::{multihash::Multihash, PeerId};
 use num::{BigUint, FromPrimitive};
-use quick_protobuf::{BytesReader, MessageRead, MessageWrite, Writer};
 use serde_derive::{Deserialize, Serialize};
 use std::{io, result};
 
@@ -133,38 +131,13 @@ impl Block {
             Err(Error::InvalidPoW)
         }
     }
+}
 
-    /// Deserialize from protobuf format
-    pub fn from_protobuf(block: &proto::Block, check: bool) -> Result<Block> {
-        let block = Block {
-            version: block.version,
-            difficulty: block.difficulty,
-            miner: PeerId::from_bytes(&block.miner)?,
-            prev_mined: match &block.prev_mined {
-                Some(hash) => Some(BlockHash::from_protobuf(hash)?),
-                None => None,
-            },
-            inputs: block
-                .inputs
-                .iter()
-                .map(|txo_hash| TxoHash::from_protobuf(txo_hash))
-                .try_collect()?,
-            outputs: block
-                .outputs
-                .iter()
-                .map(|txo| Txo::from_protobuf(txo, check))
-                .try_collect()?,
-            time: DateTime::parse_from_rfc3339(&String::from_utf8(block.time.clone())?)?.into(),
-            nonce: block.nonce,
-        };
-        if check {
-            block.sanity_checks()?;
-        }
-        Ok(block)
-    }
+impl<'a> WireFormat<'a, proto::Block> for Block {
+    type Error = Error;
 
     /// Serialize into protobuf format
-    pub fn to_protobuf(&self, check: bool) -> Result<proto::Block> {
+    fn to_protobuf(&self, check: bool) -> Result<proto::Block> {
         if check {
             self.sanity_checks()?;
         }
@@ -173,13 +146,13 @@ impl Block {
             difficulty: self.difficulty,
             miner: self.miner.to_bytes(),
             prev_mined: match self.prev_mined {
-                Some(hash) => Some(hash.to_protobuf()?),
+                Some(hash) => Some(hash.to_protobuf(check)?),
                 None => None,
             },
             inputs: self
                 .inputs
                 .iter()
-                .map(|txo_hash| txo_hash.to_protobuf())
+                .map(|txo_hash| txo_hash.to_protobuf(check))
                 .try_collect()?,
             outputs: self
                 .outputs
@@ -193,35 +166,33 @@ impl Block {
             nonce: self.nonce,
         })
     }
-}
 
-impl WireFormat for Block {
-    type Error = Error;
-    fn to_wire(&self, check: bool) -> result::Result<Vec<u8>, Self::Error> {
-        let mut bytes = Vec::new();
-        let mut writer = Writer::new(&mut bytes);
-        let protobuf = self.to_protobuf(check).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("unable to convert Block to protobuf: {e}"),
-            )
-        })?;
-        protobuf
-            .write_message(&mut writer)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "unable to serialize Block"))?;
-        Ok(bytes)
-    }
-
-    /// Deserialize from bytes
-    fn from_wire(bytes: &[u8], check: bool) -> result::Result<Self, Self::Error> {
-        let protobuf = proto::Block::from_reader(&mut BytesReader::from_bytes(bytes), &bytes)
-            .map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("unable to parse block from bytes: {e}"),
-                )
-            })?;
-        Block::from_protobuf(&protobuf, check)
+    fn from_protobuf(block: &proto::Block, check: bool) -> Result<Block> {
+        let block = Block {
+            version: block.version,
+            difficulty: block.difficulty,
+            miner: PeerId::from_bytes(&block.miner)?,
+            prev_mined: match &block.prev_mined {
+                Some(hash) => Some(BlockHash::from_protobuf(hash, check)?),
+                None => None,
+            },
+            inputs: block
+                .inputs
+                .iter()
+                .map(|txo_hash| TxoHash::from_protobuf(txo_hash, check))
+                .try_collect()?,
+            outputs: block
+                .outputs
+                .iter()
+                .map(|txo| Txo::from_protobuf(txo, check))
+                .try_collect()?,
+            time: DateTime::parse_from_rfc3339(&String::from_utf8(block.time.clone())?)?.into(),
+            nonce: block.nonce,
+        };
+        if check {
+            block.sanity_checks()?;
+        }
+        Ok(block)
     }
 }
 

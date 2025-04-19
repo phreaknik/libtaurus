@@ -1,8 +1,4 @@
-use crate::{
-    p2p::{self, consensus_rpc::proto},
-    wire::WireFormat,
-};
-use quick_protobuf::{BytesReader, MessageRead, MessageWrite, Writer};
+use crate::wire::{proto, WireFormat};
 use serde_derive::{Deserialize, Serialize};
 use std::{io, result};
 
@@ -33,44 +29,16 @@ pub struct Txo {
     value: u64,
 }
 
-impl Txo {
-    /// Serialize into protobuf format
-    pub fn to_protobuf(&self, _check: bool) -> Result<p2p::consensus_rpc::proto::Txo> {
-        Ok(p2p::consensus_rpc::proto::Txo { value: self.value })
-    }
+impl Txo {}
 
-    /// Deserialize from protobuf format
-    pub fn from_protobuf(txo: &p2p::consensus_rpc::proto::Txo, _check: bool) -> Result<Txo> {
-        Ok(Txo { value: txo.value })
-    }
-}
-
-impl WireFormat for Txo {
+impl<'a> WireFormat<'a, proto::Txo> for Txo {
     type Error = Error;
-    fn to_wire(&self, check: bool) -> result::Result<Vec<u8>, Self::Error> {
-        let mut bytes = Vec::new();
-        let mut writer = Writer::new(&mut bytes);
-        let protobuf = self.to_protobuf(check).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("unable to convert Block to protobuf: {e}"),
-            )
-        })?;
-        protobuf
-            .write_message(&mut writer)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "unable to serialize Block"))?;
-        Ok(bytes)
+
+    fn to_protobuf(&self, _check: bool) -> Result<proto::Txo> {
+        Ok(proto::Txo { value: self.value })
     }
 
-    /// Deserialize from bytes
-    fn from_wire(bytes: &[u8], check: bool) -> result::Result<Self, Self::Error> {
-        let protobuf = proto::Txo::from_reader(&mut BytesReader::from_bytes(bytes), &bytes)
-            .map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("unable to parse block from bytes: {e}"),
-                )
-            })?;
-        Txo::from_protobuf(&protobuf, check)
+    fn from_protobuf(txo: &proto::Txo, _check: bool) -> Result<Txo> {
+        Ok(Txo { value: txo.value })
     }
 }

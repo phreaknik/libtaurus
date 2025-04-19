@@ -1,14 +1,12 @@
 use super::{block, vertex, BlockHash};
 use crate::{
     hash::{self, Hash},
-    p2p::consensus_rpc::proto,
-    wire::{self, WireFormat},
+    wire::{self, proto, WireFormat},
     VertexHash,
 };
 use heed::{BytesDecode, BytesEncode, Database, Env, EnvOpenOptions, RwTxn};
-use quick_protobuf::{BytesReader, MessageRead, MessageWrite, Writer};
 use serde_derive::{Deserialize, Serialize};
-use std::{fs, io, path::PathBuf, result, sync::Arc};
+use std::{fs, path::PathBuf, result, sync::Arc};
 
 /// Error type for consensus errors
 #[derive(thiserror::Error, Debug)]
@@ -29,11 +27,6 @@ pub enum Error {
     IncompleteResponse,
     #[error(transparent)]
     Io(#[from] std::io::Error),
-    // TODO: use protobuf instead of rmp_serde for encode/decode
-    #[error(transparent)]
-    MsgPackDecode(#[from] rmp_serde::decode::Error),
-    #[error(transparent)]
-    MsgPackEncode(#[from] rmp_serde::encode::Error),
     #[error(transparent)]
     Vertex(#[from] vertex::Error),
     #[error(transparent)]
@@ -150,58 +143,30 @@ enum DbRecord {
     Link(VertexHash),
 }
 
-impl DbRecord {
-    /// Deserialize from protobuf format
-    pub fn from_protobuf(record: &proto::DbRecord) -> Result<DbRecord> {
+impl<'a> WireFormat<'a, proto::DbRecord> for DbRecord {
+    type Error = Error;
+
+    fn to_protobuf(&self, check: bool) -> Result<proto::DbRecord> {
+        match self {
+            DbRecord::Vertex(v) => Ok(proto::DbRecord {
+                RequestData: proto::mod_DbRecord::OneOfRequestData::vertex(v.to_protobuf(check)?),
+            }),
+            DbRecord::Link(l) => Ok(proto::DbRecord {
+                RequestData: proto::mod_DbRecord::OneOfRequestData::link(l.to_protobuf(check)?),
+            }),
+        }
+    }
+
+    fn from_protobuf(record: &proto::DbRecord, check: bool) -> Result<DbRecord> {
         match &record.RequestData {
             proto::mod_DbRecord::OneOfRequestData::vertex(v) => Ok(DbRecord::Vertex(Arc::new(
-                wire::Vertex::from_protobuf(v, false)?,
+                wire::Vertex::from_protobuf(v, check)?,
             ))),
             proto::mod_DbRecord::OneOfRequestData::link(l) => {
-                Ok(DbRecord::Link(Hash::from_protobuf(l)?))
+                Ok(DbRecord::Link(Hash::from_protobuf(l, check)?))
             }
             proto::mod_DbRecord::OneOfRequestData::None => Err(Error::IncompleteResponse),
         }
-    }
-
-    /// Serialize into protobuf format
-    pub fn to_protobuf(&self) -> Result<proto::DbRecord> {
-        match self {
-            DbRecord::Vertex(v) => Ok(proto::DbRecord {
-                RequestData: proto::mod_DbRecord::OneOfRequestData::vertex(v.to_protobuf(false)?),
-            }),
-            DbRecord::Link(l) => Ok(proto::DbRecord {
-                RequestData: proto::mod_DbRecord::OneOfRequestData::link(l.to_protobuf()?),
-            }),
-        }
-    }
-
-    /// Deserialize from bytes
-    pub fn from_bytes(bytes: &[u8]) -> Result<DbRecord> {
-        let protobuf = proto::DbRecord::from_reader(&mut BytesReader::from_bytes(bytes), &bytes)
-            .map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("unable to parse block from bytes: {e}"),
-                )
-            })?;
-        DbRecord::from_protobuf(&protobuf)
-    }
-
-    /// Serialize into bytes
-    pub fn to_bytes(&self) -> Result<Vec<u8>> {
-        let mut bytes = Vec::new();
-        let mut writer = Writer::new(&mut bytes);
-        let protobuf = self.to_protobuf().map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("unable to convert DbRecord to protobuf: {e}"),
-            )
-        })?;
-        protobuf.write_message(&mut writer).map_err(|_| {
-            io::Error::new(io::ErrorKind::InvalidData, "unable to serialize DbRecord")
-        })?;
-        Ok(bytes)
     }
 }
 
@@ -249,7 +214,7 @@ impl<'a> BytesEncode<'a> for DbRecord {
     fn bytes_encode(
         item: &'a Self::EItem,
     ) -> std::result::Result<std::borrow::Cow<'a, [u8]>, Box<dyn std::error::Error>> {
-        Ok(item.to_bytes()?.into())
+        Ok(item.to_wire(false)?.into())
     }
 }
 
@@ -259,6 +224,6 @@ impl<'a> BytesDecode<'a> for DbRecord {
     fn bytes_decode(
         bytes: &'a [u8],
     ) -> std::result::Result<Self::DItem, Box<dyn std::error::Error>> {
-        Ok(DbRecord::from_bytes(bytes)?)
+        Ok(DbRecord::from_wire(bytes, false)?)
     }
 }
