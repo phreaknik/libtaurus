@@ -3,6 +3,7 @@ use crate::{
     p2p::consensus_rpc::proto,
     params::{self, FUTURE_BLOCK_LIMIT_SECS, MIN_DIFFICULTY},
     randomx::{self, RandomXVMInstance},
+    wire::WireFormat,
 };
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use heed::{BytesDecode, BytesEncode};
@@ -107,7 +108,7 @@ impl Block {
 
     /// Compute the hash of the block
     pub fn hash(&self) -> BlockHash {
-        blake3::hash(&self.to_bytes().expect("Serde encode failure in hash")).into()
+        blake3::hash(&self.to_wire(false).expect("encode failure in hash")).into()
     }
 
     /// Compute the mining target from the given difficulty
@@ -124,7 +125,7 @@ impl Block {
 
     /// Check if the block has valid proof-of-work
     pub fn verify_pow(&self, randomx: &RandomXVMInstance) -> Result<()> {
-        if BigUint::from_bytes_be(&randomx.calculate_hash(&self.to_bytes()?)?)
+        if BigUint::from_bytes_be(&randomx.calculate_hash(&self.to_wire(false)?)?)
             < self.mining_target()?
         {
             Ok(())
@@ -192,25 +193,14 @@ impl Block {
             nonce: self.nonce,
         })
     }
+}
 
-    /// Deserialize from bytes
-    pub fn from_bytes(bytes: &[u8]) -> Result<Block> {
-        let protobuf = proto::Block::from_reader(&mut BytesReader::from_bytes(bytes), &bytes)
-            .map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("unable to parse block from bytes: {e}"),
-                )
-            })?;
-        Block::from_protobuf(&protobuf, true)
-    }
-
-    /// Serialize into bytes
-    // TODO: implement WireFormat instead
-    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+impl WireFormat for Block {
+    type Error = Error;
+    fn to_wire(&self, check: bool) -> result::Result<Vec<u8>, Self::Error> {
         let mut bytes = Vec::new();
         let mut writer = Writer::new(&mut bytes);
-        let protobuf = self.to_protobuf(true).map_err(|e| {
+        let protobuf = self.to_protobuf(check).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("unable to convert Block to protobuf: {e}"),
@@ -220,6 +210,18 @@ impl Block {
             .write_message(&mut writer)
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "unable to serialize Block"))?;
         Ok(bytes)
+    }
+
+    /// Deserialize from bytes
+    fn from_wire(bytes: &[u8], check: bool) -> result::Result<Self, Self::Error> {
+        let protobuf = proto::Block::from_reader(&mut BytesReader::from_bytes(bytes), &bytes)
+            .map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("unable to parse block from bytes: {e}"),
+                )
+            })?;
+        Block::from_protobuf(&protobuf, check)
     }
 }
 
@@ -262,7 +264,7 @@ impl<'a> BytesEncode<'a> for Block {
     fn bytes_encode(
         item: &'a Self::EItem,
     ) -> std::result::Result<std::borrow::Cow<'a, [u8]>, Box<dyn std::error::Error>> {
-        Ok(item.to_bytes()?.into())
+        Ok(item.to_wire(false)?.into())
     }
 }
 
@@ -272,7 +274,7 @@ impl<'a> BytesDecode<'a> for Block {
     fn bytes_decode(
         bytes: &'a [u8],
     ) -> std::result::Result<Self::DItem, Box<dyn std::error::Error>> {
-        Ok(Block::from_bytes(bytes)?)
+        Ok(Block::from_wire(bytes, false)?)
     }
 }
 

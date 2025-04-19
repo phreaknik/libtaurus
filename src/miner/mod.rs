@@ -1,5 +1,6 @@
 use crate::consensus::{block, Block};
 use crate::randomx::{self, RandomXVMInstance};
+use crate::wire::WireFormat;
 use crate::{consensus, util};
 use libp2p::identity::Keypair;
 use libp2p::PeerId;
@@ -187,7 +188,7 @@ fn mine(
     loop {
         let loop_count = 1_000;
         for i in 0..loop_count {
-            let hash = randomx_vm.calculate_hash(&block.to_bytes()?)?;
+            let hash = randomx_vm.calculate_hash(&block.to_wire(false)?)?;
             if BigUint::from_bytes_be(&hash) < target {
                 results_ch.send(block.clone())?;
                 sols_count_ch.send(i).unwrap();
