@@ -74,10 +74,10 @@ impl Response {
         Ok(proto::Response {
             ResponseData: match self {
                 Response::Block(b) => {
-                    proto::mod_Response::OneOfResponseData::block(b.to_protobuf()?)
+                    proto::mod_Response::OneOfResponseData::block(b.to_protobuf(true)?)
                 }
                 Response::Vertex(v) => {
-                    proto::mod_Response::OneOfResponseData::vertex(v.to_protobuf()?)
+                    proto::mod_Response::OneOfResponseData::vertex(v.to_protobuf(true)?)
                 }
                 Response::Preference(hash, preferred) => {
                     proto::mod_Response::OneOfResponseData::preference(proto::Preference {
@@ -93,11 +93,11 @@ impl Response {
     pub fn from_protobuf(resp: proto::Response) -> Result<Self, Error> {
         match resp.ResponseData {
             proto::mod_Response::OneOfResponseData::block(b) => {
-                Ok(Response::Block(Block::from_protobuf(&b)?))
+                Ok(Response::Block(Block::from_protobuf(&b, true)?))
             }
-            proto::mod_Response::OneOfResponseData::vertex(v) => {
-                Ok(Response::Vertex(Arc::new(wire::Vertex::from_protobuf(&v)?)))
-            }
+            proto::mod_Response::OneOfResponseData::vertex(v) => Ok(Response::Vertex(Arc::new(
+                wire::Vertex::from_protobuf(&v, true)?,
+            ))),
             proto::mod_Response::OneOfResponseData::preference(h) => Ok(Response::Preference(
                 VertexHash::from_protobuf(&h.hash.ok_or(Error::IncompleteResponse)?)?,
                 h.preferred,

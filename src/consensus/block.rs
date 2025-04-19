@@ -134,7 +134,7 @@ impl Block {
     }
 
     /// Deserialize from protobuf format
-    pub fn from_protobuf(block: &proto::Block) -> Result<Block> {
+    pub fn from_protobuf(block: &proto::Block, check: bool) -> Result<Block> {
         let block = Block {
             version: block.version,
             difficulty: block.difficulty,
@@ -156,13 +156,17 @@ impl Block {
             time: DateTime::parse_from_rfc3339(&String::from_utf8(block.time.clone())?)?.into(),
             nonce: block.nonce,
         };
-        block.sanity_checks()?;
+        if check {
+            block.sanity_checks()?;
+        }
         Ok(block)
     }
 
     /// Serialize into protobuf format
-    pub fn to_protobuf(&self) -> Result<proto::Block> {
-        self.sanity_checks()?;
+    pub fn to_protobuf(&self, check: bool) -> Result<proto::Block> {
+        if check {
+            self.sanity_checks()?;
+        }
         Ok(proto::Block {
             version: self.version,
             difficulty: self.difficulty,
@@ -198,14 +202,15 @@ impl Block {
                     format!("unable to parse block from bytes: {e}"),
                 )
             })?;
-        Block::from_protobuf(&protobuf)
+        Block::from_protobuf(&protobuf, true)
     }
 
     /// Serialize into bytes
+    // TODO: implement WireFormat instead
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
         let mut bytes = Vec::new();
         let mut writer = Writer::new(&mut bytes);
-        let protobuf = self.to_protobuf().map_err(|e| {
+        let protobuf = self.to_protobuf(true).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("unable to convert Block to protobuf: {e}"),

@@ -117,7 +117,7 @@ impl BroadcastData {
 
     /// Deserialize from protobuf format
     pub fn from_protobuf(data: Broadcast) -> Result<BroadcastData> {
-        let v = wire::Vertex::from_protobuf(&data.vertex.unwrap())?;
+        let v = wire::Vertex::from_protobuf(&data.vertex.unwrap(), true)?;
         v.sanity_checks()?;
         Ok(BroadcastData::Vertex(v))
     }
@@ -127,7 +127,7 @@ impl BroadcastData {
         let BroadcastData::Vertex(v) = self;
         v.sanity_checks()?;
         Ok(Broadcast {
-            vertex: Some(v.to_protobuf()?),
+            vertex: Some(v.to_protobuf(true)?),
         })
     }
 }

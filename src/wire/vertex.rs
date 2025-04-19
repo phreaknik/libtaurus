@@ -77,9 +77,9 @@ impl Vertex {
     }
 
     /// Deserialize from protobuf format
-    pub fn from_protobuf(vertex: &proto::Vertex) -> Result<Vertex> {
+    pub fn from_protobuf(vertex: &proto::Vertex, check: bool) -> Result<Vertex> {
         let (block, bhash) = if let Some(b) = &vertex.block {
-            let block = Block::from_protobuf(b)?;
+            let block = Block::from_protobuf(b, check)?;
             let bhash = block.hash();
             (Some(Arc::new(block)), bhash)
         } else {
@@ -98,15 +98,19 @@ impl Vertex {
             block,
             bhash,
         };
-        vertex.sanity_checks()?;
+        if check {
+            vertex.sanity_checks()?;
+        }
         Ok(vertex)
     }
 
     /// Serialize into protobuf format
-    pub fn to_protobuf(&self) -> Result<proto::Vertex> {
-        self.sanity_checks()?;
+    pub fn to_protobuf(&self, check: bool) -> Result<proto::Vertex> {
+        if check {
+            self.sanity_checks()?;
+        }
         let (block, block_hash) = if let Some(b) = &self.block {
-            (Some(b.to_protobuf()?), None)
+            (Some(b.to_protobuf(check)?), None)
         } else {
             (None, Some(self.bhash.to_protobuf()?))
         };
@@ -136,7 +140,7 @@ impl WireFormat for Vertex {
     fn to_wire(&self) -> result::Result<Vec<u8>, Self::Error> {
         let mut bytes = Vec::new();
         let mut writer = Writer::new(&mut bytes);
-        let protobuf = self.to_protobuf().map_err(|e| {
+        let protobuf = self.to_protobuf(true).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("unable to consensuss::Vertex to protobuf: {e}"),
@@ -159,7 +163,7 @@ impl WireFormat for Vertex {
                     format!("unable to parse vertex from bytes: {e}"),
                 )
             })?;
-        Vertex::from_protobuf(&protobuf)
+        Vertex::from_protobuf(&protobuf, true)
     }
 }
 

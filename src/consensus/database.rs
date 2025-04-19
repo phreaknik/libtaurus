@@ -154,9 +154,9 @@ impl DbRecord {
     /// Deserialize from protobuf format
     pub fn from_protobuf(record: &proto::DbRecord) -> Result<DbRecord> {
         match &record.RequestData {
-            proto::mod_DbRecord::OneOfRequestData::vertex(v) => {
-                Ok(DbRecord::Vertex(Arc::new(wire::Vertex::from_protobuf(v)?)))
-            }
+            proto::mod_DbRecord::OneOfRequestData::vertex(v) => Ok(DbRecord::Vertex(Arc::new(
+                wire::Vertex::from_protobuf(v, false)?,
+            ))),
             proto::mod_DbRecord::OneOfRequestData::link(l) => {
                 Ok(DbRecord::Link(Hash::from_protobuf(l)?))
             }
@@ -168,7 +168,7 @@ impl DbRecord {
     pub fn to_protobuf(&self) -> Result<proto::DbRecord> {
         match self {
             DbRecord::Vertex(v) => Ok(proto::DbRecord {
-                RequestData: proto::mod_DbRecord::OneOfRequestData::vertex(v.to_protobuf()?),
+                RequestData: proto::mod_DbRecord::OneOfRequestData::vertex(v.to_protobuf(false)?),
             }),
             DbRecord::Link(l) => Ok(proto::DbRecord {
                 RequestData: proto::mod_DbRecord::OneOfRequestData::link(l.to_protobuf()?),
