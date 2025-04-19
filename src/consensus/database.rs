@@ -130,7 +130,7 @@ impl<'a> BytesEncode<'a> for DbKey {
     fn bytes_encode(
         item: &'a Self::EItem,
     ) -> std::result::Result<std::borrow::Cow<'a, [u8]>, Box<dyn std::error::Error>> {
-        Ok(rmp_serde::to_vec(item)?.into())
+        Ok(item.0.as_bytes().into())
     }
 }
 
@@ -140,7 +140,7 @@ impl<'a> BytesDecode<'a> for DbKey {
     fn bytes_decode(
         bytes: &'a [u8],
     ) -> std::result::Result<Self::DItem, Box<dyn std::error::Error>> {
-        Ok(rmp_serde::from_slice(bytes)?)
+        Ok(DbKey(String::from_utf8(bytes.to_vec())?))
     }
 }
 

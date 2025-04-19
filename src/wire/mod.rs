@@ -33,14 +33,16 @@ pub type Result<T> = result::Result<T, Error>;
 pub trait WireFormat: Sized {
     type Error: Debug;
 
-    /// Serialize data into a format suitable for wire transmission
-    fn to_wire(&self) -> result::Result<Vec<u8>, Self::Error>;
+    /// Serialize data into a format suitable for wire transmission, optionally checking validity
+    /// of the data before serialization.
+    fn to_wire(&self, check: bool) -> result::Result<Vec<u8>, Self::Error>;
 
-    /// Deserialize data from wire format
-    fn from_wire(bytes: &[u8]) -> result::Result<Self, Self::Error>;
+    /// Deserialize data from wire format, optionally checking validity of the data before
+    /// deserialization.
+    fn from_wire(bytes: &[u8], check: bool) -> result::Result<Self, Self::Error>;
 
     /// Compute hash of the serialized data
     fn hash(&self) -> Hash {
-        blake3::hash(&self.to_wire().expect("Error encoding to wire format")).into()
+        blake3::hash(&self.to_wire(false).expect("Error encoding to wire format")).into()
     }
 }

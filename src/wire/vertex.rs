@@ -137,10 +137,10 @@ impl From<consensus::Vertex> for Vertex {
 impl WireFormat for Vertex {
     type Error = Error;
 
-    fn to_wire(&self) -> result::Result<Vec<u8>, Self::Error> {
+    fn to_wire(&self, check: bool) -> result::Result<Vec<u8>, Self::Error> {
         let mut bytes = Vec::new();
         let mut writer = Writer::new(&mut bytes);
-        let protobuf = self.to_protobuf(true).map_err(|e| {
+        let protobuf = self.to_protobuf(check).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("unable to consensuss::Vertex to protobuf: {e}"),
@@ -155,7 +155,7 @@ impl WireFormat for Vertex {
         Ok(bytes)
     }
 
-    fn from_wire(bytes: &[u8]) -> result::Result<Self, Self::Error> {
+    fn from_wire(bytes: &[u8], check: bool) -> result::Result<Self, Self::Error> {
         let protobuf = proto::Vertex::from_reader(&mut BytesReader::from_bytes(bytes), &bytes)
             .map_err(|e| {
                 io::Error::new(
@@ -163,7 +163,7 @@ impl WireFormat for Vertex {
                     format!("unable to parse vertex from bytes: {e}"),
                 )
             })?;
-        Vertex::from_protobuf(&protobuf, true)
+        Vertex::from_protobuf(&protobuf, check)
     }
 }
 

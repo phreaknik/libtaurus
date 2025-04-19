@@ -54,11 +54,11 @@ impl Hash {
 impl WireFormat for Hash {
     type Error = Error;
 
-    fn to_wire(&self) -> result::Result<Vec<u8>, Self::Error> {
+    fn to_wire(&self, _check: bool) -> result::Result<Vec<u8>, Self::Error> {
         Ok(self.0.to_vec())
     }
 
-    fn from_wire(bytes: &[u8]) -> result::Result<Self, Self::Error> {
+    fn from_wire(bytes: &[u8], _check: bool) -> result::Result<Self, Self::Error> {
         Ok(Hash(bytes.try_into()?))
     }
 }
@@ -87,13 +87,14 @@ impl Into<blake3::Hash> for Hash {
     }
 }
 
+// BytesEncode redundant with WireFormat?
 impl<'a> BytesEncode<'a> for Hash {
     type EItem = Hash;
 
     fn bytes_encode(
         item: &'a Self::EItem,
     ) -> std::result::Result<std::borrow::Cow<'a, [u8]>, Box<dyn std::error::Error>> {
-        Ok(item.to_wire()?.into())
+        Ok(item.to_wire(false)?.into())
     }
 }
 
@@ -103,7 +104,7 @@ impl<'a> BytesDecode<'a> for Hash {
     fn bytes_decode(
         bytes: &'a [u8],
     ) -> std::result::Result<Self::DItem, Box<dyn std::error::Error>> {
-        Ok(Hash::from_wire(bytes.try_into()?)?)
+        Ok(Hash::from_wire(bytes.try_into()?, false)?)
     }
 }
 
