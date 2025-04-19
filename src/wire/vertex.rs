@@ -65,7 +65,6 @@ impl Vertex {
     }
 
     /// Slim this vertex by removing the block
-    // TODO: make sure this is used after dynamic parent selection
     pub fn slim(mut self) -> (Option<Arc<Block>>, Vertex) {
         if let Some(block) = self.block {
             self.bhash = block.hash();

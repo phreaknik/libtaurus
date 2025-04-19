@@ -185,8 +185,9 @@ impl Dag {
         self.config.genesis.hash()
     }
 
-    /// Register a block as available to be inserted into the DAG
-    fn register_block(&mut self, block: Arc<Block>) -> Result<()> {
+    /// Register a block as available to be inserted into the DAG. Returns true if this is a new
+    /// registration; i.e. the block had not been seen before.
+    fn register_block(&mut self, block: Arc<Block>) -> Result<bool> {
         // Check the block has sufficient proof-of-work
         block.verify_pow(&self.randomx_vm)?;
         let bhash = block.hash();
@@ -194,14 +195,17 @@ impl Dag {
             Err(Error::AlreadyDecided(vhash))
         } else {
             // Add the block to the list of undecided blocks
-            self.undecided_blocks.cache_set(bhash, block.clone());
+            let new_block = self
+                .undecided_blocks
+                .cache_set(bhash, block.clone())
+                .is_none();
             // Register this miner as a potential Avalanche voter
             self.voter_pool.register_from_block(block);
             // Attempt to insert any vertices waiting on that block
             if let Some(vertices) = self.waitlist.get_by_block(&bhash)? {
                 self.try_insert_vertices(vertices, None, false)?;
             }
-            Ok(())
+            Ok(new_block)
         }
     }
 
@@ -257,6 +261,7 @@ impl Dag {
                 }
             }?;
         }
+
         // Attempt to insert any dependents of the successful insertions
         while let Some((vhash, bhash)) = successful.pop() {
             let waiting_by_block = self.waitlist.get_by_block(&bhash)?;
@@ -289,12 +294,14 @@ impl Dag {
                     }
                 }
             };
+
             // Try to insert any vertices which were waiting on the block just inserted
             if let Some(waiting) = waiting_by_block {
                 for wire_vertex in waiting {
                     try_insert_waiting(wire_vertex)?;
                 }
             }
+
             // Try to insert any vertices which were waiting on the vertex just inserted
             if let Some(waiting) = waiting_by_vertex {
                 for wire_vertex in waiting {
@@ -322,12 +329,16 @@ impl Dag {
         }
 
         // If available, check proof-of-work before doing anything
-        if let Some(block) = &wire_vertex.block {
+        let full_broadcast = if let Some(block) = &wire_vertex.block {
             if wire_vertex.bhash != block.hash() {
                 return Err(Error::CorruptBlockHash);
             }
-            self.register_block(block.clone())?;
-        }
+            // Register the block. If this block has not been seen before, we should broadcast it
+            // with the vertex later
+            self.register_block(block.clone())?
+        } else {
+            false
+        };
 
         // Make sure this vertex isn't missing any necessary data to process this vertex
         match self.request_if_missing_data(&wire_vertex, sender) {
@@ -391,10 +402,12 @@ impl Dag {
 
         // Broadcast to peers if this vertex didn't already come from our peers
         if broadcast {
+            let mut bcast = wire_vertex.as_ref().clone();
+            if !full_broadcast {
+                bcast = bcast.slim().1;
+            }
             self.p2p_action_ch
-                .send(p2p::Action::Broadcast(p2p::BroadcastData::Vertex(
-                    wire_vertex.as_ref().clone(),
-                )))?;
+                .send(p2p::Action::Broadcast(p2p::BroadcastData::Vertex(bcast)))?;
         }
 
         // Query peers for their preference, according to the avalanche consensus protocol
