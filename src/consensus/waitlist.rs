@@ -1,7 +1,4 @@
-use crate::{
-    wire::{self, WireFormat},
-    BlockHash, VertexHash,
-};
+use crate::{wire::WireFormat, BlockHash, VertexHash};
 use lru::LruCache;
 use std::{
     collections::{HashMap, HashSet},
@@ -11,6 +8,8 @@ use std::{
     sync::Arc,
 };
 use tracing::warn;
+
+use super::Vertex;
 
 /// Error type for avalanche errors
 #[derive(thiserror::Error, Debug)]
@@ -23,9 +22,9 @@ pub type Result<T> = result::Result<T, Error>;
 /// child vertices may be processed.
 pub struct WaitList {
     /// A collection of vertices waiting on a given block
-    by_block: LruCache<BlockHash, HashMap<VertexHash, Arc<wire::Vertex>>>,
+    by_block: LruCache<BlockHash, HashMap<VertexHash, Arc<Vertex>>>,
     /// A collection of vertices waiting on a given parent vertex
-    by_parent: LruCache<VertexHash, HashMap<VertexHash, Arc<wire::Vertex>>>,
+    by_parent: LruCache<VertexHash, HashMap<VertexHash, Arc<Vertex>>>,
     /// List of every vertex waiting in the set
     manifest: HashSet<VertexHash>,
 }
@@ -43,7 +42,7 @@ impl WaitList {
     /// Inserts a new vertex into the waitlist.
     pub fn insert(
         &mut self,
-        wire_vertex: Arc<wire::Vertex>,
+        wire_vertex: Arc<Vertex>,
         missing_parents: Option<Vec<VertexHash>>,
         missing_block: Option<BlockHash>,
     ) -> Result<()> {
@@ -95,7 +94,7 @@ impl WaitList {
     }
 
     /// Get any vertices waiting on the specified block
-    pub fn get_by_block(&mut self, bhash: &BlockHash) -> Result<Option<Vec<Arc<wire::Vertex>>>> {
+    pub fn get_by_block(&mut self, bhash: &BlockHash) -> Result<Option<Vec<Arc<Vertex>>>> {
         Ok(self
             .by_block
             .get(bhash)
@@ -103,7 +102,7 @@ impl WaitList {
     }
 
     /// Get any vertices waiting on the specified parent vertex
-    pub fn get_by_vertex(&mut self, vhash: &VertexHash) -> Result<Option<Vec<Arc<wire::Vertex>>>> {
+    pub fn get_by_vertex(&mut self, vhash: &VertexHash) -> Result<Option<Vec<Arc<Vertex>>>> {
         Ok(self
             .by_parent
             .get(vhash)
@@ -111,7 +110,7 @@ impl WaitList {
     }
 
     /// Remove a vertex from the waitlist which was inserted into the DAG.
-    pub fn remove_inserted(&mut self, wire_vertex: Arc<wire::Vertex>) -> Result<()> {
+    pub fn remove_inserted(&mut self, wire_vertex: Arc<Vertex>) -> Result<()> {
         let vhash = wire_vertex.hash();
         // Remove from the contents
         self.manifest.remove(&vhash);

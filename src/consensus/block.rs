@@ -49,6 +49,7 @@ pub type Result<T> = result::Result<T, Error>;
 /// Type alias for block hashes
 pub type BlockHash = crate::hash::Hash;
 
+/// A block represents a collection of transactions which have been mined with proof-of-work
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Block {
     /// Block format revision number

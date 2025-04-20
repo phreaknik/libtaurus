@@ -1,5 +1,4 @@
 mod generated;
-mod vertex;
 
 use crate::{consensus::block, hash::Hash};
 pub use generated::proto;
@@ -8,15 +7,12 @@ use std::{
     fmt::{Debug, Display},
     io, result,
 };
-pub use vertex::Vertex;
 
 /// Error type for vertex errors
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("block hash does not match self.bhash")]
     BadBlockHash,
-    #[error("bad vertex version")]
-    BadVertexVersion(u32),
     #[error(transparent)]
     Block(#[from] block::Error),
     #[error("vertex does not specify any parents")]

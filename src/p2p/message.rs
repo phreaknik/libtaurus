@@ -1,8 +1,10 @@
 use super::{Error, Result};
-use crate::wire::{
-    self,
-    proto::{self, Broadcast},
-    WireFormat,
+use crate::{
+    consensus::Vertex,
+    wire::{
+        proto::{self, Broadcast},
+        WireFormat,
+    },
 };
 use libp2p::{
     gossipsub::{self, MessageAcceptance, MessageId, Sha256Topic, TopicHash},
@@ -81,7 +83,7 @@ pub struct MessageValidationReport {
 
 #[derive(Clone, Debug, EnumIter, AsRefStr)]
 pub enum BroadcastData {
-    Vertex(wire::Vertex),
+    Vertex(Vertex),
 }
 
 impl BroadcastData {
@@ -118,7 +120,7 @@ impl BroadcastData {
 
     /// Deserialize from protobuf format
     pub fn from_protobuf(data: Broadcast) -> Result<BroadcastData> {
-        let v = wire::Vertex::from_protobuf(&data.vertex.unwrap(), true)?;
+        let v = Vertex::from_protobuf(&data.vertex.unwrap(), true)?;
         v.sanity_checks()?;
         Ok(BroadcastData::Vertex(v))
     }

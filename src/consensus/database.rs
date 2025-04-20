@@ -1,4 +1,4 @@
-use super::{block, vertex, BlockHash};
+use super::{block, vertex, BlockHash, Vertex};
 use crate::{
     hash::{self, Hash},
     wire::{self, proto, WireFormat},
@@ -74,7 +74,7 @@ impl ConsensusDb {
     pub fn write_vertex<'a>(
         &'a mut self,
         wtxn: Option<RwTxn<'a, 'a>>,
-        vertex: Arc<wire::Vertex>,
+        vertex: Arc<Vertex>,
     ) -> Result<RwTxn<'a, 'a>> {
         // Make sure this vertex includes the block. May not write slim vertices.
         if vertex.block.is_none() {
@@ -95,7 +95,7 @@ impl ConsensusDb {
     }
 
     /// Read a vertex from the database
-    pub fn read_vertex<'a>(&'a self, vhash: &VertexHash) -> Result<Option<Arc<wire::Vertex>>> {
+    pub fn read_vertex<'a>(&'a self, vhash: &VertexHash) -> Result<Option<Arc<Vertex>>> {
         let mut rtxn = self.env.read_txn().unwrap();
         Ok(self
             .db
@@ -139,7 +139,7 @@ impl<'a> BytesDecode<'a> for DbKey {
 
 #[derive(Debug, Clone)]
 enum DbRecord {
-    Vertex(Arc<wire::Vertex>),
+    Vertex(Arc<Vertex>),
     Link(VertexHash),
 }
 
@@ -160,7 +160,7 @@ impl<'a> WireFormat<'a, proto::DbRecord> for DbRecord {
     fn from_protobuf(record: &proto::DbRecord, check: bool) -> Result<DbRecord> {
         match &record.RequestData {
             proto::mod_DbRecord::OneOfRequestData::vertex(v) => Ok(DbRecord::Vertex(Arc::new(
-                wire::Vertex::from_protobuf(v, check)?,
+                Vertex::from_protobuf(v, check)?,
             ))),
             proto::mod_DbRecord::OneOfRequestData::link(l) => {
                 Ok(DbRecord::Link(Hash::from_protobuf(l, check)?))
@@ -170,15 +170,15 @@ impl<'a> WireFormat<'a, proto::DbRecord> for DbRecord {
     }
 }
 
-impl From<Arc<wire::Vertex>> for DbRecord {
-    fn from(value: Arc<wire::Vertex>) -> Self {
+impl From<Arc<Vertex>> for DbRecord {
+    fn from(value: Arc<Vertex>) -> Self {
         DbRecord::Vertex(value)
     }
 }
 
-impl TryInto<Arc<wire::Vertex>> for DbRecord {
+impl TryInto<Arc<Vertex>> for DbRecord {
     type Error = Error;
-    fn try_into(self) -> result::Result<Arc<wire::Vertex>, Self::Error> {
+    fn try_into(self) -> result::Result<Arc<Vertex>, Self::Error> {
         match self {
             DbRecord::Vertex(v) => {
                 if v.block.is_none() {

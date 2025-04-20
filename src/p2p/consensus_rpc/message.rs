@@ -1,6 +1,6 @@
 use super::Error;
-use crate::consensus::{Block, BlockHash};
-use crate::wire::{self, proto, WireFormat};
+use crate::consensus::{Block, BlockHash, Vertex};
+use crate::wire::{proto, WireFormat};
 use crate::VertexHash;
 use std::fmt;
 use std::result;
@@ -64,7 +64,7 @@ impl fmt::Display for Request {
 #[derive(Debug, Clone)]
 pub enum Response {
     Block(Block),
-    Vertex(Arc<wire::Vertex>),
+    Vertex(Arc<Vertex>),
     Preference(VertexHash, bool),
 }
 
@@ -96,7 +96,7 @@ impl<'a> WireFormat<'a, proto::Response> for Response {
                 Ok(Response::Block(Block::from_protobuf(&b, check)?))
             }
             proto::mod_Response::OneOfResponseData::vertex(v) => Ok(Response::Vertex(Arc::new(
-                wire::Vertex::from_protobuf(&v, check)?,
+                Vertex::from_protobuf(&v, check)?,
             ))),
             proto::mod_Response::OneOfResponseData::preference(h) => Ok(Response::Preference(
                 VertexHash::from_protobuf(

@@ -11,7 +11,7 @@ pub mod vertex;
 mod voter_pool;
 mod waitlist;
 
-use crate::{p2p, randomx, randomx::RandomXVMInstance, wire};
+use crate::{p2p, randomx, randomx::RandomXVMInstance};
 pub use avalanche::*;
 pub use block::*;
 use chrono::{DateTime, Utc};
@@ -100,7 +100,7 @@ pub struct GenesisConfig {
 
 impl GenesisConfig {
     /// Create a genesis block
-    pub fn to_vertex(&self) -> Arc<wire::Vertex> {
+    pub fn to_vertex(&self) -> Arc<Vertex> {
         let block = Block {
             version: 0,
             difficulty: self.difficulty,
@@ -111,7 +111,7 @@ impl GenesisConfig {
             time: self.time,
             nonce: 0,
         };
-        Arc::new(wire::Vertex {
+        Arc::new(Vertex {
             version: 0,
             parents: Vec::new(),
             bhash: block.hash(),

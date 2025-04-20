@@ -2,10 +2,10 @@ use super::{
     block,
     database::ConsensusDb,
     transaction::{self, Txo, TxoHash},
-    vertex,
+    vertex::{self, Vertex},
     voter_pool::{self, Scorecard, VoterPool},
     waitlist::{self, WaitList},
-    Block, BlockHash, Event, Vertex,
+    Block, BlockHash, Event, UndecidedVertex,
 };
 use crate::{
     p2p::{self, consensus_rpc},
@@ -70,7 +70,7 @@ pub enum Error {
     #[error("block spends unknown UTXOs")]
     UnknownTransactionInputs,
     #[error(transparent)]
-    Vertex(#[from] vertex::Error),
+    UndecidedVertex(#[from] vertex::Error),
     #[error("error acquiring read lock on a vertex")]
     VertexReadLock,
     #[error("error acquiring write lock on a vertex")]
@@ -93,7 +93,7 @@ pub struct Config {
     pub data_dir: PathBuf,
 
     /// Genesis block to serve as root vertex in the DAG
-    pub genesis: Arc<wire::Vertex>,
+    pub genesis: Arc<Vertex>,
 
     /// Maximum number of vertices which can wait in the list
     pub waitlist_cap: NonZeroUsize,
@@ -110,7 +110,7 @@ pub struct Dag {
     undecided_blocks: TimedCache<BlockHash, Arc<Block>>,
 
     /// Complete list of undecided vertices
-    undecided_vertices: TimedCache<VertexHash, Arc<TracingRwLock<Vertex>>>,
+    undecided_vertices: TimedCache<VertexHash, Arc<TracingRwLock<UndecidedVertex>>>,
 
     /// List of transaction outputs being considered in the undecided portion of the DAG
     undecided_txos: HashMap<TxoHash, DagTxo>,
@@ -119,7 +119,7 @@ pub struct Dag {
     waitlist: WaitList,
 
     /// The active edge of the DAG, i.e. the preferred vertices which don't yet have children
-    frontier: HashMap<VertexHash, Arc<TracingRwLock<Vertex>>>,
+    frontier: HashMap<VertexHash, Arc<TracingRwLock<UndecidedVertex>>>,
 
     /// Voter pool to select from for Avalanche queries
     voter_pool: VoterPool,
@@ -170,7 +170,9 @@ impl Dag {
         };
         dag.scorecards.set_refresh(false);
         let genesis_hash = config.genesis.hash();
-        let rw_vertex = Arc::new(TracingRwLock::new(Vertex::genesis(config.genesis.clone())));
+        let rw_vertex = Arc::new(TracingRwLock::new(UndecidedVertex::genesis(
+            config.genesis.clone(),
+        )));
         dag.database
             .write_vertex(None, config.genesis)
             .unwrap()
@@ -211,7 +213,7 @@ impl Dag {
 
     /// Try to submit this block as a vertex at the frontier of the DAG
     pub fn try_insert_block(&mut self, block: Arc<Block>, broadcast: bool) -> Result<()> {
-        let wire_vertex = Arc::new(wire::Vertex::new(
+        let wire_vertex = Arc::new(Vertex::new(
             block,
             self.frontier.values().cloned(),
             true,
@@ -227,7 +229,7 @@ impl Dag {
         broadcast: bool,
     ) -> Result<()>
     where
-        V: IntoIterator<Item = Arc<wire::Vertex>>,
+        V: IntoIterator<Item = Arc<Vertex>>,
     {
         // Collect and sort vertices to avoid silly insertion sequence errors
         let mut insert_list: Vec<_> = vertices.into_iter().collect();
@@ -266,7 +268,7 @@ impl Dag {
         while let Some((vhash, bhash)) = successful.pop() {
             let waiting_by_block = self.waitlist.get_by_block(&bhash)?;
             let waiting_by_vertex = self.waitlist.get_by_vertex(&vhash)?;
-            let mut try_insert_waiting = |wire_vertex: Arc<wire::Vertex>| -> Result<()> {
+            let mut try_insert_waiting = |wire_vertex: Arc<Vertex>| -> Result<()> {
                 let vhash = wire_vertex.hash();
                 let bhash = wire_vertex.bhash;
                 // Exclude sender, because there is no expectation the sender can serve a
@@ -316,7 +318,7 @@ impl Dag {
     /// currently strongly preferred.
     fn try_insert_vertex(
         &mut self,
-        wire_vertex: Arc<wire::Vertex>,
+        wire_vertex: Arc<Vertex>,
         sender: Option<PeerId>,
         broadcast: bool,
     ) -> Result<bool> {
@@ -360,7 +362,7 @@ impl Dag {
         let (conflict_free, opt_block) = self.check_conflicts(wire_vertex.clone())?;
 
         // Create a mutex protected vertex for inserting into the DAG structure
-        let rw_vertex = Arc::new(TracingRwLock::new(Vertex::new(
+        let rw_vertex = Arc::new(TracingRwLock::new(UndecidedVertex::new(
             wire_vertex.clone(),
             &mut self.undecided_blocks,
             &mut self.undecided_vertices,
@@ -451,7 +453,7 @@ impl Dag {
     /// Check for missing data and request them from peers
     fn request_if_missing_data(
         &mut self,
-        wire_vertex: &wire::Vertex,
+        wire_vertex: &Vertex,
         sender: Option<PeerId>,
     ) -> Result<()> {
         // Lookup any missing parents
@@ -536,10 +538,10 @@ impl Dag {
     }
 
     /// Check that the vertex uniquely spends UTXOs. Returns true if no conflicts. Also reurns a
-    /// reference to the block, if the block is not included in the wire::Vertex.
+    /// reference to the block, if the block is not included in the Vertex.
     fn check_conflicts(
         &mut self,
-        wire_vertex: Arc<wire::Vertex>,
+        wire_vertex: Arc<Vertex>,
     ) -> Result<(bool, Option<Arc<Block>>)> {
         // Make sure transaction inputs are in the txo set. If they are not in the txo set at all,
         // then reject this vertex entirely. If they are in the txo set, but spent by another
@@ -621,7 +623,7 @@ impl Dag {
     }
 
     /// Look up a vertex from the DAG, and indicate if this vertex is strongly preferred.
-    pub fn get_vertex(&mut self, vhash: &VertexHash) -> Result<(Arc<wire::Vertex>, bool)> {
+    pub fn get_vertex(&mut self, vhash: &VertexHash) -> Result<(Arc<Vertex>, bool)> {
         match self.undecided_vertices.cache_get(vhash) {
             Some(rw_vertex) => {
                 let vertex = rw_vertex.read().map_err(|_| Error::VertexReadLock)?;
@@ -638,7 +640,7 @@ impl Dag {
     /// ancestors which can now be accepted.
     pub fn recompute_confidences(
         &mut self,
-        rw_vertex: Arc<TracingRwLock<Vertex>>,
+        rw_vertex: Arc<TracingRwLock<UndecidedVertex>>,
     ) -> Vec<VertexHash> {
         // Recursively compute confidence as sum of chits in progeny
         {
@@ -712,7 +714,10 @@ impl Dag {
     }
 
     /// Reset the convidence of this vertex and any children
-    pub fn reset_confidence(&mut self, rw_vertex: Arc<TracingRwLock<Vertex>>) -> Result<()> {
+    pub fn reset_confidence(
+        &mut self,
+        rw_vertex: Arc<TracingRwLock<UndecidedVertex>>,
+    ) -> Result<()> {
         let orig_confidnce = {
             let mut vertex = rw_vertex.write().map_err(|_| Error::VertexWriteLock)?;
             let orig_confidnce = vertex.confidence;
@@ -921,7 +926,7 @@ pub struct DagTxo {
     txo: Txo,
 
     /// Link to the preferred vertex which spends this UTXO, if any
-    preferred_spender: Option<Arc<TracingRwLock<Vertex>>>,
+    preferred_spender: Option<Arc<TracingRwLock<UndecidedVertex>>>,
 }
 
 impl DagTxo {
