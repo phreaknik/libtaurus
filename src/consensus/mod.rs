@@ -102,7 +102,7 @@ impl GenesisConfig {
     /// Create a genesis block
     pub fn to_vertex(&self) -> Arc<Vertex> {
         let block = Block {
-            version: 0,
+            version: 1,
             difficulty: self.difficulty,
             miner: PeerId::from_multihash(Multihash::default()).unwrap(),
             parents: Vec::new(),
@@ -112,7 +112,8 @@ impl GenesisConfig {
             nonce: 0,
         };
         Arc::new(Vertex {
-            version: 0,
+            version: 1,
+            height: 0,
             parents: Vec::new(),
             bhash: block.hash(),
             block: Some(Arc::new(block)),

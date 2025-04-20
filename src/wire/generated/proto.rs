@@ -396,6 +396,7 @@ impl MessageWrite for Block {
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct Vertex {
     pub version: u32,
+    pub height: u64,
     pub parents: Vec<generated::proto::Hash>,
     pub block_hash: Option<generated::proto::Hash>,
     pub block: Option<generated::proto::Block>,
@@ -407,9 +408,10 @@ impl<'a> MessageRead<'a> for Vertex {
         while !r.is_eof() {
             match r.next_tag(bytes) {
                 Ok(0) => msg.version = r.read_uint32(bytes)?,
-                Ok(10) => msg.parents.push(r.read_message::<generated::proto::Hash>(bytes)?),
-                Ok(18) => msg.block_hash = Some(r.read_message::<generated::proto::Hash>(bytes)?),
-                Ok(26) => msg.block = Some(r.read_message::<generated::proto::Block>(bytes)?),
+                Ok(8) => msg.height = r.read_uint64(bytes)?,
+                Ok(18) => msg.parents.push(r.read_message::<generated::proto::Hash>(bytes)?),
+                Ok(26) => msg.block_hash = Some(r.read_message::<generated::proto::Hash>(bytes)?),
+                Ok(34) => msg.block = Some(r.read_message::<generated::proto::Block>(bytes)?),
                 Ok(t) => { r.read_unknown(bytes, t)?; }
                 Err(e) => return Err(e),
             }
@@ -422,6 +424,7 @@ impl MessageWrite for Vertex {
     fn get_size(&self) -> usize {
         0
         + if self.version == 0u32 { 0 } else { 1 + sizeof_varint(*(&self.version) as u64) }
+        + if self.height == 0u64 { 0 } else { 1 + sizeof_varint(*(&self.height) as u64) }
         + self.parents.iter().map(|s| 1 + sizeof_len((s).get_size())).sum::<usize>()
         + self.block_hash.as_ref().map_or(0, |m| 1 + sizeof_len((m).get_size()))
         + self.block.as_ref().map_or(0, |m| 1 + sizeof_len((m).get_size()))
@@ -429,9 +432,10 @@ impl MessageWrite for Vertex {
 
     fn write_message<W: WriterBackend>(&self, w: &mut Writer<W>) -> Result<()> {
         if self.version != 0u32 { w.write_with_tag(0, |w| w.write_uint32(*&self.version))?; }
-        for s in &self.parents { w.write_with_tag(10, |w| w.write_message(s))?; }
-        if let Some(ref s) = self.block_hash { w.write_with_tag(18, |w| w.write_message(s))?; }
-        if let Some(ref s) = self.block { w.write_with_tag(26, |w| w.write_message(s))?; }
+        if self.height != 0u64 { w.write_with_tag(8, |w| w.write_uint64(*&self.height))?; }
+        for s in &self.parents { w.write_with_tag(18, |w| w.write_message(s))?; }
+        if let Some(ref s) = self.block_hash { w.write_with_tag(26, |w| w.write_message(s))?; }
+        if let Some(ref s) = self.block { w.write_with_tag(34, |w| w.write_message(s))?; }
         Ok(())
     }
 }

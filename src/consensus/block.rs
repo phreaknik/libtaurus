@@ -13,7 +13,7 @@ use serde_derive::{Deserialize, Serialize};
 use std::{io, result};
 
 /// Current version of the block structure
-pub const VERSION: u32 = 0;
+pub const VERSION: u32 = 1;
 
 /// Error type for block errors
 #[derive(thiserror::Error, Debug)]

@@ -9,13 +9,15 @@ use std::{collections::HashMap, io, ops::Deref, result, sync::Arc};
 use tracing_mutex::stdsync::TracingRwLock;
 
 /// Current revision of the vertex structure
-pub const VERSION: u32 = 0;
+pub const VERSION: u32 = 1;
 
 /// Error type for vertex errors
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("block hash does not match vertex")]
     BadBlockHash,
+    #[error("block height does not extend parents")]
+    BadBlockHeight,
     #[error("bad vertex version")]
     BadVertexVersion(u32),
     #[error(transparent)]
@@ -42,11 +44,14 @@ pub type VertexHash = crate::hash::Hash;
 
 /// A vertex descibes a block's adapted position within the DAG. Importantly, its adapted position
 /// may differ from its mined position, due to dynamic parent reselection, in the case of
-/// non-virtuous mined_parents.
+/// non-virtuous parents of the mined block..
 #[derive(Clone, Default)]
 pub struct Vertex {
     /// Revision number of the vertex structure
     pub version: u32,
+
+    /// Height of this vertex within the DAG. There may be several vertices at a given height.
+    pub height: u64,
 
     /// Hash of the block this vertex represents
     pub bhash: BlockHash,
@@ -64,12 +69,13 @@ impl Vertex {
     /// vertex for an existing block), set `full` to false.
     pub fn new<P>(block: Arc<Block>, parents: P, full: bool) -> Result<Vertex>
     where
-        P: Iterator<Item = Arc<TracingRwLock<UndecidedVertex>>>,
+        P: Iterator<Item = Arc<TracingRwLock<UndecidedVertex>>> + Clone,
     {
         Ok(Vertex {
             version: VERSION,
             bhash: block.hash(),
             parents: parents
+                .clone()
                 .map(|rw_vertex| {
                     rw_vertex
                         .read()
@@ -77,6 +83,10 @@ impl Vertex {
                         .map(|v| v.hash())
                 })
                 .try_collect()?,
+            height: 1 + parents
+                .map(|v| v.read().unwrap().inner.height)
+                .max()
+                .ok_or(Error::EmptyParents)?,
             block: if full { Some(block) } else { None },
         })
     }
@@ -118,13 +128,8 @@ impl Vertex {
 }
 
 impl From<UndecidedVertex> for Vertex {
-    fn from(value: UndecidedVertex) -> Self {
-        Vertex {
-            version: VERSION,
-            bhash: value.inner.hash(),
-            parents: value.inner.parents.clone(),
-            block: value.inner.block.clone(),
-        }
+    fn from(vertex: UndecidedVertex) -> Self {
+        vertex.inner.deref().clone()
     }
 }
 
@@ -153,6 +158,7 @@ impl<'a> WireFormat<'a, proto::Vertex> for Vertex {
             };
         Ok(proto::Vertex {
             version: self.version,
+            height: self.height,
             parents,
             block_hash,
             block,
@@ -192,6 +198,7 @@ impl<'a> WireFormat<'a, proto::Vertex> for Vertex {
         };
         let vertex = Vertex {
             version: vertex.version,
+            height: vertex.height,
             parents,
             block,
             bhash,
