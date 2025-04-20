@@ -211,11 +211,11 @@ struct PrettyVertex {
 }
 
 impl From<&Vertex> for PrettyVertex {
-    fn from(wire_vertex: &Vertex) -> Self {
+    fn from(vertex: &Vertex) -> Self {
         PrettyVertex {
-            version: wire_vertex.version,
-            bhash: wire_vertex.bhash.to_hex(),
-            parents: wire_vertex.parents.iter().map(|txo| txo.to_hex()).collect(),
+            version: vertex.version,
+            bhash: vertex.bhash.to_hex(),
+            parents: vertex.parents.iter().map(|txo| txo.to_hex()).collect(),
         }
     }
 }
@@ -264,9 +264,9 @@ pub struct UndecidedVertex {
 
 impl UndecidedVertex {
     /// Create a genesis vertex from a given block
-    pub fn genesis(wire_vertex: Arc<Vertex>) -> UndecidedVertex {
+    pub fn genesis(vertex: Arc<Vertex>) -> UndecidedVertex {
         UndecidedVertex {
-            inner: wire_vertex,
+            inner: vertex,
             undecided_parents: HashMap::new(),
             known_children: HashMap::new(),
             strongly_preferred: true,
@@ -279,17 +279,16 @@ impl UndecidedVertex {
     /// existing preferred conflicts, and its parents are strongly preferred, then it too will be
     /// marked as strongly preferred.
     pub fn new(
-        wire_vertex: Arc<Vertex>,
+        vertex: Arc<Vertex>,
         undecided_blocks: &mut TimedCache<BlockHash, Arc<Block>>,
         undecided_vertices: &mut TimedCache<VertexHash, Arc<TracingRwLock<UndecidedVertex>>>,
         conflict_free: bool,
     ) -> Result<UndecidedVertex> {
-        let undecided_parents: HashMap<VertexHash, Arc<TracingRwLock<UndecidedVertex>>> =
-            wire_vertex
-                .parents
-                .iter()
-                .filter_map(|&k| undecided_vertices.cache_get(&k).map(|v| (k, v.clone())))
-                .collect();
+        let undecided_parents: HashMap<VertexHash, Arc<TracingRwLock<UndecidedVertex>>> = vertex
+            .parents
+            .iter()
+            .filter_map(|&k| undecided_vertices.cache_get(&k).map(|v| (k, v.clone())))
+            .collect();
         // Strongly preferred if no conflicts and all undecided parents are also strongly preferred.
         let strongly_preferred = conflict_free
             && undecided_parents
@@ -302,12 +301,12 @@ impl UndecidedVertex {
                 .try_fold(true, |all, strongly_preferred| {
                     strongly_preferred.map(|sp| sp && all)
                 })?;
-        let inner = match wire_vertex.block {
-            Some(_) => wire_vertex,
+        let inner = match vertex.block {
+            Some(_) => vertex,
             None => Arc::new(
-                wire_vertex.deref().clone().with_block(
+                vertex.deref().clone().with_block(
                     undecided_blocks
-                        .cache_get(&wire_vertex.bhash)
+                        .cache_get(&vertex.bhash)
                         .cloned()
                         .ok_or(Error::MissingBlock)?,
                 ),

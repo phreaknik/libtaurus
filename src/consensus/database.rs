@@ -159,9 +159,9 @@ impl<'a> WireFormat<'a, proto::DbRecord> for DbRecord {
 
     fn from_protobuf(record: &proto::DbRecord, check: bool) -> Result<DbRecord> {
         match &record.RequestData {
-            proto::mod_DbRecord::OneOfRequestData::vertex(v) => Ok(DbRecord::Vertex(Arc::new(
-                Vertex::from_protobuf(v, check)?,
-            ))),
+            proto::mod_DbRecord::OneOfRequestData::vertex(v) => {
+                Ok(DbRecord::Vertex(Arc::new(Vertex::from_protobuf(v, check)?)))
+            }
             proto::mod_DbRecord::OneOfRequestData::link(l) => {
                 Ok(DbRecord::Link(Hash::from_protobuf(l, check)?))
             }

@@ -211,8 +211,8 @@ impl Dag {
 
     /// Try to submit this block as a vertex at the frontier of the DAG
     pub fn try_insert_block(&mut self, block: Arc<Block>, broadcast: bool) -> Result<()> {
-        let wire_vertex = Arc::new(Vertex::new(block, self.frontier.values().cloned(), true)?);
-        self.try_insert_vertices(once(wire_vertex), None, broadcast)
+        let vertex = Arc::new(Vertex::new(block, self.frontier.values().cloned(), true)?);
+        self.try_insert_vertices(once(vertex), None, broadcast)
     }
 
     /// Try to insert a list of vertices, and attempt to also insert any known waiting children
@@ -230,9 +230,9 @@ impl Dag {
         insert_list.deref_mut().sort();
 
         // Handle insertion result
-        let handle_insert = |wire_vertex: Arc<Vertex>, res: Result<bool>| {
-            let vhash = wire_vertex.hash();
-            let bhash = wire_vertex.bhash;
+        let handle_insert = |vertex: Arc<Vertex>, res: Result<bool>| {
+            let vhash = vertex.hash();
+            let bhash = vertex.bhash;
             match res {
                 Ok(preferred) => {
                     info!(
@@ -255,10 +255,10 @@ impl Dag {
 
         // Try to insert the given vertices
         let mut successful = Vec::new();
-        for wire_vertex in insert_list {
+        for vertex in insert_list {
             if let Some(success) = handle_insert(
-                wire_vertex.clone(),
-                self.try_insert_vertex(wire_vertex, sender, broadcast),
+                vertex.clone(),
+                self.try_insert_vertex(vertex, sender, broadcast),
             )? {
                 successful.push(success);
             }
@@ -276,10 +276,10 @@ impl Dag {
 
             // Try to insert any vertices which were waiting on the block just inserted
             if let Some(waiting) = waiting_by_block {
-                for wire_vertex in waiting {
+                for vertex in waiting {
                     if let Some(success) = handle_insert(
-                        wire_vertex.clone(),
-                        self.try_insert_vertex(wire_vertex, sender, broadcast),
+                        vertex.clone(),
+                        self.try_insert_vertex(vertex, sender, broadcast),
                     )? {
                         successful.push(success);
                     }
@@ -288,10 +288,10 @@ impl Dag {
 
             // Try to insert any vertices which were waiting on the vertex just inserted
             if let Some(waiting) = waiting_by_vertex {
-                for wire_vertex in waiting {
+                for vertex in waiting {
                     if let Some(success) = handle_insert(
-                        wire_vertex.clone(),
-                        self.try_insert_vertex(wire_vertex, sender, broadcast),
+                        vertex.clone(),
+                        self.try_insert_vertex(vertex, sender, broadcast),
                     )? {
                         successful.push(success);
                     }
@@ -305,12 +305,12 @@ impl Dag {
     /// currently strongly preferred.
     fn try_insert_vertex(
         &mut self,
-        wire_vertex: Arc<Vertex>,
+        vertex: Arc<Vertex>,
         sender: Option<PeerId>,
         broadcast: bool,
     ) -> Result<bool> {
-        let vhash = wire_vertex.hash();
-        debug!("Vertex submitted: {vhash} = {wire_vertex}");
+        let vhash = vertex.hash();
+        debug!("Vertex submitted: {vhash} = {vertex}");
 
         // Check if we already have this vertex
         if let Ok((_v, preferred)) = self.get_vertex(&vhash) {
@@ -318,8 +318,8 @@ impl Dag {
         }
 
         // If available, check proof-of-work before doing anything
-        let full_broadcast = if let Some(block) = &wire_vertex.block {
-            if wire_vertex.bhash != block.hash() {
+        let full_broadcast = if let Some(block) = &vertex.block {
+            if vertex.bhash != block.hash() {
                 return Err(Error::CorruptBlockHash);
             }
             // Register the block. If this block has not been seen before, we should broadcast it
@@ -330,14 +330,14 @@ impl Dag {
         };
 
         // Make sure this vertex isn't missing any necessary data to process this vertex
-        match self.request_if_missing_data(&wire_vertex, sender) {
+        match self.request_if_missing_data(&vertex, sender) {
             Err(Error::MissingBlock(b)) => {
-                self.waitlist.insert(wire_vertex.clone(), None, Some(b))?;
+                self.waitlist.insert(vertex.clone(), None, Some(b))?;
                 Err(Error::MissingBlock(b))
             }
             Err(Error::MissingVertices(v)) => {
                 self.waitlist
-                    .insert(wire_vertex.clone(), Some(v.clone()), None)?;
+                    .insert(vertex.clone(), Some(v.clone()), None)?;
                 Err(Error::MissingVertices(v))
             }
             Err(e) => Err(e),
@@ -345,11 +345,11 @@ impl Dag {
         }?;
 
         // Make sure the block referenced in this vertex can be spent
-        let (conflict_free, opt_block) = self.check_conflicts(wire_vertex.clone())?;
+        let (conflict_free, opt_block) = self.check_conflicts(vertex.clone())?;
 
         // Create a mutex protected vertex for inserting into the DAG structure
         let rw_vertex = Arc::new(TracingRwLock::new(UndecidedVertex::new(
-            wire_vertex.clone(),
+            vertex.clone(),
             &mut self.undecided_blocks,
             &mut self.undecided_vertices,
             conflict_free,
@@ -363,7 +363,7 @@ impl Dag {
             for txo_hash in opt_block
                 .as_ref()
                 .map(|b| b.inputs.iter())
-                .unwrap_or_else(|| wire_vertex.block.as_ref().unwrap().inputs.iter())
+                .unwrap_or_else(|| vertex.block.as_ref().unwrap().inputs.iter())
             {
                 self.undecided_txos
                     .get_mut(txo_hash)
@@ -376,7 +376,7 @@ impl Dag {
         for &txo in opt_block
             .as_ref()
             .map(|b| b.outputs.iter())
-            .unwrap_or_else(|| wire_vertex.block.as_ref().unwrap().outputs.iter())
+            .unwrap_or_else(|| vertex.block.as_ref().unwrap().outputs.iter())
         {
             let txo_hash = txo.hash();
             if self
@@ -390,7 +390,7 @@ impl Dag {
 
         // Broadcast to peers if this vertex didn't already come from our peers
         if broadcast {
-            let mut bcast = wire_vertex.as_ref().clone();
+            let mut bcast = vertex.as_ref().clone();
             if !full_broadcast {
                 bcast = bcast.slim().1;
             }
@@ -408,8 +408,8 @@ impl Dag {
         }?;
 
         // Add vertex as known child to each of its parents
-        let vertex = rw_vertex.read().map_err(|_| Error::VertexWriteLock)?;
-        for parent in vertex.undecided_parents.values() {
+        let dyn_vertex = rw_vertex.read().map_err(|_| Error::VertexWriteLock)?;
+        for parent in dyn_vertex.undecided_parents.values() {
             parent
                 .write()
                 .map_err(|_| Error::VertexWriteLock)?
@@ -418,11 +418,11 @@ impl Dag {
         }
 
         // Remove this vertex from the waitlist
-        self.waitlist.remove_inserted(wire_vertex.clone())?;
+        self.waitlist.remove_inserted(vertex.clone())?;
 
-        if vertex.strongly_preferred {
+        if dyn_vertex.strongly_preferred {
             // Remove its parents from the frontier, as they are no longer the youngest
-            for parent in &vertex.inner.parents {
+            for parent in &dyn_vertex.inner.parents {
                 self.frontier.remove(parent);
             }
 
@@ -433,22 +433,17 @@ impl Dag {
             self.events_ch
                 .send(Event::NewFrontier(self.frontier.keys().cloned().collect()))?;
         }
-        Ok(vertex.strongly_preferred)
+        Ok(dyn_vertex.strongly_preferred)
     }
 
     /// Check for missing data and request them from peers
-    fn request_if_missing_data(
-        &mut self,
-        // TODO: rename wire_vertex -> vertex
-        wire_vertex: &Vertex,
-        sender: Option<PeerId>,
-    ) -> Result<()> {
-        let vhash = wire_vertex.hash();
-        let bhash = wire_vertex.bhash;
+    fn request_if_missing_data(&mut self, vertex: &Vertex, sender: Option<PeerId>) -> Result<()> {
+        let vhash = vertex.hash();
+        let bhash = vertex.bhash;
 
         // Determine full set of parents to search for
-        let mut parents = wire_vertex.parents.iter().collect::<HashSet<_>>();
-        if let Some(b) = &wire_vertex.block {
+        let mut parents = vertex.parents.iter().collect::<HashSet<_>>();
+        if let Some(b) = &vertex.block {
             for vhash in &b.parents {
                 parents.insert(vhash);
             }
@@ -510,7 +505,7 @@ impl Dag {
             missing_str += "]";
             debug!(
                 "Missing parents for vertex {}: {missing_str}",
-                wire_vertex.hash()
+                vertex.hash()
             );
             return Err(Error::MissingVertices(missing_parents));
         }
@@ -520,15 +515,15 @@ impl Dag {
 
     /// Check that the vertex uniquely spends UTXOs. Returns true if no conflicts. Also reurns a
     /// reference to the block, if the block is not included in the Vertex.
-    fn check_conflicts(&mut self, wire_vertex: Arc<Vertex>) -> Result<(bool, Option<Arc<Block>>)> {
+    fn check_conflicts(&mut self, vertex: Arc<Vertex>) -> Result<(bool, Option<Arc<Block>>)> {
         // Make sure transaction inputs are in the txo set. If they are not in the txo set at all,
         // then reject this vertex entirely. If they are in the txo set, but spent by another
         // vertex, it is still possible to insert this vertex, but it will be in conflict and
         // according to Avalanche consensus rules, it will not be accepted unless its confidence
         // exceeds that of its conflicts.
 
-        let bhash = wire_vertex.bhash;
-        let block = wire_vertex
+        let bhash = vertex.bhash;
+        let block = vertex
             .block
             .as_ref()
             .cloned()
@@ -820,11 +815,10 @@ impl Dag {
                     _ => {}
                 }
             }
-            consensus_rpc::Response::Vertex(wire_vertex) => {
-                let vhash = wire_vertex.hash();
-                debug!("Received vertex response {vhash}={wire_vertex}");
-                if let Err(e) = self.try_insert_vertices(once(wire_vertex), Some(from_peer), false)
-                {
+            consensus_rpc::Response::Vertex(vertex) => {
+                let vhash = vertex.hash();
+                debug!("Received vertex response {vhash}={vertex}");
+                if let Err(e) = self.try_insert_vertices(once(vertex), Some(from_peer), false) {
                     debug!("Unable to insert requested vertex {vhash}: {e}");
                 }
             }

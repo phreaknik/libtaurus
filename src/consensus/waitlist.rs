@@ -42,11 +42,11 @@ impl WaitList {
     /// Inserts a new vertex into the waitlist.
     pub fn insert(
         &mut self,
-        wire_vertex: Arc<Vertex>,
+        vertex: Arc<Vertex>,
         missing_parents: Option<Vec<VertexHash>>,
         missing_block: Option<BlockHash>,
     ) -> Result<()> {
-        let vhash = wire_vertex.hash();
+        let vhash = vertex.hash();
         // Add vertex hash to the list of waiting vertexes
         if !self.manifest.insert(vhash) {
             // Already in the list
@@ -57,12 +57,12 @@ impl WaitList {
                 for parent_hash in parents {
                     if let Some(parent_queue) = self.by_parent.get_mut(&parent_hash) {
                         // Add this vertex as a descendent in the parent's queue
-                        parent_queue.insert(vhash, wire_vertex.clone());
+                        parent_queue.insert(vhash, vertex.clone());
                     } else {
                         // Insert a new entry
                         if let Some(evicted) = self
                             .by_parent
-                            .put(parent_hash, once((vhash, wire_vertex.clone())).collect())
+                            .put(parent_hash, once((vhash, vertex.clone())).collect())
                         {
                             warn!("Waitlist unexpectedly evicted vertices: {evicted:?}")
                         }
@@ -73,12 +73,12 @@ impl WaitList {
             if let Some(bhash) = missing_block {
                 if let Some(block_queue) = self.by_block.get_mut(&bhash) {
                     // Add this vertex as a descendent in the block's queue
-                    block_queue.insert(vhash, wire_vertex.clone());
+                    block_queue.insert(vhash, vertex.clone());
                 } else {
                     // Insert a new entry
                     if let Some(evicted) = self
                         .by_block
-                        .put(bhash, once((vhash, wire_vertex.clone())).collect())
+                        .put(bhash, once((vhash, vertex.clone())).collect())
                     {
                         warn!("Waitlist unexpectedly evicted vertices: {evicted:?}")
                     }
@@ -110,19 +110,19 @@ impl WaitList {
     }
 
     /// Remove a vertex from the waitlist which was inserted into the DAG.
-    pub fn remove_inserted(&mut self, wire_vertex: Arc<Vertex>) -> Result<()> {
-        let vhash = wire_vertex.hash();
+    pub fn remove_inserted(&mut self, vertex: Arc<Vertex>) -> Result<()> {
+        let vhash = vertex.hash();
         // Remove from the contents
         self.manifest.remove(&vhash);
         // Remove from each of parents' queues, if any
-        for parent in &wire_vertex.parents {
+        for parent in &vertex.parents {
             self.by_parent
                 .get_mut(parent)
                 .and_then(|queue| queue.remove(&vhash));
         }
         // Remove from the block's queue, if any
         self.by_block
-            .get_mut(&wire_vertex.bhash)
+            .get_mut(&vertex.bhash)
             .and_then(|queue| queue.remove(&vhash));
         Ok(())
     }
