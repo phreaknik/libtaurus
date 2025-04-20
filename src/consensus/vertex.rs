@@ -40,12 +40,21 @@ pub type Result<T> = result::Result<T, Error>;
 /// Type alias for vertex hashes
 pub type VertexHash = crate::hash::Hash;
 
-/// A vertex descibes a block's position within the DAG.
+/// A vertex descibes a block's adapted position within the DAG. Importantly, its adapted position
+/// may differ from its mined position, due to dynamic parent reselection, in the case of
+/// non-virtuous mined_parents.
 #[derive(Clone, Default)]
 pub struct Vertex {
+    /// Revision number of the vertex structure
     pub version: u32,
+
+    /// Hash of the block this vertex represents
     pub bhash: BlockHash,
+
+    /// Pointers to adaptively reselected parents, if any
     pub parents: Vec<VertexHash>,
+
+    /// Optional full block
     pub block: Option<Arc<Block>>,
 }
 
@@ -83,7 +92,7 @@ impl Vertex {
     pub fn sanity_checks(&self) -> Result<()> {
         if self.version != VERSION {
             Err(Error::BadVertexVersion(self.version))
-        } else if self.parents.len() <= 0 {
+        } else if self.parents.len() <= 0 && self.block.is_none() {
             Err(Error::EmptyParents)
         } else if let Some(block) = &self.block {
             if block.hash() != self.bhash {
@@ -126,24 +135,48 @@ impl<'a> WireFormat<'a, proto::Vertex> for Vertex {
         if check {
             self.sanity_checks()?;
         }
+        // Only encode the blockhash if the full block is not present
         let (block, block_hash) = if let Some(b) = &self.block {
             (Some(b.to_protobuf(check)?), None)
         } else {
             (None, Some(self.bhash.to_protobuf(check)?))
         };
+        // Only encode the vertex parents if they differ from the block parents
+        let parents =
+            if self.block.is_none() || self.block.as_ref().unwrap().parents != self.parents {
+                self.parents
+                    .iter()
+                    .map(|p| p.to_protobuf(check))
+                    .try_collect()?
+            } else {
+                Vec::new()
+            };
         Ok(proto::Vertex {
             version: self.version,
-            parents: self
-                .parents
-                .iter()
-                .map(|p| p.to_protobuf(check))
-                .try_collect()?,
+            parents,
             block_hash,
             block,
         })
     }
 
     fn from_protobuf(vertex: &proto::Vertex, check: bool) -> Result<Vertex> {
+        // If no parents are provided, fill with block's parents
+        let parents = if vertex.parents.len() == 0 {
+            if let Some(b) = &vertex.block {
+                Ok(b.parents
+                    .iter()
+                    .map(|p| VertexHash::from_protobuf(&p, check))
+                    .try_collect()?)
+            } else {
+                Err(Error::EmptyParents)
+            }
+        } else {
+            Ok(vertex
+                .parents
+                .iter()
+                .map(|p| VertexHash::from_protobuf(&p, check))
+                .try_collect()?)
+        }?;
         let (block, bhash) = if let Some(b) = &vertex.block {
             let block = Block::from_protobuf(b, check)?;
             let bhash = block.hash();
@@ -159,11 +192,7 @@ impl<'a> WireFormat<'a, proto::Vertex> for Vertex {
         };
         let vertex = Vertex {
             version: vertex.version,
-            parents: vertex
-                .parents
-                .iter()
-                .map(|p| VertexHash::from_protobuf(&p, check))
-                .try_collect()?,
+            parents,
             block,
             bhash,
         };

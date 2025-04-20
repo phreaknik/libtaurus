@@ -52,7 +52,8 @@ pub type BlockHash = crate::hash::Hash;
 
 /// A block represents a collection of transactions which have been mined with proof-of-work, as
 /// well as their position within the DAG. This differs slightly from a vertex, as the vertex may
-/// be repositioned in the DAG if parents turn out to be non-virtuous.
+/// be repositioned in the DAG if parents turn out to be non-virtuous. This is referred to as
+/// dynamic parent reselection.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Block {
     /// Block format revision number
