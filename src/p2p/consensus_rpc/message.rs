@@ -112,10 +112,9 @@ impl<'a> WireFormat<'a, proto::Response> for Response {
 
 #[cfg(test)]
 mod tests {
-    use crate::wire::WireFormat;
-
     use super::proto;
     use super::Request;
+    use crate::wire::WireFormat;
     use quick_protobuf::{BytesReader, MessageRead, MessageWrite, Writer};
     use strum::IntoEnumIterator;
 
