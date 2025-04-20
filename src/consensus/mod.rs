@@ -105,7 +105,7 @@ impl GenesisConfig {
             version: 0,
             difficulty: self.difficulty,
             miner: PeerId::from_multihash(Multihash::default()).unwrap(),
-            prev_mined: None,
+            parents: Vec::new(),
             inputs: Vec::new(),
             outputs: Vec::new(),
             time: self.time,
@@ -203,6 +203,13 @@ impl Runtime {
             self.dag.read().unwrap().genesis_hash().to_hex()
         );
 
+        // Send initial NewFrontier event to initiate the miner
+        self.events_out
+            .send(Event::NewFrontier(
+                self.dag.read().expect("Failed to read DAG").get_frontier(),
+            ))
+            .expect("Failed to send initial frontier!");
+
         // Handle consensus events
         let mut internal_events = self.events_out.subscribe();
         loop {
@@ -294,9 +301,7 @@ impl Runtime {
                     false,
                 ) {
                     Err(
-                        avalanche::Error::MissingBlock(_)
-                        | avalanche::Error::MissingParents(_)
-                        | avalanche::Error::MissingPrevMined(_),
+                        avalanche::Error::MissingBlock(_) | avalanche::Error::MissingVertices(_),
                     ) => Ok(ignore),
                     Err(_) => Ok(reject),
                     Ok(_) => Ok(accept),

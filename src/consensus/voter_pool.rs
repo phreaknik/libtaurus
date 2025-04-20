@@ -58,10 +58,7 @@ impl VoterPool {
     pub fn register_from_block(&mut self, block: Arc<Block>) -> bool {
         if let Some(voter) = self.all_voters.get_mut(&block.miner) {
             let mut v = voter.write().unwrap();
-            if block.prev_mined == Some(v.last_block.hash()) {
-                // Only register if the miner linked the correct last block
-                v.record_block(block);
-            }
+            v.record_block(block);
             false
         } else {
             self.all_voters.insert(

@@ -56,9 +56,7 @@ pub enum Error {
     #[error("missing block")]
     MissingBlock(BlockHash),
     #[error("missing parents")]
-    MissingParents(Vec<VertexHash>),
-    #[error("missing the previously mined block from this miner")]
-    MissingPrevMined(BlockHash),
+    MissingVertices(Vec<VertexHash>),
     #[error("new block channel error")]
     NewBlockCh(#[from] tokio::sync::mpsc::error::SendError<Block>),
     #[error("data not found")]
@@ -213,11 +211,7 @@ impl Dag {
 
     /// Try to submit this block as a vertex at the frontier of the DAG
     pub fn try_insert_block(&mut self, block: Arc<Block>, broadcast: bool) -> Result<()> {
-        let wire_vertex = Arc::new(Vertex::new(
-            block,
-            self.frontier.values().cloned(),
-            true,
-        )?);
+        let wire_vertex = Arc::new(Vertex::new(block, self.frontier.values().cloned(), true)?);
         self.try_insert_vertices(once(wire_vertex), None, broadcast)
     }
 
@@ -235,79 +229,72 @@ impl Dag {
         let mut insert_list: Vec<_> = vertices.into_iter().collect();
         insert_list.deref_mut().sort();
 
-        // Try to insert the given vertices
-        let mut successful = Vec::new();
-        for wire_vertex in insert_list {
+        // Handle insertion result
+        let handle_insert = |wire_vertex: Arc<Vertex>, res: Result<bool>| {
             let vhash = wire_vertex.hash();
             let bhash = wire_vertex.bhash;
-            match self.try_insert_vertex(wire_vertex.clone(), sender, broadcast) {
+            match res {
                 Ok(preferred) => {
                     info!(
                         "Inserted {}preferred vertex {}",
                         if !preferred { "non-" } else { "" },
                         vhash.to_hex()
                     );
-                    Ok(successful.push((vhash, bhash)))
+                    Ok(Some((vhash, bhash)))
                 }
-                Err(
-                    e @ Error::MissingPrevMined(_)
-                    | e @ Error::MissingBlock(_)
-                    | e @ Error::MissingParents(_),
-                ) => {
+                Err(e @ Error::MissingBlock(_) | e @ Error::MissingVertices(_)) => {
                     info!("Error inserting {vhash}: {e}");
-                    Ok(())
+                    Ok(None)
                 }
                 Err(e) => {
                     info!("Error inserting {vhash}: {e}");
                     Err(e)
                 }
-            }?;
+            }
+        };
+
+        // Try to insert the given vertices
+        let mut successful = Vec::new();
+        for wire_vertex in insert_list {
+            if let Some(success) = handle_insert(
+                wire_vertex.clone(),
+                self.try_insert_vertex(wire_vertex, sender, broadcast),
+            )? {
+                successful.push(success);
+            }
         }
+
+        // Omit sender when retrying insertion of blocks in the waitlist, because there is no
+        // expectation the sender can serve a missing data request for items in the
+        // waitlist.
+        let sender = None;
 
         // Attempt to insert any dependents of the successful insertions
         while let Some((vhash, bhash)) = successful.pop() {
             let waiting_by_block = self.waitlist.get_by_block(&bhash)?;
             let waiting_by_vertex = self.waitlist.get_by_vertex(&vhash)?;
-            let mut try_insert_waiting = |wire_vertex: Arc<Vertex>| -> Result<()> {
-                let vhash = wire_vertex.hash();
-                let bhash = wire_vertex.bhash;
-                // Exclude sender, because there is no expectation the sender can serve a
-                // missing data request for items in the waitlist.
-                match self.try_insert_vertex(wire_vertex.clone(), None, false) {
-                    Ok(preferred) => {
-                        info!(
-                            "Inserted {}preferred vertex {}",
-                            if !preferred { "non-" } else { "" },
-                            vhash.to_hex()
-                        );
-                        Ok(successful.push((vhash, bhash)))
-                    }
-                    Err(
-                        e @ Error::MissingPrevMined(_)
-                        | e @ Error::MissingBlock(_)
-                        | e @ Error::MissingParents(_),
-                    ) => {
-                        info!("Error inserting {vhash}: {e}");
-                        Ok(())
-                    }
-                    Err(e) => {
-                        info!("Error inserting {vhash}: {e}");
-                        Err(e)
-                    }
-                }
-            };
 
             // Try to insert any vertices which were waiting on the block just inserted
             if let Some(waiting) = waiting_by_block {
                 for wire_vertex in waiting {
-                    try_insert_waiting(wire_vertex)?;
+                    if let Some(success) = handle_insert(
+                        wire_vertex.clone(),
+                        self.try_insert_vertex(wire_vertex, sender, broadcast),
+                    )? {
+                        successful.push(success);
+                    }
                 }
             }
 
             // Try to insert any vertices which were waiting on the vertex just inserted
             if let Some(waiting) = waiting_by_vertex {
                 for wire_vertex in waiting {
-                    try_insert_waiting(wire_vertex)?;
+                    if let Some(success) = handle_insert(
+                        wire_vertex.clone(),
+                        self.try_insert_vertex(wire_vertex, sender, broadcast),
+                    )? {
+                        successful.push(success);
+                    }
                 }
             }
         }
@@ -344,15 +331,14 @@ impl Dag {
 
         // Make sure this vertex isn't missing any necessary data to process this vertex
         match self.request_if_missing_data(&wire_vertex, sender) {
-            Err(Error::MissingPrevMined(bhash) | Error::MissingBlock(bhash)) => {
-                self.waitlist
-                    .insert(wire_vertex.clone(), None, Some(bhash))?;
-                Err(Error::MissingBlock(bhash))
+            Err(Error::MissingBlock(b)) => {
+                self.waitlist.insert(wire_vertex.clone(), None, Some(b))?;
+                Err(Error::MissingBlock(b))
             }
-            Err(Error::MissingParents(parents)) => {
+            Err(Error::MissingVertices(v)) => {
                 self.waitlist
-                    .insert(wire_vertex.clone(), Some(parents.clone()), None)?;
-                Err(Error::MissingParents(parents))
+                    .insert(wire_vertex.clone(), Some(v.clone()), None)?;
+                Err(Error::MissingVertices(v))
             }
             Err(e) => Err(e),
             Ok(()) => Ok(()),
@@ -453,16 +439,31 @@ impl Dag {
     /// Check for missing data and request them from peers
     fn request_if_missing_data(
         &mut self,
+        // TODO: rename wire_vertex -> vertex
         wire_vertex: &Vertex,
         sender: Option<PeerId>,
     ) -> Result<()> {
+        let vhash = wire_vertex.hash();
+        let bhash = wire_vertex.bhash;
+
+        // Determine full set of parents to search for
+        let mut parents = wire_vertex.parents.iter().collect::<HashSet<_>>();
+        if let Some(b) = &wire_vertex.block {
+            for vhash in &b.parents {
+                parents.insert(vhash);
+            }
+        }
+
         // Lookup any missing parents
-        let missing_parents: Vec<VertexHash> = wire_vertex
-            .parents
-            .iter()
+        let missing_parents: Vec<VertexHash> = parents
+            .into_iter()
             .filter(|vhash| {
                 // Filter out any vertex already in the undecided DAG
                 self.undecided_vertices.cache_get(vhash).is_none()
+            })
+            .filter(|vhash| {
+                // Filter out any vertex already waiting in the waitlist
+                !self.waitlist.contains(vhash).expect("waitlist read error")
             })
             .filter(|vhash| {
                 // Filter out any vertex already finalized in the database
@@ -470,10 +471,6 @@ impl Dag {
                     .read_vertex(vhash)
                     .expect("database read error")
                     .is_none()
-            })
-            .filter(|vhash| {
-                // Filter out any vertex already waiting in the waitlist
-                !self.waitlist.contains(vhash).expect("waitlist read error")
             })
             .map(|&parent| {
                 // Request missing parent from peers
@@ -487,22 +484,9 @@ impl Dag {
                 Ok::<_, Error>(parent)
             })
             .try_collect()?;
-        if missing_parents.len() > 0 {
-            let mut missing_str = format!("[{}", missing_parents[0]);
-            for missing in missing_parents[1..].into_iter() {
-                missing_str += &format!(", {}", missing);
-            }
-            missing_str += "]";
-            debug!(
-                "Missing parents for vertex {}: {missing_str}",
-                wire_vertex.hash()
-            );
-            return Err(Error::MissingParents(missing_parents));
-        }
-        let vhash = wire_vertex.hash();
-        let bhash = wire_vertex.bhash;
+
         // Make sure we have the block referenced by the given vertex
-        let block = match self.get_block(&bhash) {
+        match self.get_block(&bhash) {
             Err(Error::NotFound) => {
                 info!("Missing block for vertex {vhash}: {bhash}");
                 if let Some(peer) = sender {
@@ -517,32 +501,26 @@ impl Dag {
             other @ _ => other,
         }?;
 
-        // Make sure we have the parent block, if any
-        if let Some(prev_hash) = block.prev_mined {
-            match self.get_block(&prev_hash) {
-                Err(Error::NotFound) => {
-                    info!("Missing previously mined block {prev_hash} from miner.");
-                    if let Some(peer) = sender {
-                        debug!("Requesting block {bhash}");
-                        self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
-                            peer,
-                            consensus_rpc::Request::GetBlock(bhash),
-                        ))?;
-                    }
-                    Err(Error::MissingPrevMined(prev_hash))
-                }
-                other @ _ => other,
-            }?;
+        // Return missing parent error if any
+        if missing_parents.len() > 0 {
+            let mut missing_str = format!("[{}", missing_parents[0]);
+            for missing in missing_parents[1..].into_iter() {
+                missing_str += &format!(", {}", missing);
+            }
+            missing_str += "]";
+            debug!(
+                "Missing parents for vertex {}: {missing_str}",
+                wire_vertex.hash()
+            );
+            return Err(Error::MissingVertices(missing_parents));
         }
+
         Ok(())
     }
 
     /// Check that the vertex uniquely spends UTXOs. Returns true if no conflicts. Also reurns a
     /// reference to the block, if the block is not included in the Vertex.
-    fn check_conflicts(
-        &mut self,
-        wire_vertex: Arc<Vertex>,
-    ) -> Result<(bool, Option<Arc<Block>>)> {
+    fn check_conflicts(&mut self, wire_vertex: Arc<Vertex>) -> Result<(bool, Option<Arc<Block>>)> {
         // Make sure transaction inputs are in the txo set. If they are not in the txo set at all,
         // then reject this vertex entirely. If they are in the txo set, but spent by another
         // vertex, it is still possible to insert this vertex, but it will be in conflict and
@@ -916,6 +894,11 @@ impl Dag {
             }
         }
         Ok(())
+    }
+
+    /// Method to request a copy of the current DAG frontier
+    pub fn get_frontier(&self) -> Vec<VertexHash> {
+        self.frontier.keys().copied().collect()
     }
 }
 

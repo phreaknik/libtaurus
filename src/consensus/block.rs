@@ -3,6 +3,7 @@ use crate::{
     params::{self, FUTURE_BLOCK_LIMIT_SECS, MIN_DIFFICULTY},
     randomx::{self, RandomXVMInstance},
     wire::{proto, WireFormat},
+    VertexHash,
 };
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use heed::{BytesDecode, BytesEncode};
@@ -49,7 +50,9 @@ pub type Result<T> = result::Result<T, Error>;
 /// Type alias for block hashes
 pub type BlockHash = crate::hash::Hash;
 
-/// A block represents a collection of transactions which have been mined with proof-of-work
+/// A block represents a collection of transactions which have been mined with proof-of-work, as
+/// well as their position within the DAG. This differs slightly from a vertex, as the vertex may
+/// be repositioned in the DAG if parents turn out to be non-virtuous.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Block {
     /// Block format revision number
@@ -61,8 +64,8 @@ pub struct Block {
     /// Which peer mined this block
     pub miner: PeerId,
 
-    /// Block hash of this peer's previously mined block
-    pub prev_mined: Option<BlockHash>,
+    /// Vertex hashes of parent vertices in the DAG.
+    pub parents: Vec<VertexHash>,
 
     /// Transaction outputs consumed by this block
     pub inputs: Vec<TxoHash>,
@@ -79,12 +82,12 @@ pub struct Block {
 
 impl Block {
     /// Create a new empty block
-    pub fn new(miner: PeerId, prev_mined: Option<BlockHash>) -> Block {
+    pub fn with_parents(miner: PeerId, parents: Vec<VertexHash>) -> Block {
         Block {
             version: VERSION,
             difficulty: MIN_DIFFICULTY,
             miner,
-            prev_mined,
+            parents,
             inputs: Vec::new(),
             outputs: Vec::new(),
             time: Utc::now(),
@@ -124,6 +127,7 @@ impl Block {
 
     /// Check if the block has valid proof-of-work
     pub fn verify_pow(&self, randomx: &RandomXVMInstance) -> Result<()> {
+        // TODO: validate difficulty against DAA
         if BigUint::from_bytes_be(&randomx.calculate_hash(&self.to_wire(false)?)?)
             < self.mining_target()?
         {
@@ -146,10 +150,11 @@ impl<'a> WireFormat<'a, proto::Block> for Block {
             version: self.version,
             difficulty: self.difficulty,
             miner: self.miner.to_bytes(),
-            prev_mined: match self.prev_mined {
-                Some(hash) => Some(hash.to_protobuf(check)?),
-                None => None,
-            },
+            parents: self
+                .parents
+                .iter()
+                .map(|vhash| vhash.to_protobuf(check))
+                .try_collect()?,
             inputs: self
                 .inputs
                 .iter()
@@ -173,10 +178,11 @@ impl<'a> WireFormat<'a, proto::Block> for Block {
             version: block.version,
             difficulty: block.difficulty,
             miner: PeerId::from_bytes(&block.miner)?,
-            prev_mined: match &block.prev_mined {
-                Some(hash) => Some(BlockHash::from_protobuf(hash, check)?),
-                None => None,
-            },
+            parents: block
+                .parents
+                .iter()
+                .map(|vhash| VertexHash::from_protobuf(vhash, check))
+                .try_collect()?,
             inputs: block
                 .inputs
                 .iter()
@@ -221,7 +227,7 @@ impl Default for Block {
             version: VERSION,
             difficulty: MIN_DIFFICULTY,
             miner: PeerId::from_multihash(Multihash::default()).unwrap(),
-            prev_mined: None,
+            parents: Vec::new(),
             inputs: Vec::new(),
             outputs: Vec::new(),
             time: Utc::now(),
@@ -255,7 +261,7 @@ struct PrettyBlock {
     version: u32,
     difficulty: u64,
     miner: PeerId,
-    prev_mined: Vec<String>,
+    parents: Vec<String>,
     inputs: Vec<String>,
     outputs: Vec<String>,
     time: DateTime<Utc>,
@@ -268,10 +274,7 @@ impl From<&Block> for PrettyBlock {
             version: block.version,
             difficulty: block.difficulty,
             miner: block.miner,
-            prev_mined: block
-                .prev_mined
-                .map(|bhash| vec![bhash.to_hex()])
-                .unwrap_or(Vec::new()),
+            parents: block.parents.iter().map(|vhash| vhash.to_hex()).collect(),
             inputs: block.inputs.iter().map(|txo| txo.to_hex()).collect(),
             outputs: block
                 .outputs

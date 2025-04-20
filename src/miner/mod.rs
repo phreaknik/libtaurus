@@ -94,14 +94,7 @@ async fn task_fn(
         RandomXVMInstance::new(b"cordelia-randomx", RandomXFlag::get_recommended_flags()).unwrap();
     let miner_id = PeerId::from(config.identity_key.public());
     info!("Starting miner...");
-    let mut last_block = None;
-    let mut results_receiver = spawn_mining_threads(
-        config.num_threads,
-        randomx_vm.clone(),
-        Block::new(miner_id, last_block),
-        sols_count_sender.clone(),
-    )
-    .expect("Failed to start miner.");
+    let (_, mut results_receiver) = mpsc::unbounded_channel();
     // Event loop
     loop {
         select! {
@@ -112,9 +105,9 @@ async fn task_fn(
                     Ok(event) => {
                         match event {
                             // Restart mining threads to mine on new frontier
-                            consensus::Event::NewFrontier(_) => {
+                            consensus::Event::NewFrontier(vertices) => {
                                 results_receiver.close(); // Kill previous mining threads
-                                results_receiver = match spawn_mining_threads(config.num_threads, randomx_vm.clone(), Block::new(miner_id, last_block), sols_count_sender.clone()) {
+                                results_receiver = match spawn_mining_threads(config.num_threads, randomx_vm.clone(), Block::with_parents(miner_id, vertices), sols_count_sender.clone()) {
                                     Ok(ch) => ch,
                                     Err(e) => {
                                         error!("Failed to start miners: {e}");
@@ -131,7 +124,6 @@ async fn task_fn(
             // Handle results from the mining threads
             Some(block) = results_receiver.recv() => {
                 if block.verify_pow(&randomx_vm).is_ok() {
-                    last_block = Some(block.hash());
                     info!("Mined a new block {}", block.hash().to_hex());
                     if consensus_action_ch.send(consensus::Action::SubmitBlock(block)).is_err() {
                         error!("Stopping...");
