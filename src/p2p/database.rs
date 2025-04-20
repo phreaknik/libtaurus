@@ -6,7 +6,7 @@ use libp2p::{identify, Multiaddr, PeerId};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf};
 
-/// Database of peer info, using the ['heed'] LMDB database wrapper.
+/// Database of peer info, using the [`heed`] LMDB database wrapper.
 #[derive(Clone)]
 pub struct PeerDatabase {
     pub env: Env,

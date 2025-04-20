@@ -79,7 +79,7 @@ pub enum Error {
 /// Result type for cordelia-p2p
 pub type Result<T> = result::Result<T, Error>;
 
-/// Configuration details for ['cordelia-p2p'].
+/// Configuration details for [`cordelia-p2p`].
 #[derive(Clone)]
 pub struct Config {
     /// Path to the p2p data directory
@@ -91,8 +91,8 @@ pub struct Config {
 }
 
 /// Run the p2p networking client, spawning the client task as a new thread. Returns an
-/// ['UnboundedSender'], which can be used to send actions to the running task. Also returns a
-/// ['broadcast::Sender'], which can be subscribed to, to receive P2P events from the task.
+/// [`UnboundedSender`], which can be used to send actions to the running task. Also returns a
+/// [`broadcast::Sender`], which can be subscribed to, to receive P2P events from the task.
 pub fn start(config: Config) -> (UnboundedSender<Action>, broadcast::Sender<Event>) {
     // Spawn the task
     let (action_sender, action_receiver) = mpsc::unbounded_channel();

@@ -198,6 +198,6 @@ impl NetworkBehaviour for Behaviour {
 type SwarmAction<'a> =
     ToSwarm<<Behaviour as NetworkBehaviour>::ToSwarm, THandlerInEvent<Behaviour>>;
 
-/// Configuration for the ['consensus_rpc::Behaviour'](Behaviour)
+/// Configuration for the [`consensus_rpc::Behaviour`](Behaviour)
 #[derive(Debug, Clone, Default)]
 pub struct Config {}

@@ -120,7 +120,7 @@ impl GenesisConfig {
     }
 }
 
-/// Run the consensus process, spawning the task as a new thread. Returns an ['broadcast::Sender'],
+/// Run the consensus process, spawning the task as a new thread. Returns an [`broadcast::Sender`],
 /// which can be subscribed to, to receive consensus events from the task.
 pub fn start(
     config: Config,

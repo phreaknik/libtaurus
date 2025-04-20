@@ -221,7 +221,7 @@ fn build_cfg(args: &ArgMatches) -> Config {
     }
 }
 
-/// Build P2P ['p2p::Config'] from parsed CLI args
+/// Build P2P [`p2p::Config`] from parsed CLI args
 fn build_p2p_cfg(args: &ArgMatches) -> p2p::Config {
     // Read the peer identity key if it exists, or create a new one.
     let data_dir = parse_data_dir(args);
@@ -237,7 +237,7 @@ fn build_p2p_cfg(args: &ArgMatches) -> p2p::Config {
     }
 }
 
-/// Build P2P ['p2p::Config'] from parsed CLI args
+/// Build P2P [`p2p::Config`] from parsed CLI args
 fn build_consensus_cfg(args: &ArgMatches) -> consensus::Config {
     let data_dir = parse_data_dir(args).join("consensus/");
     let genesis = GenesisConfig {
@@ -263,7 +263,7 @@ fn build_consensus_cfg(args: &ArgMatches) -> consensus::Config {
     }
 }
 
-/// Build miner ['miner::Config'] from parsed CLI args
+/// Build miner [`miner::Config`] from parsed CLI args
 fn build_miner_cfg(args: &ArgMatches) -> miner::Config {
     let data_dir = parse_data_dir(args);
     let identity_key = get_peer_identity_key(&data_dir);

@@ -213,7 +213,7 @@ impl std::fmt::Debug for Block {
     }
 }
 
-/// This implementation of ['Default'] is nonsense and should never be used. It is only implemented
+/// This implementation of [`Default`] is nonsense and should never be used. It is only implemented
 /// to satisfy a trait boundary, but the actual contents are not used.
 impl Default for Block {
     fn default() -> Self {

@@ -125,7 +125,7 @@ impl VoterRecord {
         }
     }
 
-    /// Return the ['PeerID'] associated with this voter record
+    /// Return the [`PeerID`] associated with this voter record
     pub fn id(&self) -> PeerId {
         self.id
     }
@@ -199,7 +199,7 @@ impl Scorecard {
     /// Register the vote from a voter.
     ///
     /// Votes is only counted if this voter is one of the allowed voters and has not voted already.
-    /// Return ['Some'] if a decision has been reached (even if we're still awaiting some
+    /// Return [`Some`] if a decision has been reached (even if we're still awaiting some
     /// votes). If the voters reched quorum for the corresponding vertex, then the result will
     /// be `Some(true)`. If the vote completed without reaching quorum, the result will be
     /// `Some(false)`. If the vote has not completed yet, the result will be `None`.

@@ -236,7 +236,7 @@ impl std::fmt::Debug for Vertex {
     }
 }
 
-/// UndecidedVertex is a wrapper around ['Vertex'] which provides dynamic links and metadata useful
+/// UndecidedVertex is a wrapper around [`Vertex`] which provides dynamic links and metadata useful
 /// during the decision process for accepting new vertices.
 #[derive(Debug, Clone)]
 pub struct UndecidedVertex {

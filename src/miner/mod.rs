@@ -62,7 +62,7 @@ pub struct Config {
     pub identity_key: Keypair,
 }
 
-/// Run the mining process, spawning the task as a new thread. Returns an ['broadcast::Sender'],
+/// Run the mining process, spawning the task as a new thread. Returns an [`broadcast::Sender`],
 /// which can be subscribed to, to receive mining events from the task.
 pub fn start(
     config: Config,

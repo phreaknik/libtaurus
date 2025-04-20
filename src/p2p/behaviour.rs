@@ -75,7 +75,7 @@ pub struct Behaviour {
 }
 
 impl<'a> Behaviour {
-    /// Create a new instance of the cordelia-p2p ['Behaviour'].
+    /// Create a new instance of the cordelia-p2p [`Behaviour`].
     pub fn new(config: Config, peer_db: PeerDatabase) -> crate::p2p::Result<Self> {
         let mut b = Behaviour {
             peer_db,
@@ -166,13 +166,13 @@ impl<'a> Behaviour {
         self.inner.block_lists.block_peer(peer)
     }
 
-    /// Send a request to a peer via the ['consensus_rpc'] protocol
+    /// Send a request to a peer via the [`consensus_rpc`] protocol
     pub fn avalanche_request(&mut self, peer: &PeerId, request: consensus_rpc::Request) {
         trace!("Sending request: {request}");
         self.inner.consensus_rpc.send_request(peer, request)
     }
 
-    /// Respond to a received avalanche request, via the ['consensus_rpc'] protocol
+    /// Respond to a received avalanche request, via the [`consensus_rpc`] protocol
     pub fn avalanche_response(
         &mut self,
         request_id: InboundRequestId,
