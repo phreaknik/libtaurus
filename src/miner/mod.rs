@@ -2,6 +2,7 @@ use crate::consensus::{block, Block};
 use crate::randomx::{self, RandomXVMInstance};
 use crate::wire::WireFormat;
 use crate::{consensus, util};
+use chrono::Utc;
 use libp2p::identity::Keypair;
 use libp2p::PeerId;
 use num::{BigUint, FromPrimitive};
@@ -107,7 +108,15 @@ async fn task_fn(
                             // Restart mining threads to mine on new frontier
                             consensus::Event::NewFrontier(vertices) => {
                                 results_receiver.close(); // Kill previous mining threads
-                                results_receiver = match spawn_mining_threads(config.num_threads, randomx_vm.clone(), Block::with_parents(miner_id, vertices), sols_count_sender.clone()) {
+                                let new_block =
+                                      Block::default()
+                                          .with_timestamp(Utc::now())
+                                          .with_miner(miner_id)
+                                          .with_parents(vertices);
+                                results_receiver = match spawn_mining_threads(config.num_threads,
+                                                                              randomx_vm.clone(),
+                                                                              new_block,
+                                                                              sols_count_sender.clone()) {
                                     Ok(ch) => ch,
                                     Err(e) => {
                                         error!("Failed to start miners: {e}");

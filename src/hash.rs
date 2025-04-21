@@ -115,60 +115,63 @@ pub mod tests {
         pub long_hex: &'a str,
         pub short_hex: &'a str,
     }
-    pub const TEST_CASES: &[TestCase] = &[
-        TestCase {
-            decoded: Hash([
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0,
-            ]),
-            long_hex: "0000000000000000000000000000000000000000000000000000000000000000",
-            short_hex: "00000000..",
-        },
-        TestCase {
-            decoded: Hash([
-                128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0,
-            ]),
-            long_hex: "8000000000000000000000000000000000000000000000000000000000000000",
-            short_hex: "80000000..",
-        },
-        TestCase {
-            decoded: Hash([
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 1,
-            ]),
-            long_hex: "0000000000000000000000000000000000000000000000000000000000000001",
-            short_hex: "00000000..",
-        },
-        TestCase {
-            decoded: Hash([
-                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-            ]),
-            long_hex: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-            short_hex: "ffffffff..",
-        },
-        TestCase {
-            decoded: Hash([
-                127, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-            ]),
-            long_hex: "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-            short_hex: "7fffffff..",
-        },
-        TestCase {
-            decoded: Hash([
-                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 254,
-            ]),
-            long_hex: "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe",
-            short_hex: "ffffffff..",
-        },
-    ];
+    pub fn generate_test_hashes<'a>() -> impl Iterator<Item = TestCase<'a>> {
+        [
+            TestCase {
+                decoded: Hash([
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 0,
+                ]),
+                long_hex: "0000000000000000000000000000000000000000000000000000000000000000",
+                short_hex: "00000000..",
+            },
+            TestCase {
+                decoded: Hash([
+                    128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 0,
+                ]),
+                long_hex: "8000000000000000000000000000000000000000000000000000000000000000",
+                short_hex: "80000000..",
+            },
+            TestCase {
+                decoded: Hash([
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 1,
+                ]),
+                long_hex: "0000000000000000000000000000000000000000000000000000000000000001",
+                short_hex: "00000000..",
+            },
+            TestCase {
+                decoded: Hash([
+                    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                ]),
+                long_hex: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                short_hex: "ffffffff..",
+            },
+            TestCase {
+                decoded: Hash([
+                    127, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                ]),
+                long_hex: "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                short_hex: "7fffffff..",
+            },
+            TestCase {
+                decoded: Hash([
+                    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 254,
+                ]),
+                long_hex: "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe",
+                short_hex: "ffffffff..",
+            },
+        ]
+        .into_iter()
+    }
 
     #[test]
     fn to_hex() -> Result<()> {
-        for test in TEST_CASES {
+        for test in generate_test_hashes() {
             assert_eq!(test.decoded.to_hex(), test.long_hex);
         }
         Ok(())
@@ -176,7 +179,7 @@ pub mod tests {
 
     #[test]
     fn to_short_hex() -> Result<()> {
-        for test in TEST_CASES {
+        for test in generate_test_hashes() {
             assert_eq!(test.decoded.to_short_hex(), test.short_hex);
         }
         Ok(())

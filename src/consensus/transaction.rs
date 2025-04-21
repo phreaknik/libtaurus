@@ -24,7 +24,7 @@ pub struct Transaction {}
 pub struct TxHash(pub [u8; blake3::OUT_LEN]);
 
 /// Transaction output object
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct Txo {
     value: u64,
 }
