@@ -113,10 +113,7 @@ impl<'a> WireFormat<'a, proto::Response> for Response {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        consensus::vertex::tests::generate_test_vertices, hash::tests::generate_test_hashes,
-        wire::WireFormat,
-    };
+    use crate::{hash::tests::generate_test_hashes, wire::WireFormat};
     use itertools::Itertools;
     use std::iter;
 
@@ -253,17 +250,20 @@ mod tests {
         });
 
         // GetVertex responses
-        let encoded = [vec![
-            10, 74, 0, 1, 10, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 18, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        ]];
-        let vertex_cases = generate_test_vertices()
-            .filter(|c| !c.expect_encode_err && !c.expect_decode_err) // not trying to test sub-type errors here
-            .map(|tc| Response::Vertex(Arc::new(tc.decoded)))
-            .zip_eq(encoded.into_iter())
-            .map(|(decoded, encoded)| ResponseTestCase { decoded, encoded })
-            .take(1); // Don't need to iterate all the test vertices for this
+        let vertex_cases = iter::once(ResponseTestCase {
+            decoded: Response::Vertex(Arc::new(
+                Vertex::default()
+                    .with_block(Arc::new(
+                        Block::default().with_parents(vec![VertexHash::default()]),
+                    ))
+                    .with_parents(vec![BlockHash::default()]),
+            )),
+            encoded: vec![
+                10, 74, 0, 1, 10, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 18, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            ],
+        });
 
         // GetPreference responses
         let encoded = [

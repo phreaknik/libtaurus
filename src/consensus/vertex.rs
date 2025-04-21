@@ -420,215 +420,260 @@ impl UndecidedVertex {
 }
 
 #[cfg(test)]
-pub mod tests {
-    use crate::hash::tests::generate_test_hashes;
-
+pub mod encode_decode {
     use super::*;
+    use crate::hash::Hash;
+    use std::assert_matches::assert_matches;
 
-    pub struct TestCase<'a> {
-        pub name: &'a str,
-        pub decoded: Vertex,
-        pub encoded: Vec<u8>,
-        pub expect_encode_err: bool,
-        pub expect_decode_err: bool,
+    /// Tests encoding and decoding and returns the encode or decode error, if any.
+    fn test_encode_decode(decoded: Vertex, encoded: Vec<u8>) -> (Option<Error>, Option<Error>) {
+        let encode_err = match decoded.to_wire(true) {
+            Ok(bytes) => {
+                assert_eq!(bytes, encoded);
+                None
+            }
+            Err(e) => Some(e),
+        };
+        let decode_err = match Vertex::from_wire(&encoded, true) {
+            Ok(vertex) => {
+                assert_eq!(vertex, decoded);
+                None
+            }
+            Err(e) => Some(e),
+        };
+        (encode_err, decode_err)
     }
 
-    pub fn generate_test_vertices<'a>() -> impl Iterator<Item = TestCase<'a>> {
-        let dummy_block = Arc::new(Block::default().with_parents(vec![VertexHash::default()]));
-        [
-            TestCase {
-                name: "slim vertex no parents",
-                decoded: Vertex::default(),
-                encoded: vec![
-                    0, 1, 18, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                ],
-                expect_encode_err: true, // Missing parents
-                expect_decode_err: true, // Missing parents
-            },
-            TestCase {
-                name: "slim vertex with one parent",
-                decoded: Vertex::default().with_parents(vec![VertexHash::default()]),
-                encoded: vec![
-                    0, 1, 10, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 18, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                ],
-                expect_encode_err: false,
-                expect_decode_err: false,
-            },
-            TestCase {
-                name: "slim vertex with multiple parents",
-                decoded: Vertex::default()
-                    .with_parents(generate_test_hashes().map(|tc| tc.decoded).collect()),
-                encoded: vec![
-                    0, 1, 10, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 34, 2, 32, 128, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 34,
-                    2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 1, 10, 34, 2, 32, 255, 255, 255, 255, 255, 255, 255, 255,
-                    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-                    255, 255, 255, 255, 255, 255, 255, 255, 10, 34, 2, 32, 127, 255, 255, 255, 255,
-                    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-                    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 10, 34, 2, 32, 255, 255,
-                    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-                    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 254, 18, 34,
-                    2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0,
-                ],
-                expect_encode_err: false,
-                expect_decode_err: false,
-            },
-            TestCase {
-                name: "slim vertex with repeated parents",
-                decoded: Vertex::default()
-                    .with_parents(vec![BlockHash::default(), BlockHash::default()]),
-                encoded: vec![
-                    0, 1, 10, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 18, 34,
-                    2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0,
-                ],
-                expect_encode_err: true, // Repeated parents
-                expect_decode_err: true, // Repeated parents
-            },
-            TestCase {
-                name: "full vertex with one parent",
-                decoded: Vertex::default()
-                    .with_block(dummy_block.clone())
-                    .with_parents(vec![generate_test_hashes()
-                        .map(|tc| tc.decoded)
-                        .nth(1)
-                        .unwrap()]),
-                encoded: vec![
-                    0, 1, 10, 34, 2, 32, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 26, 72, 0, 1, 8, 232, 7, 18, 2, 0, 0,
-                    26, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 25, 49, 57, 55, 48, 45, 48, 49, 45, 48,
-                    49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 43, 48, 48, 58, 48, 48,
-                ],
-                expect_encode_err: false,
-                expect_decode_err: false,
-            },
-            TestCase {
-                name: "full vertex with multiple parents",
-                decoded: Vertex::default()
-                    .with_block(dummy_block.clone())
-                    .with_parents(generate_test_hashes().map(|tc| tc.decoded).collect()),
-                encoded: vec![
-                    0, 1, 10, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 34, 2, 32, 128, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 34,
-                    2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 1, 10, 34, 2, 32, 255, 255, 255, 255, 255, 255, 255, 255,
-                    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-                    255, 255, 255, 255, 255, 255, 255, 255, 10, 34, 2, 32, 127, 255, 255, 255, 255,
-                    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-                    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 10, 34, 2, 32, 255, 255,
-                    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-                    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 254, 26, 72,
-                    0, 1, 8, 232, 7, 18, 2, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 25, 49, 57,
-                    55, 48, 45, 48, 49, 45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 43, 48, 48,
-                    58, 48, 48,
-                ],
-                expect_encode_err: false,
-                expect_decode_err: false,
-            },
-            TestCase {
-                name: "full vertex with redundant parents",
-                decoded: Vertex::default()
-                    .with_block(dummy_block.clone())
-                    .with_parents(dummy_block.parents.clone()),
-                encoded: vec![
-                    0, 1, 26, 72, 0, 1, 8, 232, 7, 18, 2, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50,
-                    25, 49, 57, 55, 48, 45, 48, 49, 45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48,
-                    43, 48, 48, 58, 48, 48,
-                ],
-                expect_encode_err: false, // No error. Encode should silently remove redundant data
-                expect_decode_err: true,  // Should not decode block with redundant parent data
-            },
-            TestCase {
-                name: "full vertex with repeated parents",
-                decoded: Vertex::default()
-                    .with_block(dummy_block.clone())
-                    .with_parents(vec![BlockHash::default(), BlockHash::default()]),
-                encoded: vec![
-                    0, 1, 10, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 26, 72,
-                    0, 1, 8, 232, 7, 18, 2, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 25, 49, 57,
-                    55, 48, 45, 48, 49, 45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 43, 48, 48,
-                    58, 48, 48,
-                ],
-
-                expect_encode_err: true, // Repeated parents
-                expect_decode_err: true, // Repeated parents
-            },
-            TestCase {
-                name: "full vertex with bad block hash",
-                decoded: {
-                    let mut v = Vertex::default().with_block(dummy_block);
-                    v.bhash = BlockHash::default();
-                    v
-                },
-                encoded: vec![
-                    0, 1, 26, 72, 0, 1, 8, 232, 7, 18, 2, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50,
-                    25, 49, 57, 55, 48, 45, 48, 49, 45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48,
-                    43, 48, 48, 58, 48, 48,
-                ],
-                expect_encode_err: true, // Block hash references a different block
-                expect_decode_err: true, // Block hash references a different block
-            },
-        ]
-        .into_iter()
-    }
-
-    /// Attempt to serialize and deserialize each vertex test case
     #[test]
-    fn encoding_vertex() {
-        for case in generate_test_vertices() {
-            // Encode
-            let encode_res = case.decoded.to_wire(true);
-            if case.expect_encode_err {
-                if encode_res.is_ok() {
-                    panic!("Encode({}) unexpectedly succeeded", case.name);
-                }
-            } else {
-                if encode_res.is_err() {
-                    println!("Unexpected error: {}", encode_res.unwrap_err());
-                    panic!("Encode({}) unexpectedly threw an error", case.name);
-                }
-                let encoded = encode_res.unwrap();
-                if encoded != case.encoded {
-                    println!("Expected: {:?}", case.encoded);
-                    println!("Have: {:?}", encoded);
-                    panic!("Encode({}) result is different than expected", case.name);
-                }
-            }
+    pub fn slim_vertex_with_no_parents() {
+        let decoded = Vertex::default();
+        let encoded = vec![
+            0, 1, 18, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        let (encode_err, decode_err) = test_encode_decode(decoded, encoded);
+        assert_matches!(encode_err, Some(Error::EmptyParents));
+        assert_matches!(decode_err, Some(Error::EmptyParents));
+    }
 
-            // Decode
-            let decode_res = Vertex::from_wire(&case.encoded, true);
-            if case.expect_decode_err {
-                if decode_res.is_ok() {
-                    panic!("Decode({}) unexpectedly succeeded", case.name);
-                }
-            } else {
-                if decode_res.is_err() {
-                    println!("Unexpected error: {}", decode_res.unwrap_err());
-                    panic!("Decode({}) unexpectedly threw an error", case.name);
-                }
-                let decoded = decode_res.unwrap();
-                if decoded != case.decoded {
-                    println!("Expected: {:?}", case.decoded);
-                    println!("Have: {:?}", decoded);
-                    panic!("Decode({}) result is different than expected", case.name);
-                }
-            }
-        }
+    #[test]
+    pub fn slim_vertex_with_one_parent() {
+        let decoded = Vertex::default().with_parents(vec![VertexHash::default()]);
+        let encoded = vec![
+            0, 1, 10, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 18, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        let (encode_err, decode_err) = test_encode_decode(decoded, encoded);
+        assert_matches!(encode_err, None);
+        assert_matches!(decode_err, None);
+    }
+
+    #[test]
+    pub fn slim_vertex_with_multiple_parents() {
+        let decoded = Vertex::default().with_parents(vec![
+            Hash::with_bytes([
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0,
+            ]),
+            Hash::with_bytes([
+                128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0,
+            ]),
+            Hash::with_bytes([
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 1,
+            ]),
+            Hash::with_bytes([
+                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            ]),
+            Hash::with_bytes([
+                127, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            ]),
+            Hash::with_bytes([
+                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 254,
+            ]),
+        ]);
+        let encoded = vec![
+            0, 1, 10, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 34, 2, 32, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 34, 2, 32, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 10,
+            34, 2, 32, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            10, 34, 2, 32, 127, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            255, 10, 34, 2, 32, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            255, 254, 18, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        let (encode_err, decode_err) = test_encode_decode(decoded, encoded);
+        assert_matches!(encode_err, None);
+        assert_matches!(decode_err, None);
+    }
+
+    #[test]
+    pub fn slim_vertex_with_repeated_parents() {
+        let decoded =
+            Vertex::default().with_parents(vec![BlockHash::default(), BlockHash::default()]);
+        let encoded = vec![
+            0, 1, 10, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 18, 34, 2, 32, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        let (encode_err, decode_err) = test_encode_decode(decoded, encoded);
+        assert_matches!(encode_err, Some(Error::RepeatedParents));
+        assert_matches!(decode_err, Some(Error::RepeatedParents));
+    }
+
+    #[test]
+    pub fn full_vertex_with_no_parents() {
+        let decoded = Vertex::default().with_block(Arc::new(
+            Block::default().with_parents(vec![VertexHash::default()]),
+        ));
+        let encoded = vec![
+            0, 1, 26, 72, 0, 1, 8, 232, 7, 18, 2, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 25, 49, 57,
+            55, 48, 45, 48, 49, 45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 43, 48, 48, 58, 48,
+            48,
+        ];
+        let (encode_err, decode_err) = test_encode_decode(decoded, encoded);
+        assert_matches!(encode_err, None);
+        assert_matches!(decode_err, None);
+    }
+
+    #[test]
+    pub fn full_vertex_with_one_parent() {
+        let decoded = Vertex::default()
+            .with_block(Arc::new(
+                Block::default().with_parents(vec![VertexHash::default()]),
+            ))
+            .with_parents(vec![BlockHash::default()]);
+        let encoded = vec![
+            0, 1, 10, 34, 2, 32, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 26, 72, 0, 1, 8, 232, 7, 18, 2, 0, 0, 26, 34, 2, 32,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 50, 25, 49, 57, 55, 48, 45, 48, 49, 45, 48, 49, 84, 48, 48, 58, 48, 48, 58,
+            48, 48, 43, 48, 48, 58, 48, 48,
+        ];
+        let (encode_err, decode_err) = test_encode_decode(decoded, encoded);
+        assert_matches!(encode_err, None);
+        assert_matches!(decode_err, None);
+    }
+
+    #[test]
+    pub fn full_vertex_with_multiple_parents() {
+        let decoded = Vertex::default()
+            .with_block(Arc::new(
+                Block::default().with_parents(vec![VertexHash::default()]),
+            ))
+            .with_parents(vec![
+                Hash::with_bytes([
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 0,
+                ]),
+                Hash::with_bytes([
+                    128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 0,
+                ]),
+                Hash::with_bytes([
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 1,
+                ]),
+                Hash::with_bytes([
+                    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                ]),
+                Hash::with_bytes([
+                    127, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                ]),
+                Hash::with_bytes([
+                    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 254,
+                ]),
+            ]);
+        let encoded = vec![
+            0, 1, 10, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 34, 2, 32, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 34, 2, 32, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 10,
+            34, 2, 32, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            10, 34, 2, 32, 127, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            255, 10, 34, 2, 32, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            255, 254, 26, 72, 0, 1, 8, 232, 7, 18, 2, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 25, 49, 57,
+            55, 48, 45, 48, 49, 45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 43, 48, 48, 58, 48,
+            48,
+        ];
+        let (encode_err, decode_err) = test_encode_decode(decoded, encoded);
+        assert_matches!(encode_err, None);
+        assert_matches!(decode_err, None);
+    }
+
+    #[test]
+    pub fn full_vertex_with_redundant_parents() {
+        let block = &Arc::new(Block::default().with_parents(vec![VertexHash::default()]));
+        let decoded = Vertex::default()
+            .with_block(block.clone())
+            .with_parents(block.parents.clone());
+        let encoded = vec![
+            0, 1, 26, 72, 0, 1, 8, 232, 7, 18, 2, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 25, 49, 57,
+            55, 48, 45, 48, 49, 45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 43, 48, 48, 58, 48,
+            48,
+        ];
+        let (encode_err, decode_err) = test_encode_decode(decoded, encoded);
+        assert_matches!(encode_err, Some(Error::RedundantParents));
+        assert_matches!(decode_err, Some(Error::RedundantParents));
+    }
+
+    #[test]
+    pub fn full_vertex_with_repeated_parents() {
+        let decoded =
+            Vertex::default().with_parents(vec![BlockHash::default(), BlockHash::default()]);
+        let encoded = vec![
+            0, 1, 10, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 26, 72, 0, 1, 8, 232, 7, 18, 2,
+            0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 25, 49, 57, 55, 48, 45, 48, 49, 45, 48, 49, 84, 48,
+            48, 58, 48, 48, 58, 48, 48, 43, 48, 48, 58, 48, 48,
+        ];
+        let (encode_err, decode_err) = test_encode_decode(decoded, encoded);
+        assert_matches!(encode_err, None);
+        assert_matches!(decode_err, None);
+    }
+
+    #[test]
+    pub fn full_vertex_with_bad_block_hash() {
+        let decoded = {
+            let mut v =
+                Vertex::default().with_block(Arc::new(Block::default().with_parents(vec![
+                    Hash::with_bytes([
+                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        0, 0, 0, 0, 0, 0, 1,
+                    ]),
+                ])));
+            v.bhash = BlockHash::default();
+            v
+        };
+        let encoded = vec![
+            0, 1, 26, 72, 0, 1, 8, 232, 7, 18, 2, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 25, 49, 57,
+            55, 48, 45, 48, 49, 45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 43, 48, 48, 58, 48,
+            48,
+        ];
+        let (encode_err, decode_err) = test_encode_decode(decoded, encoded);
+        assert_matches!(encode_err, Some(Error::BadBlockHash));
+        assert_matches!(decode_err, Some(Error::BadBlockHash));
     }
 }

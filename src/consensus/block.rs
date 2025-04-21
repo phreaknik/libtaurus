@@ -327,8 +327,7 @@ pub mod encode_decode {
     use super::*;
     use std::assert_matches::assert_matches;
 
-    /// Tests encoding and decoding the given error, and optionally returns the encode or decode
-    /// error, if any.
+    /// Tests encoding and decoding and returns the encode or decode error, if any.
     fn test_encode_decode(decoded: Block, encoded: Vec<u8>) -> (Option<Error>, Option<Error>) {
         let encode_err = match decoded.to_wire(true) {
             Ok(bytes) => {

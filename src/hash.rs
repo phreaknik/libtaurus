@@ -26,6 +26,11 @@ pub const HASH_LEN: usize = blake3::OUT_LEN;
 pub struct Hash([u8; HASH_LEN]);
 
 impl Hash {
+    /// Instantiate a hash object from the given bytes
+    pub const fn with_bytes(bytes: [u8; HASH_LEN]) -> Hash {
+        Hash(bytes)
+    }
+
     /// Format the Hash as a hex string
     pub fn to_hex(&self) -> String {
         hex::encode(self.0)
