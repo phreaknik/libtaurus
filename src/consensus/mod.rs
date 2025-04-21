@@ -109,12 +109,7 @@ impl GenesisConfig {
             time: self.time,
             nonce: 0,
         };
-        Arc::new(Vertex {
-            version: 1,
-            parents: Vec::new(),
-            bhash: block.hash(),
-            block: Some(Arc::new(block)),
-        })
+        Arc::new(Vertex::genesis(block))
     }
 }
 

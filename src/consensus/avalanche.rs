@@ -209,7 +209,7 @@ impl Dag {
 
     /// Try to submit this block as a vertex at the frontier of the DAG
     pub fn try_insert_block(&mut self, block: Arc<Block>, broadcast: bool) -> Result<()> {
-        let vertex = Arc::new(Vertex::new(block, self.frontier.values().cloned(), true)?);
+        let vertex = Arc::new(Vertex::new_full(block));
         self.try_insert_vertices(once(vertex), None, broadcast)
     }
 
@@ -421,7 +421,7 @@ impl Dag {
 
         if dyn_vertex.strongly_preferred {
             // Remove its parents from the frontier, as they are no longer the youngest
-            for parent in &dyn_vertex.inner.parents {
+            for parent in dyn_vertex.inner.parents() {
                 self.frontier.remove(parent);
             }
 
@@ -441,7 +441,7 @@ impl Dag {
         let bhash = vertex.bhash;
 
         // Determine full set of parents to search for
-        let mut parents = vertex.parents.iter().collect::<HashSet<_>>();
+        let mut parents = vertex.parents().iter().collect::<HashSet<_>>();
         if let Some(b) = &vertex.block {
             for vhash in &b.parents {
                 parents.insert(vhash);

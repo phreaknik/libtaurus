@@ -115,7 +115,7 @@ impl WaitList {
         // Remove from the contents
         self.manifest.remove(&vhash);
         // Remove from each of parents' queues, if any
-        for parent in &vertex.parents {
+        for parent in vertex.parents() {
             self.by_parent
                 .get_mut(parent)
                 .and_then(|queue| queue.remove(&vhash));

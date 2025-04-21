@@ -25,6 +25,9 @@
 //! * nodes keep a record of peers who are participating in Avalanche consensus. Nodes will only
 //!   vote favorably for a payout transaction, if they deem the payee to have been an active
 //!   avalanche participant AND have submitted appropriate proofs-of-work.
+//!
+//! * TODO: tokenomics: block rewards are "options", which may be exercised to claim rewards
+//!   proportional to network hashrate at time of exercise.
 
 mod consensus;
 mod hash;

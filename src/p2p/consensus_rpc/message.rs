@@ -251,13 +251,9 @@ mod tests {
 
         // GetVertex responses
         let vertex_cases = iter::once(ResponseTestCase {
-            decoded: Response::Vertex(Arc::new(
-                Vertex::default()
-                    .with_block(Arc::new(
-                        Block::default().with_parents(vec![VertexHash::default()]),
-                    ))
-                    .with_parents(vec![BlockHash::default()]),
-            )),
+            decoded: Response::Vertex(Arc::new(Vertex::new_full(Arc::new(
+                Block::default().with_parents(vec![VertexHash::default()]),
+            )))),
             encoded: vec![
                 10, 74, 0, 1, 10, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 18, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0,
