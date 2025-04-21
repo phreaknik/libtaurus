@@ -5,7 +5,7 @@ use crate::{
 };
 use cached::{Cached, TimedCache};
 use serde_derive::{Deserialize, Serialize};
-use std::{collections::HashMap, io, ops::Deref, result, sync::Arc};
+use std::{cmp, collections::HashMap, io, ops::Deref, result, sync::Arc};
 use tracing_mutex::stdsync::TracingRwLock;
 
 /// Current revision of the vertex structure
@@ -30,6 +30,8 @@ pub enum Error {
     Io(#[from] io::Error),
     #[error("missing block")]
     MissingBlock,
+    #[error("one or more parent is not in the undecided set")]
+    ParentsAlreadyDecided,
     #[error("error decoding from protobuf")]
     ProtoDecode(String),
     #[error("error acquiring read lock on a vertex")]
@@ -49,9 +51,6 @@ pub type VertexHash = crate::hash::Hash;
 pub struct Vertex {
     /// Revision number of the vertex structure
     pub version: u32,
-
-    /// Height of this vertex within the DAG. There may be several vertices at a given height.
-    pub height: u64,
 
     /// Hash of the block this vertex represents
     pub bhash: BlockHash,
@@ -83,10 +82,6 @@ impl Vertex {
                         .map(|v| v.hash())
                 })
                 .try_collect()?,
-            height: 1 + parents
-                .map(|v| v.read().unwrap().inner.height)
-                .max()
-                .ok_or(Error::EmptyParents)?,
             block: if full { Some(block) } else { None },
         })
     }
@@ -158,7 +153,6 @@ impl<'a> WireFormat<'a, proto::Vertex> for Vertex {
             };
         Ok(proto::Vertex {
             version: self.version,
-            height: self.height,
             parents,
             block_hash,
             block,
@@ -198,7 +192,6 @@ impl<'a> WireFormat<'a, proto::Vertex> for Vertex {
         };
         let vertex = Vertex {
             version: vertex.version,
-            height: vertex.height,
             parents,
             block,
             bhash,
@@ -278,6 +271,12 @@ impl std::fmt::Debug for Vertex {
 pub struct UndecidedVertex {
     pub inner: Arc<Vertex>,
 
+    /// Height within the DAG, of the block as it was mined
+    pub mined_height: u64,
+
+    /// Height within the DAG, of the vertex after dynamic parent reselection
+    pub adapted_height: u64,
+
     /// Every parent vertex which hasn't been decided yet
     pub undecided_parents: HashMap<VertexHash, Arc<TracingRwLock<UndecidedVertex>>>,
 
@@ -303,6 +302,8 @@ impl UndecidedVertex {
     pub fn genesis(vertex: Arc<Vertex>) -> UndecidedVertex {
         UndecidedVertex {
             inner: vertex,
+            mined_height: 0,
+            adapted_height: 0,
             undecided_parents: HashMap::new(),
             known_children: HashMap::new(),
             strongly_preferred: true,
@@ -315,6 +316,7 @@ impl UndecidedVertex {
     /// existing preferred conflicts, and its parents are strongly preferred, then it too will be
     /// marked as strongly preferred.
     pub fn new(
+        genesis_hash: VertexHash,
         vertex: Arc<Vertex>,
         undecided_blocks: &mut TimedCache<BlockHash, Arc<Block>>,
         undecided_vertices: &mut TimedCache<VertexHash, Arc<TracingRwLock<UndecidedVertex>>>,
@@ -323,20 +325,48 @@ impl UndecidedVertex {
         let undecided_parents: HashMap<VertexHash, Arc<TracingRwLock<UndecidedVertex>>> = vertex
             .parents
             .iter()
-            .filter_map(|&k| undecided_vertices.cache_get(&k).map(|v| (k, v.clone())))
-            .collect();
+            .filter(|&p| p != &genesis_hash) //TODO: 99.999% of the time, this is wasted cycles
+            .map(|&k| {
+                undecided_vertices
+                    .cache_get(&k)
+                    .map(|v| (k, v.clone()))
+                    .ok_or(Error::ParentsAlreadyDecided)
+            })
+            .try_collect()?;
+        // Determine height of this vertex and whether or not it is strongly preferred.
         // Strongly preferred if no conflicts and all undecided parents are also strongly preferred.
-        let strongly_preferred = conflict_free
-            && undecided_parents
-                .values()
-                .map(|p| {
-                    p.read()
-                        .map_err(|_| Error::VertexReadLock)
-                        .map(|p| p.strongly_preferred)
+        let (adapted_height, strongly_preferred) = undecided_parents
+            .values()
+            .map(|p| p.read().map_err(|_| Error::VertexReadLock))
+            .try_fold((1, conflict_free), |(max_ah, all_pref), vertex| {
+                vertex.map(|v| {
+                    (
+                        cmp::max(max_ah, v.adapted_height + 1),
+                        all_pref && v.strongly_preferred,
+                    )
                 })
-                .try_fold(true, |all, strongly_preferred| {
-                    strongly_preferred.map(|sp| sp && all)
-                })?;
+            })?;
+        let block = vertex.block.as_ref().ok_or(Error::MissingBlock)?;
+        let mined_height = if vertex.parents != block.parents {
+            block
+                .parents
+                .iter()
+                .map(|&k| {
+                    undecided_vertices
+                        .cache_get(&k)
+                        .ok_or(Error::ParentsAlreadyDecided)
+                        .map(|v| {
+                            v.read()
+                                .map_err(|_| Error::VertexReadLock)
+                                .map(|v| v.mined_height)
+                        })
+                })
+                .try_fold(1, |max_mh, mined_height| {
+                    mined_height.flatten().map(|mh| cmp::max(max_mh, mh + 1))
+                })?
+        } else {
+            adapted_height
+        };
         let inner = match vertex.block {
             Some(_) => vertex,
             None => Arc::new(
@@ -350,6 +380,8 @@ impl UndecidedVertex {
         };
         Ok(UndecidedVertex {
             inner,
+            mined_height,
+            adapted_height,
             undecided_parents,
             known_children: HashMap::new(),
             strongly_preferred,

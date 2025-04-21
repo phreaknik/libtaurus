@@ -1,4 +1,5 @@
 #![feature(iterator_try_collect)]
+#![feature(result_flattening)]
 
 //! An implementation of the Cordelia distributed ledger protocol. Cordelia is a combination of
 //! proven technologies, which when combined facilitate a scalable, fungible, and programmable

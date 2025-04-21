@@ -113,7 +113,6 @@ impl GenesisConfig {
         };
         Arc::new(Vertex {
             version: 1,
-            height: 0,
             parents: Vec::new(),
             bhash: block.hash(),
             block: Some(Arc::new(block)),

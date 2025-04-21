@@ -172,7 +172,7 @@ impl Dag {
             config.genesis.clone(),
         )));
         dag.database
-            .write_vertex(None, config.genesis)
+            .write_vertex(None, 0, config.genesis)
             .unwrap()
             .commit()
             .unwrap();
@@ -187,7 +187,7 @@ impl Dag {
 
     /// Register a block as available to be inserted into the DAG. Returns true if this is a new
     /// registration; i.e. the block had not been seen before.
-    fn register_block(&mut self, block: Arc<Block>) -> Result<bool> {
+    pub fn register_block(&mut self, block: Arc<Block>) -> Result<bool> {
         // Check the block has sufficient proof-of-work
         block.verify_pow(&self.randomx_vm)?;
         let bhash = block.hash();
@@ -349,6 +349,7 @@ impl Dag {
 
         // Create a mutex protected vertex for inserting into the DAG structure
         let rw_vertex = Arc::new(TracingRwLock::new(UndecidedVertex::new(
+            self.genesis_hash(),
             vertex.clone(),
             &mut self.undecided_blocks,
             &mut self.undecided_vertices,
@@ -878,7 +879,11 @@ impl Dag {
                             .remove(&vertex.hash());
                     }
                     // Write the block to the database
-                    txn = Some(self.database.write_vertex(txn, vertex.inner.clone())?);
+                    txn = Some(self.database.write_vertex(
+                        txn,
+                        vertex.mined_height,
+                        vertex.inner.clone(),
+                    )?);
                     // Remove this block's inputs from the set of undecided_txos
                     for txo_hash in &vertex.inner.block.as_ref().unwrap().inputs {
                         self.undecided_txos.remove(txo_hash);

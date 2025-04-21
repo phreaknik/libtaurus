@@ -74,6 +74,7 @@ impl ConsensusDb {
     pub fn write_vertex<'a>(
         &'a mut self,
         wtxn: Option<RwTxn<'a, 'a>>,
+        mined_height: u64,
         vertex: Arc<Vertex>,
     ) -> Result<RwTxn<'a, 'a>> {
         // Make sure this vertex includes the block. May not write slim vertices.
@@ -89,8 +90,11 @@ impl ConsensusDb {
             &DbRecord::from(vhash),
         )?;
         // Write the vertex itsself
-        self.db
-            .put(&mut wtxn, &self.vertex_key(&vhash), &DbRecord::from(vertex))?;
+        self.db.put(
+            &mut wtxn,
+            &self.vertex_key(&vhash),
+            &DbRecord::Vertex((mined_height, vertex)),
+        )?;
         Ok(wtxn)
     }
 
@@ -139,8 +143,11 @@ impl<'a> BytesDecode<'a> for DbKey {
 
 #[derive(Debug, Clone)]
 enum DbRecord {
-    Vertex(Arc<Vertex>),
-    Link(VertexHash),
+    /// 'decided' DAG vertex to be stored
+    Vertex((u64, Arc<Vertex>)),
+
+    /// Link from [`BlockHash`] to the vertex it was decided in
+    BlockLink(VertexHash),
 }
 
 impl<'a> WireFormat<'a, proto::DbRecord> for DbRecord {
@@ -149,30 +156,33 @@ impl<'a> WireFormat<'a, proto::DbRecord> for DbRecord {
     fn to_protobuf(&self, check: bool) -> Result<proto::DbRecord> {
         match self {
             DbRecord::Vertex(v) => Ok(proto::DbRecord {
-                RequestData: proto::mod_DbRecord::OneOfRequestData::vertex(v.to_protobuf(check)?),
+                RequestData: proto::mod_DbRecord::OneOfRequestData::vertex(proto::VertexRec {
+                    height: v.0,
+                    vertex: Some(v.1.to_protobuf(check)?),
+                }),
             }),
-            DbRecord::Link(l) => Ok(proto::DbRecord {
-                RequestData: proto::mod_DbRecord::OneOfRequestData::link(l.to_protobuf(check)?),
+            DbRecord::BlockLink(l) => Ok(proto::DbRecord {
+                RequestData: proto::mod_DbRecord::OneOfRequestData::block_link(
+                    l.to_protobuf(check)?,
+                ),
             }),
         }
     }
 
     fn from_protobuf(record: &proto::DbRecord, check: bool) -> Result<DbRecord> {
         match &record.RequestData {
-            proto::mod_DbRecord::OneOfRequestData::vertex(v) => {
-                Ok(DbRecord::Vertex(Arc::new(Vertex::from_protobuf(v, check)?)))
-            }
-            proto::mod_DbRecord::OneOfRequestData::link(l) => {
-                Ok(DbRecord::Link(Hash::from_protobuf(l, check)?))
+            proto::mod_DbRecord::OneOfRequestData::vertex(v) => Ok(DbRecord::Vertex((
+                v.height,
+                Arc::new(Vertex::from_protobuf(
+                    v.vertex.as_ref().ok_or(Error::ExpectedVertex)?,
+                    check,
+                )?),
+            ))),
+            proto::mod_DbRecord::OneOfRequestData::block_link(l) => {
+                Ok(DbRecord::BlockLink(Hash::from_protobuf(l, check)?))
             }
             proto::mod_DbRecord::OneOfRequestData::None => Err(Error::IncompleteResponse),
         }
-    }
-}
-
-impl From<Arc<Vertex>> for DbRecord {
-    fn from(value: Arc<Vertex>) -> Self {
-        DbRecord::Vertex(value)
     }
 }
 
@@ -181,10 +191,10 @@ impl TryInto<Arc<Vertex>> for DbRecord {
     fn try_into(self) -> result::Result<Arc<Vertex>, Self::Error> {
         match self {
             DbRecord::Vertex(v) => {
-                if v.block.is_none() {
+                if v.1.block.is_none() {
                     Err(Error::ExpectedBlock)
                 } else {
-                    Ok(v)
+                    Ok(v.1)
                 }
             }
             _ => Err(Error::ExpectedVertex),
@@ -194,7 +204,7 @@ impl TryInto<Arc<Vertex>> for DbRecord {
 
 impl From<VertexHash> for DbRecord {
     fn from(value: VertexHash) -> Self {
-        DbRecord::Link(value)
+        DbRecord::BlockLink(value)
     }
 }
 
@@ -202,7 +212,7 @@ impl TryInto<VertexHash> for DbRecord {
     type Error = Error;
     fn try_into(self) -> result::Result<VertexHash, Self::Error> {
         match self {
-            DbRecord::Link(l) => Ok(l),
+            DbRecord::BlockLink(l) => Ok(l),
             _ => Err(Error::ExpectedVertexHash),
         }
     }

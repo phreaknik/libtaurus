@@ -27,9 +27,14 @@ message Response {
 // Database records
 message DbRecord {
 	oneof RequestData {
-		Vertex vertex = 0;
-		Hash link = 1;
+		VertexRec vertex = 0;
+		Hash block_link = 1;
 	}
+}
+
+message VertexRec {
+	uint64 height = 0;
+	Vertex vertex = 1;
 }
 
 message PeerInfo {
@@ -61,10 +66,9 @@ message Block {
 
 message Vertex {
   uint32 version = 0;
-  uint64 height = 1;
-	repeated Hash parents = 2;
-  optional Hash block_hash = 3;
-  optional Block block = 4;
+	repeated Hash parents = 1;
+  optional Hash block_hash = 2;
+  optional Block block = 3;
 }
 
 message Txo {
