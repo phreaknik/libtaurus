@@ -13,8 +13,8 @@ use libp2p::swarm::{
 };
 use libp2p::{request_response, Multiaddr, PeerId};
 pub use message::{Request, Response};
+use std::iter;
 use std::task::{Context, Poll};
-use std::{io, iter};
 use thiserror;
 use tracing::{error, trace, warn};
 
@@ -40,7 +40,7 @@ pub enum Error {
     #[error("response message is missing data")]
     IncompleteResponse,
     #[error(transparent)]
-    Io(#[from] io::Error),
+    Protobuf(#[from] quick_protobuf::Error),
     #[error(transparent)]
     Vertex(#[from] vertex::Error),
     #[error(transparent)]

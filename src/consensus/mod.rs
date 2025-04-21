@@ -65,8 +65,6 @@ pub enum Error {
     EventsOutCh(#[from] tokio::sync::broadcast::error::SendError<Event>),
     #[error(transparent)]
     Heed(#[from] heed::Error),
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
     #[error("new block channel error")]
     NewBlockCh(#[from] tokio::sync::mpsc::error::SendError<Block>),
     #[error("p2p action channel error")]

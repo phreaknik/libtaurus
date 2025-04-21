@@ -6,7 +6,7 @@ use crate::{
 use cached::{Cached, TimedCache};
 use itertools::Itertools;
 use serde_derive::{Deserialize, Serialize};
-use std::{cmp, collections::HashMap, io, ops::Deref, result, sync::Arc};
+use std::{cmp, collections::HashMap, ops::Deref, result, sync::Arc};
 use tracing_mutex::stdsync::TracingRwLock;
 
 /// Current revision of the vertex structure
@@ -27,14 +27,12 @@ pub enum Error {
     EmptyParents,
     #[error(transparent)]
     Hash(#[from] crate::hash::Error),
-    #[error(transparent)]
-    Io(#[from] io::Error),
     #[error("missing block")]
     MissingBlock,
     #[error("one or more parent is not in the undecided set")]
     ParentsAlreadyDecided,
-    #[error("error decoding from protobuf")]
-    ProtoDecode(String),
+    #[error(transparent)]
+    Protobuf(#[from] quick_protobuf::Error),
     #[error("vertex parents are redundant with block parents")]
     RedundantParents,
     #[error("some vertex parents are repeated")]
@@ -590,7 +588,7 @@ pub mod tests {
         .into_iter()
     }
 
-    // Attempt to serialize and deserialize each vertex test case
+    /// Attempt to serialize and deserialize each vertex test case
     #[test]
     fn encoding_vertex() {
         for case in generate_test_vertices() {

@@ -1,3 +1,5 @@
+use crate::wire::WireFormat;
+
 use super::{consensus_rpc, BroadcastData, Event, PeerDatabase, PeerInfo};
 use libp2p::{
     allow_block_list,
@@ -89,7 +91,7 @@ impl<'a> Behaviour {
     pub fn publish(&mut self, message: BroadcastData) -> crate::p2p::Result<MessageId> {
         self.inner
             .gossipsub
-            .publish(Sha256Topic::from(&message), message.to_bytes()?)
+            .publish(Sha256Topic::from(&message), message.to_wire(true)?)
             .map_err(crate::p2p::Error::from)
     }
 

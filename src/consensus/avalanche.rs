@@ -51,8 +51,6 @@ pub enum Error {
     EventsOutCh(#[from] tokio::sync::broadcast::error::SendError<Event>),
     #[error(transparent)]
     Heed(#[from] heed::Error),
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
     #[error("missing block")]
     MissingBlock(BlockHash),
     #[error("missing parents")]

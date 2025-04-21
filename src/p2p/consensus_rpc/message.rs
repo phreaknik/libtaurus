@@ -1,10 +1,10 @@
 use super::Error;
-use crate::consensus::{Block, BlockHash, Vertex};
-use crate::wire::{proto, WireFormat};
-use crate::VertexHash;
-use std::fmt;
-use std::result;
-use std::sync::Arc;
+use crate::{
+    consensus::{Block, BlockHash, Vertex},
+    wire::{proto, WireFormat},
+    VertexHash,
+};
+use std::{fmt, result, sync::Arc};
 use strum_macros::{EnumCount, EnumIter};
 
 /// Message type defining the peer RPC request messages
@@ -114,11 +114,11 @@ impl<'a> WireFormat<'a, proto::Response> for Response {
 mod tests {
     use super::*;
     use crate::{
-        consensus::{block::tests::generate_test_blocks, vertex::tests::generate_test_vertices},
-        hash::tests::generate_test_hashes,
+        consensus::vertex::tests::generate_test_vertices, hash::tests::generate_test_hashes,
         wire::WireFormat,
     };
     use itertools::Itertools;
+    use std::iter;
 
     pub struct RequestTestCase<'a> {
         pub decoded: Request,
@@ -242,17 +242,15 @@ mod tests {
 
     pub fn generate_test_responses() -> impl Iterator<Item = ResponseTestCase> {
         // GetBlock responses
-        let encoded = [vec![
-            2, 72, 0, 1, 8, 232, 7, 18, 2, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 25, 49, 57, 55, 48, 45,
-            48, 49, 45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 43, 48, 48, 58, 48, 48,
-        ]];
-        let block_cases = generate_test_blocks()
-            .filter(|c| !c.expect_encode_err && !c.expect_decode_err) // not trying to test sub-type errors here
-            .map(|tc| Response::Block(tc.decoded))
-            .zip_eq(encoded.into_iter())
-            .map(|(decoded, encoded)| ResponseTestCase { decoded, encoded })
-            .take(1); // Don't need to iterate all the test blocks for this
+        let block_cases = iter::once(ResponseTestCase {
+            decoded: Response::Block(Block::default().with_parents(vec![VertexHash::default()])),
+            encoded: vec![
+                2, 72, 0, 1, 8, 232, 7, 18, 2, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 25, 49, 57,
+                55, 48, 45, 48, 49, 45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 43, 48, 48, 58,
+                48, 48,
+            ],
+        });
 
         // GetVertex responses
         let encoded = [vec![
@@ -295,7 +293,7 @@ mod tests {
         block_cases.chain(vertex_cases).chain(preference_cases)
     }
 
-    // Attempt to serialize and deserialize each request test case
+    /// Attempt to serialize and deserialize each request test case
     #[test]
     fn encoding_requests() {
         for case in generate_test_requests() {
@@ -309,7 +307,7 @@ mod tests {
         }
     }
 
-    // Attempt to serialize and deserialize each response test case
+    /// Attempt to serialize and deserialize each response test case
     #[test]
     fn encoding_responses() {
         for case in generate_test_responses() {

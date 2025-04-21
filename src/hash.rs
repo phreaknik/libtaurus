@@ -2,7 +2,6 @@ use crate::wire::{proto, WireFormat};
 use heed::{BytesDecode, BytesEncode};
 use serde_derive::{Deserialize, Serialize};
 use std::fmt;
-use std::io;
 use std::result;
 
 /// Error type for vertex errors
@@ -11,9 +10,7 @@ pub enum Error {
     #[error("bad hash")]
     BadHash,
     #[error(transparent)]
-    Io(#[from] io::Error),
-    #[error("error decoding from protobuf")]
-    ProtoDecode(String),
+    Protobuf(#[from] quick_protobuf::Error),
     #[error(transparent)]
     TryFromSlice(#[from] std::array::TryFromSliceError),
     #[error("error acquiring read lock on a vertex")]

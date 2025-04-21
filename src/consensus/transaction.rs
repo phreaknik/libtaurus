@@ -1,12 +1,12 @@
 use crate::wire::{proto, WireFormat};
 use serde_derive::{Deserialize, Serialize};
-use std::{io, result};
+use std::result;
 
 /// Error type for transaction errors
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error(transparent)]
-    Io(#[from] io::Error),
+    Protobuf(#[from] quick_protobuf::Error),
     #[error(transparent)]
     TryFromSlice(#[from] std::array::TryFromSliceError),
 }

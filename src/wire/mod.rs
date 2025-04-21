@@ -5,7 +5,7 @@ pub use generated::proto;
 use quick_protobuf::{BytesReader, MessageRead, MessageWrite, Writer};
 use std::{
     fmt::{Debug, Display},
-    io, result,
+    result,
 };
 
 /// Error type for vertex errors
@@ -19,8 +19,6 @@ pub enum Error {
     EmptyParents,
     #[error(transparent)]
     Hash(#[from] crate::hash::Error),
-    #[error(transparent)]
-    Io(#[from] io::Error),
     #[error("missing block")]
     MissingBlock,
     #[error("error decoding from protobuf")]
@@ -36,41 +34,29 @@ pub trait WireFormat<'a, P>: Sized
 where
     P: MessageWrite + MessageRead<'a>,
 {
-    type Error: Debug + From<std::io::Error> + Display;
+    type Error: Debug + From<quick_protobuf::Error> + Display;
 
     /// Serialize into protobuf format
     fn to_protobuf(&self, check: bool) -> result::Result<P, Self::Error>;
 
     /// Deserialize from protobuf format
-    fn from_protobuf(block: &P, check: bool) -> result::Result<Self, Self::Error>;
+    fn from_protobuf(data: &P, check: bool) -> result::Result<Self, Self::Error>;
 
     /// Serialize data into a format suitable for wire transmission, optionally checking validity
     /// of the data before serialization.
     fn to_wire(&self, check: bool) -> result::Result<Vec<u8>, Self::Error> {
         let mut bytes = Vec::new();
         let mut writer = Writer::new(&mut bytes);
-        let protobuf = self.to_protobuf(check).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("unable to convert Block to protobuf: {e}"),
-            )
-        })?;
-        protobuf
-            .write_message(&mut writer)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "unable to serialize Block"))?;
+        let protobuf = self.to_protobuf(check)?;
+        protobuf.write_message(&mut writer)?;
         Ok(bytes)
     }
 
     /// Deserialize data from wire format, optionally checking validity of the data before
     /// deserialization.
     fn from_wire(bytes: &'a [u8], check: bool) -> result::Result<Self, Self::Error> {
-        let protobuf = <P as MessageRead>::from_reader(&mut BytesReader::from_bytes(bytes), &bytes)
-            .map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("unable to parse block from bytes: {e}"),
-                )
-            })?;
+        let protobuf =
+            <P as MessageRead>::from_reader(&mut BytesReader::from_bytes(bytes), &bytes)?;
         Self::from_protobuf(&protobuf, check)
     }
 

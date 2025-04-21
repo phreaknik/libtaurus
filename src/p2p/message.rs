@@ -2,7 +2,7 @@ use super::{Error, Result};
 use crate::{
     consensus::Vertex,
     wire::{
-        proto::{self, Broadcast},
+        proto::{self},
         WireFormat,
     },
 };
@@ -10,8 +10,7 @@ use libp2p::{
     gossipsub::{self, MessageAcceptance, MessageId, Sha256Topic, TopicHash},
     PeerId,
 };
-use quick_protobuf::{BytesReader, MessageRead, MessageWrite, Writer};
-use std::io;
+use std::result;
 use strum_macros::{AsRefStr, EnumIter};
 
 /// Messages that can be sent to/from the gossipsub network
@@ -65,7 +64,7 @@ impl TryFrom<gossipsub::Event> for Message {
             } => Ok(Message {
                 msg_source: propagation_source,
                 msg_id: message_id,
-                data: BroadcastData::from_bytes(&message.data)?,
+                data: BroadcastData::from_wire(&message.data, true)?,
             }),
             _ => Err(Error::NotAMessage),
         }
@@ -86,52 +85,22 @@ pub enum BroadcastData {
     Vertex(Vertex),
 }
 
-impl BroadcastData {
-    /// Deserialize from bytes
-    pub fn from_bytes(bytes: &Vec<u8>) -> Result<BroadcastData> {
-        let protobuf = proto::Broadcast::from_reader(&mut BytesReader::from_bytes(bytes), &bytes)
-            .map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("unable to read broadcast data message: {e}"),
-            )
-        })?;
-        BroadcastData::from_protobuf(protobuf)
+impl<'a> WireFormat<'a, proto::Broadcast> for BroadcastData {
+    type Error = Error;
+
+    fn to_protobuf(&self, check: bool) -> result::Result<proto::Broadcast, Error> {
+        match self {
+            BroadcastData::Vertex(v) => Ok(proto::Broadcast {
+                vertex: Some(v.to_protobuf(check)?),
+            }),
+        }
     }
 
-    /// Serialize into bytes
-    pub fn to_bytes(&self) -> Result<Vec<u8>> {
-        let mut bytes = Vec::new();
-        let mut writer = Writer::new(&mut bytes);
-        let protobuf = self.to_protobuf().map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("unable to convert BroadcastData to protobuf: {e}"),
-            )
-        })?;
-        protobuf.write_message(&mut writer).map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "unable to serialize BroadcastData",
-            )
-        })?;
-        Ok(bytes)
-    }
-
-    /// Deserialize from protobuf format
-    pub fn from_protobuf(data: Broadcast) -> Result<BroadcastData> {
-        let v = Vertex::from_protobuf(&data.vertex.unwrap(), true)?;
-        v.sanity_checks()?;
-        Ok(BroadcastData::Vertex(v))
-    }
-
-    /// Serialize into protobuf format
-    pub fn to_protobuf(&self) -> Result<Broadcast> {
-        let BroadcastData::Vertex(v) = self;
-        v.sanity_checks()?;
-        Ok(Broadcast {
-            vertex: Some(v.to_protobuf(true)?),
-        })
+    fn from_protobuf(broadcast: &proto::Broadcast, check: bool) -> result::Result<Self, Error> {
+        Ok(BroadcastData::Vertex(Vertex::from_protobuf(
+            broadcast.vertex.as_ref().ok_or(Error::EmptyBroadcast)?,
+            check,
+        )?))
     }
 }
 

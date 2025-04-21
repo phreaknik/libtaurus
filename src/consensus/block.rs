@@ -11,7 +11,7 @@ use itertools::Itertools;
 use libp2p::{multihash::Multihash, PeerId};
 use num::{BigUint, FromPrimitive};
 use serde_derive::{Deserialize, Serialize};
-use std::{io, result};
+use std::result;
 
 /// Current version of the block structure
 pub const VERSION: u32 = 1;
@@ -19,8 +19,6 @@ pub const VERSION: u32 = 1;
 /// Error type for block errors
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[error("bad block version")]
-    BadBlockVersion,
     #[error(transparent)]
     Chrono(#[from] chrono::ParseError),
     #[error("block has timestamp in the future")]
@@ -32,13 +30,13 @@ pub enum Error {
     #[error("invalid proof-of-work")]
     InvalidPoW,
     #[error(transparent)]
-    Io(#[from] io::Error),
-    #[error(transparent)]
     Libp2pParse(#[from] libp2p::identity::ParseError),
     #[error("block doesn't specify any parents")]
     MissingParents,
     #[error(transparent)]
     Multihash(#[from] libp2p::multihash::Error),
+    #[error(transparent)]
+    Protobuf(#[from] quick_protobuf::Error),
     #[error(transparent)]
     RandomX(#[from] randomx::Error),
     #[error("some tx inputs are repeated")]
@@ -49,6 +47,8 @@ pub enum Error {
     RepeatedParents,
     #[error(transparent)]
     Transaction(#[from] transaction::Error),
+    #[error("unsupported block version")]
+    UnsupportedVersion,
     #[error(transparent)]
     Utf8(#[from] std::string::FromUtf8Error),
 }
@@ -94,7 +94,7 @@ impl Block {
     /// Make sure the block passes all basic sanity checks
     pub fn sanity_checks(&self) -> Result<()> {
         if self.version != VERSION {
-            Err(Error::BadBlockVersion)
+            Err(Error::UnsupportedVersion)
         } else if self.difficulty < MIN_DIFFICULTY {
             Err(Error::InvalidDifficulty)
         } else if self.time - Utc::now() > Duration::seconds(FUTURE_BLOCK_LIMIT_SECS) {
@@ -320,170 +320,143 @@ impl From<&Block> for PrettyBlock {
     }
 }
 
+// TODO: need to test other impls
+
 #[cfg(test)]
-pub mod tests {
+pub mod encode_decode {
     use super::*;
+    use std::assert_matches::assert_matches;
 
-    pub struct TestCase<'a> {
-        pub name: &'a str,
-        pub decoded: Block,
-        pub encoded: Vec<u8>,
-        pub expect_encode_err: bool,
-        pub expect_decode_err: bool,
+    /// Tests encoding and decoding the given error, and optionally returns the encode or decode
+    /// error, if any.
+    fn test_encode_decode(decoded: Block, encoded: Vec<u8>) -> (Option<Error>, Option<Error>) {
+        let encode_err = match decoded.to_wire(true) {
+            Ok(bytes) => {
+                assert_eq!(bytes, encoded);
+                None
+            }
+            Err(e) => Some(e),
+        };
+        let decode_err = match Block::from_wire(&encoded, true) {
+            Ok(block) => {
+                assert_eq!(block, decoded);
+                None
+            }
+            Err(e) => Some(e),
+        };
+        (encode_err, decode_err)
     }
 
-    pub fn generate_test_blocks<'a>() -> impl Iterator<Item = TestCase<'a>> {
-        [
-            TestCase {
-                name: "incomplete block",
-                decoded: Block::default(),
-                encoded: vec![
-                    0, 1, 8, 232, 7, 18, 2, 0, 0, 50, 25, 49, 57, 55, 48, 45, 48, 49, 45, 48, 49,
-                    84, 48, 48, 58, 48, 48, 58, 48, 48, 43, 48, 48, 58, 48, 48,
-                ],
-                expect_encode_err: true, // Missing parents
-                expect_decode_err: true, // Missing parents
-            },
-            TestCase {
-                name: "basic block",
-                decoded: Block::default().with_parents(vec![VertexHash::default()]),
-                encoded: vec![
-                    0, 1, 8, 232, 7, 18, 2, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 25, 49, 57,
-                    55, 48, 45, 48, 49, 45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 43, 48, 48,
-                    58, 48, 48,
-                ],
-                expect_encode_err: false,
-                expect_decode_err: false,
-            },
-            TestCase {
-                name: "block with unsupported version",
-                decoded: {
-                    let mut b = Block::default().with_parents(vec![VertexHash::default()]);
-                    b.version = u32::MAX;
-                    b
-                },
-                encoded: vec![
-                    0, 255, 255, 255, 255, 15, 8, 232, 7, 18, 2, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 50, 25, 49, 57, 55, 48, 45, 48, 49, 45, 48, 49, 84, 48, 48, 58, 48, 48,
-                    58, 48, 48, 43, 48, 48, 58, 48, 48,
-                ],
-                expect_encode_err: true, // Unsupported version
-                expect_decode_err: true, // Unsupported version
-            },
-            TestCase {
-                name: "block with illegal difficulty",
-                decoded: {
-                    let mut b = Block::default().with_parents(vec![VertexHash::default()]);
-                    b.difficulty = MIN_DIFFICULTY - 1;
-                    b
-                },
-                encoded: vec![
-                    0, 1, 8, 231, 7, 18, 2, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 25, 49, 57,
-                    55, 48, 45, 48, 49, 45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 43, 48, 48,
-                    58, 48, 48,
-                ],
-                expect_encode_err: true, // Difficulty too low
-                expect_decode_err: true, // Difficulty too low
-            },
-            TestCase {
-                name: "block with repeated parents",
-                decoded: Block::default()
-                    .with_parents(vec![VertexHash::default(), VertexHash::default()]),
-                encoded: vec![
-                    0, 1, 8, 232, 7, 18, 2, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 26, 34, 2, 32,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 50, 25, 49, 57, 55, 48, 45, 48, 49, 45, 48, 49, 84, 48, 48,
-                    58, 48, 48, 58, 48, 48, 43, 48, 48, 58, 48, 48,
-                ],
-                expect_encode_err: true, // Repeated parents
-                expect_decode_err: true, // Repeated parents
-            },
-            TestCase {
-                name: "block with repeated inputs",
-                decoded: {
-                    let mut b = Block::default().with_parents(vec![VertexHash::default()]);
-                    b.inputs = vec![TxoHash::default(), TxoHash::default()];
-                    b
-                },
-                encoded: vec![
-                    0, 1, 8, 232, 7, 18, 2, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 34, 34, 2, 32,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 34, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 25, 49, 57, 55, 48, 45,
-                    48, 49, 45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 43, 48, 48, 58, 48, 48,
-                ],
-                expect_encode_err: true, // Repeated inputs
-                expect_decode_err: true, // Repeated inputs
-            },
-            TestCase {
-                name: "block with repeated outputs",
-                decoded: {
-                    let mut b = Block::default().with_parents(vec![VertexHash::default()]);
-                    b.outputs = vec![Txo::default(), Txo::default()];
-                    b
-                },
-                encoded: vec![
-                    0, 1, 8, 232, 7, 18, 2, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 34, 34, 2, 32,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 34, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 25, 49, 57, 55, 48, 45,
-                    48, 49, 45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 43, 48, 48, 58, 48, 48,
-                ],
-                expect_encode_err: true, // Repeated outputs
-                expect_decode_err: true, // Repeated outputs
-            },
-        ]
-        .into_iter()
-    }
-
-    // Attempt to serialize and deserialize each block test case
     #[test]
-    fn encoding_block() {
-        for case in generate_test_blocks() {
-            // Encode
-            let encode_res = case.decoded.to_wire(true);
-            println!(":::: encoded=\n{:?}", case.decoded.to_wire(false).unwrap());
-            if case.expect_encode_err {
-                if encode_res.is_ok() {
-                    panic!("Encode({}) unexpectedly succeeded", case.name);
-                }
-            } else {
-                if encode_res.is_err() {
-                    println!("Unexpected error: {}", encode_res.unwrap_err());
-                    panic!("Encode({}) unexpectedly threw an error", case.name);
-                }
-                let encoded = encode_res.unwrap();
-                if encoded != case.encoded {
-                    println!("Expected: {:?}", case.encoded);
-                    println!("Have: {:?}", encoded);
-                    panic!("Encode({}) result is different than expected", case.name);
-                }
-            }
+    pub fn minimal_block() {
+        let decoded = Block::default().with_parents(vec![VertexHash::default()]);
+        let encoded = vec![
+            0, 1, 8, 232, 7, 18, 2, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 25, 49, 57, 55, 48, 45, 48,
+            49, 45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 43, 48, 48, 58, 48, 48,
+        ];
+        let (encode_err, decode_err) = test_encode_decode(decoded, encoded);
+        assert_matches!(encode_err, None);
+        assert_matches!(decode_err, None);
+    }
 
-            // Decode
-            let decode_res = Block::from_wire(&case.encoded, true);
-            if case.expect_decode_err {
-                if decode_res.is_ok() {
-                    println!("Unexpected error: {}", decode_res.unwrap_err());
-                    panic!("Decode({}) unexpectedly succeeded", case.name);
-                }
-            } else {
-                if decode_res.is_err() {
-                    panic!("Decode({}) unexpectedly threw an error", case.name);
-                }
-                let decoded = decode_res.unwrap();
-                if decoded != case.decoded {
-                    println!("Expected: {:?}", case.decoded);
-                    println!("Have: {:?}", decoded);
-                    panic!("Decode({}) result is different than expected", case.name);
-                }
-            }
-        }
+    #[test]
+    pub fn incomplete_block() {
+        let decoded = Block::default();
+        let encoded = vec![
+            0, 1, 8, 232, 7, 18, 2, 0, 0, 50, 25, 49, 57, 55, 48, 45, 48, 49, 45, 48, 49, 84, 48,
+            48, 58, 48, 48, 58, 48, 48, 43, 48, 48, 58, 48, 48,
+        ];
+        let (encode_err, decode_err) = test_encode_decode(decoded, encoded);
+        assert_matches!(encode_err, Some(Error::MissingParents));
+        assert_matches!(decode_err, Some(Error::MissingParents));
+    }
+
+    #[test]
+    pub fn unsupported_block() {
+        let decoded = {
+            let mut b = Block::default().with_parents(vec![VertexHash::default()]);
+            b.version = u32::MAX;
+            b
+        };
+        let encoded = vec![
+            0, 255, 255, 255, 255, 15, 8, 232, 7, 18, 2, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 25, 49,
+            57, 55, 48, 45, 48, 49, 45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 43, 48, 48, 58,
+            48, 48,
+        ];
+        let (encode_err, decode_err) = test_encode_decode(decoded, encoded);
+        assert_matches!(encode_err, Some(Error::UnsupportedVersion));
+        assert_matches!(decode_err, Some(Error::UnsupportedVersion));
+    }
+
+    #[test]
+    pub fn block_with_illegal_difficulty() {
+        let decoded = {
+            let mut b = Block::default().with_parents(vec![VertexHash::default()]);
+            b.difficulty = MIN_DIFFICULTY - 1;
+            b
+        };
+        let encoded = vec![
+            0, 1, 8, 231, 7, 18, 2, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 25, 49, 57, 55, 48, 45, 48,
+            49, 45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 43, 48, 48, 58, 48, 48,
+        ];
+        let (encode_err, decode_err) = test_encode_decode(decoded, encoded);
+        assert_matches!(encode_err, Some(Error::InvalidDifficulty));
+        assert_matches!(decode_err, Some(Error::InvalidDifficulty));
+    }
+
+    #[test]
+    pub fn block_with_repeated_parents() {
+        let decoded =
+            Block::default().with_parents(vec![VertexHash::default(), VertexHash::default()]);
+        let encoded = vec![
+            0, 1, 8, 232, 7, 18, 2, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 25,
+            49, 57, 55, 48, 45, 48, 49, 45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 43, 48, 48,
+            58, 48, 48,
+        ];
+        let (encode_err, decode_err) = test_encode_decode(decoded, encoded);
+        assert_matches!(encode_err, Some(Error::RepeatedParents));
+        assert_matches!(decode_err, Some(Error::RepeatedParents));
+    }
+
+    #[test]
+    pub fn block_with_repeated_inputs() {
+        let decoded = {
+            let mut b = Block::default().with_parents(vec![VertexHash::default()]);
+            b.inputs = vec![TxoHash::default(), TxoHash::default()];
+            b
+        };
+        let encoded = vec![
+            0, 1, 8, 232, 7, 18, 2, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 34, 34, 2, 32, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 34, 34,
+            2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 50, 25, 49, 57, 55, 48, 45, 48, 49, 45, 48, 49, 84, 48, 48, 58, 48, 48,
+            58, 48, 48, 43, 48, 48, 58, 48, 48,
+        ];
+        let (encode_err, decode_err) = test_encode_decode(decoded, encoded);
+        assert_matches!(encode_err, Some(Error::RepeatedInputs));
+        assert_matches!(decode_err, Some(Error::RepeatedInputs));
+    }
+
+    #[test]
+    pub fn block_with_repeated_outputs() {
+        let decoded = {
+            let mut b = Block::default().with_parents(vec![VertexHash::default()]);
+            b.outputs = vec![Txo::default(), Txo::default()];
+            b
+        };
+        let encoded = vec![
+            0, 1, 8, 232, 7, 18, 2, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 42, 0, 42, 0, 50, 25, 49, 57, 55,
+            48, 45, 48, 49, 45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 43, 48, 48, 58, 48, 48,
+        ];
+        let (encode_err, decode_err) = test_encode_decode(decoded, encoded);
+        assert_matches!(encode_err, Some(Error::RepeatedOutputs));
+        assert_matches!(decode_err, Some(Error::RepeatedOutputs));
     }
 }

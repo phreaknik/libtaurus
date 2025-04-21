@@ -5,8 +5,6 @@ use futures::prelude::*;
 use libp2p::request_response;
 use quick_protobuf::{BytesReader, MessageRead, MessageWrite, Writer};
 use std::io;
-use thiserror::Error;
-use tracing::error;
 
 pub const PROTOCOL_NAME: &str = "/cordelia/consensus_rpc/0.1.0";
 
@@ -141,21 +139,5 @@ impl request_response::Codec for ConsensusRpcCodec {
     }
 }
 
-#[derive(Debug, Error)]
-pub enum UpgradeError {
-    #[error(transparent)]
-    Io(#[from] io::Error),
-    #[error("Stream closed")]
-    StreamClosed,
-}
-
-impl From<UpgradeError> for io::Error {
-    fn from(e: UpgradeError) -> Self {
-        match e {
-            UpgradeError::Io(e) => e,
-            UpgradeError::StreamClosed => {
-                io::Error::new(io::ErrorKind::ConnectionAborted, UpgradeError::StreamClosed)
-            }
-        }
-    }
-}
+#[derive(Debug)]
+pub enum UpgradeError {}

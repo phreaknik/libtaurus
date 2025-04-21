@@ -30,6 +30,8 @@ pub enum Error {
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
+    Protobuf(#[from] quick_protobuf::Error),
+    #[error(transparent)]
     Vertex(#[from] vertex::Error),
     #[error(transparent)]
     Wire(#[from] wire::Error),

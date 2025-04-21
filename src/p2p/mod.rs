@@ -54,14 +54,18 @@ pub enum Action {
 pub enum Error {
     #[error(transparent)]
     Dial(#[from] libp2p::swarm::DialError),
+    #[error("broadcast has no data")]
+    EmptyBroadcast,
     #[error(transparent)]
     Heed(#[from] heed::Error),
     #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
     Multiaddr(#[from] libp2p::multiaddr::Error),
     #[error(transparent)]
-    Io(#[from] io::Error),
-    #[error(transparent)]
     Transport(#[from] libp2p::TransportError<io::Error>),
+    #[error(transparent)]
+    Protobuf(#[from] quick_protobuf::Error),
     #[error(transparent)]
     Publish(#[from] gossipsub::PublishError),
     #[error(transparent)]
