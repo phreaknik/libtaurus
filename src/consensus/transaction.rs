@@ -20,9 +20,6 @@ pub type TxoHash = crate::hash::Hash;
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Transaction {}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
-pub struct TxHash(pub [u8; blake3::OUT_LEN]);
-
 /// Transaction output object
 #[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct Txo {

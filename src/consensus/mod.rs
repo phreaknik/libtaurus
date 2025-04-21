@@ -6,14 +6,14 @@
 pub mod avalanche;
 pub mod block;
 mod database;
-mod transaction;
+pub mod transaction;
 pub mod vertex;
 mod voter_pool;
 mod waitlist;
 
 use crate::{p2p, randomx, randomx::RandomXVMInstance};
-pub use avalanche::*;
-pub use block::*;
+pub use avalanche::Dag;
+pub use block::{Block, BlockHash};
 use chrono::{DateTime, Utc};
 use libp2p::multihash::Multihash;
 use libp2p::PeerId;
@@ -27,7 +27,8 @@ use tokio::sync::oneshot;
 use tokio::{select, sync::broadcast};
 use tracing::{error, info, trace, warn};
 use tracing_mutex::stdsync::TracingRwLock;
-pub use vertex::*;
+pub use transaction::{Txo, TxoHash};
+pub use vertex::{UndecidedVertex, Vertex, VertexHash};
 
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
 /// [`tokio::sync::broadcast`] for more information.
