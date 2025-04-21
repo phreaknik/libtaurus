@@ -323,38 +323,20 @@ impl From<&Block> for PrettyBlock {
 // TODO: need to test other impls
 
 #[cfg(test)]
-pub mod encode_decode {
+pub mod wire_format_tests {
     use super::*;
+    use crate::wire::tests::test_wire_format;
     use std::assert_matches::assert_matches;
-
-    /// Tests encoding and decoding and returns the encode or decode error, if any.
-    fn test_encode_decode(decoded: Block, encoded: Vec<u8>) -> (Option<Error>, Option<Error>) {
-        let encode_err = match decoded.to_wire(true) {
-            Ok(bytes) => {
-                assert_eq!(bytes, encoded);
-                None
-            }
-            Err(e) => Some(e),
-        };
-        let decode_err = match Block::from_wire(&encoded, true) {
-            Ok(block) => {
-                assert_eq!(block, decoded);
-                None
-            }
-            Err(e) => Some(e),
-        };
-        (encode_err, decode_err)
-    }
 
     #[test]
     pub fn minimal_block() {
         let decoded = Block::default().with_parents(vec![VertexHash::default()]);
-        let encoded = vec![
+        let encoded = &[
             0, 1, 8, 232, 7, 18, 2, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 25, 49, 57, 55, 48, 45, 48,
             49, 45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 43, 48, 48, 58, 48, 48,
         ];
-        let (encode_err, decode_err) = test_encode_decode(decoded, encoded);
+        let (encode_err, decode_err) = test_wire_format(decoded, encoded);
         assert_matches!(encode_err, None);
         assert_matches!(decode_err, None);
     }
@@ -362,11 +344,11 @@ pub mod encode_decode {
     #[test]
     pub fn incomplete_block() {
         let decoded = Block::default();
-        let encoded = vec![
+        let encoded = &[
             0, 1, 8, 232, 7, 18, 2, 0, 0, 50, 25, 49, 57, 55, 48, 45, 48, 49, 45, 48, 49, 84, 48,
             48, 58, 48, 48, 58, 48, 48, 43, 48, 48, 58, 48, 48,
         ];
-        let (encode_err, decode_err) = test_encode_decode(decoded, encoded);
+        let (encode_err, decode_err) = test_wire_format(decoded, encoded);
         assert_matches!(encode_err, Some(Error::MissingParents));
         assert_matches!(decode_err, Some(Error::MissingParents));
     }
@@ -378,13 +360,13 @@ pub mod encode_decode {
             b.version = u32::MAX;
             b
         };
-        let encoded = vec![
+        let encoded = &[
             0, 255, 255, 255, 255, 15, 8, 232, 7, 18, 2, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 25, 49,
             57, 55, 48, 45, 48, 49, 45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 43, 48, 48, 58,
             48, 48,
         ];
-        let (encode_err, decode_err) = test_encode_decode(decoded, encoded);
+        let (encode_err, decode_err) = test_wire_format(decoded, encoded);
         assert_matches!(encode_err, Some(Error::UnsupportedVersion));
         assert_matches!(decode_err, Some(Error::UnsupportedVersion));
     }
@@ -396,12 +378,12 @@ pub mod encode_decode {
             b.difficulty = MIN_DIFFICULTY - 1;
             b
         };
-        let encoded = vec![
+        let encoded = &[
             0, 1, 8, 231, 7, 18, 2, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 25, 49, 57, 55, 48, 45, 48,
             49, 45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 43, 48, 48, 58, 48, 48,
         ];
-        let (encode_err, decode_err) = test_encode_decode(decoded, encoded);
+        let (encode_err, decode_err) = test_wire_format(decoded, encoded);
         assert_matches!(encode_err, Some(Error::InvalidDifficulty));
         assert_matches!(decode_err, Some(Error::InvalidDifficulty));
     }
@@ -410,14 +392,14 @@ pub mod encode_decode {
     pub fn block_with_repeated_parents() {
         let decoded =
             Block::default().with_parents(vec![VertexHash::default(), VertexHash::default()]);
-        let encoded = vec![
+        let encoded = &[
             0, 1, 8, 232, 7, 18, 2, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 25,
             49, 57, 55, 48, 45, 48, 49, 45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 43, 48, 48,
             58, 48, 48,
         ];
-        let (encode_err, decode_err) = test_encode_decode(decoded, encoded);
+        let (encode_err, decode_err) = test_wire_format(decoded, encoded);
         assert_matches!(encode_err, Some(Error::RepeatedParents));
         assert_matches!(decode_err, Some(Error::RepeatedParents));
     }
@@ -429,7 +411,7 @@ pub mod encode_decode {
             b.inputs = vec![TxoHash::default(), TxoHash::default()];
             b
         };
-        let encoded = vec![
+        let encoded = &[
             0, 1, 8, 232, 7, 18, 2, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 34, 34, 2, 32, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 34, 34,
@@ -437,7 +419,7 @@ pub mod encode_decode {
             0, 0, 0, 0, 0, 50, 25, 49, 57, 55, 48, 45, 48, 49, 45, 48, 49, 84, 48, 48, 58, 48, 48,
             58, 48, 48, 43, 48, 48, 58, 48, 48,
         ];
-        let (encode_err, decode_err) = test_encode_decode(decoded, encoded);
+        let (encode_err, decode_err) = test_wire_format(decoded, encoded);
         assert_matches!(encode_err, Some(Error::RepeatedInputs));
         assert_matches!(decode_err, Some(Error::RepeatedInputs));
     }
@@ -449,12 +431,12 @@ pub mod encode_decode {
             b.outputs = vec![Txo::default(), Txo::default()];
             b
         };
-        let encoded = vec![
+        let encoded = &[
             0, 1, 8, 232, 7, 18, 2, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 42, 0, 42, 0, 50, 25, 49, 57, 55,
             48, 45, 48, 49, 45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 43, 48, 48, 58, 48, 48,
         ];
-        let (encode_err, decode_err) = test_encode_decode(decoded, encoded);
+        let (encode_err, decode_err) = test_wire_format(decoded, encoded);
         assert_matches!(encode_err, Some(Error::RepeatedOutputs));
         assert_matches!(decode_err, Some(Error::RepeatedOutputs));
     }

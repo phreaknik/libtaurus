@@ -111,209 +111,111 @@ impl<'a> WireFormat<'a, proto::Response> for Response {
 }
 
 #[cfg(test)]
-mod tests {
+mod wire_format_tests {
     use super::*;
-    use crate::{hash::tests::generate_test_hashes, wire::WireFormat};
-    use itertools::Itertools;
-    use std::iter;
+    use crate::wire::tests::test_wire_format;
+    use std::assert_matches::assert_matches;
 
-    pub struct RequestTestCase<'a> {
-        pub decoded: Request,
-        pub encoded: &'a [u8],
-    }
-
-    pub fn generate_test_requests<'a>() -> impl Iterator<Item = RequestTestCase<'a>> {
-        // GetBlock requests
-        let encoded = [
-            &[
-                2, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 0,
-            ],
-            &[
-                2, 34, 2, 32, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            ],
-            &[
-                2, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 1,
-            ],
-            &[
-                2, 34, 2, 32, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-                255, 255,
-            ],
-            &[
-                2, 34, 2, 32, 127, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-                255, 255,
-            ],
-            &[
-                2, 34, 2, 32, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-                255, 254,
-            ],
-        ];
-        let get_block_cases = generate_test_hashes()
-            .map(|tc| Request::GetBlock(tc.decoded))
-            .zip_eq(encoded.into_iter())
-            .map(|(decoded, encoded)| RequestTestCase { decoded, encoded });
-        // GetVertex requests
-        let encoded = [
-            &[
-                10, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 0,
-            ],
-            &[
-                10, 34, 2, 32, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            ],
-            &[
-                10, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 1,
-            ],
-            &[
-                10, 34, 2, 32, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-                255, 255, 255,
-            ],
-            &[
-                10, 34, 2, 32, 127, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-                255, 255, 255,
-            ],
-            &[
-                10, 34, 2, 32, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-                255, 255, 254,
-            ],
-        ];
-        let get_vertex_cases = generate_test_hashes()
-            .map(|tc| Request::GetVertex(tc.decoded))
-            .zip_eq(encoded.into_iter())
-            .map(|(decoded, encoded)| RequestTestCase { decoded, encoded });
-        // GetPreference requests
-        let encoded = [
-            &[
-                18, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 0,
-            ],
-            &[
-                18, 34, 2, 32, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            ],
-            &[
-                18, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 1,
-            ],
-            &[
-                18, 34, 2, 32, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-                255, 255, 255,
-            ],
-            &[
-                18, 34, 2, 32, 127, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-                255, 255, 255,
-            ],
-            &[
-                18, 34, 2, 32, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-                255, 255, 254,
-            ],
-        ];
-        let get_preference_cases = generate_test_hashes()
-            .map(|tc| Request::GetPreference(tc.decoded))
-            .zip_eq(encoded.into_iter())
-            .map(|(decoded, encoded)| RequestTestCase { decoded, encoded });
-
-        // Return the full set of test cases
-        get_block_cases
-            .chain(get_vertex_cases)
-            .chain(get_preference_cases)
-    }
-
-    pub struct ResponseTestCase {
-        pub decoded: Response,
-        pub encoded: Vec<u8>,
-    }
-
-    pub fn generate_test_responses() -> impl Iterator<Item = ResponseTestCase> {
-        // GetBlock responses
-        let block_cases = iter::once(ResponseTestCase {
-            decoded: Response::Block(Block::default().with_parents(vec![VertexHash::default()])),
-            encoded: vec![
-                2, 72, 0, 1, 8, 232, 7, 18, 2, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 25, 49, 57,
-                55, 48, 45, 48, 49, 45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 43, 48, 48, 58,
-                48, 48,
-            ],
-        });
-
-        // GetVertex responses
-        let vertex_cases = iter::once(ResponseTestCase {
-            decoded: Response::Vertex(Arc::new(Vertex::new_full(Arc::new(
-                Block::default().with_parents(vec![VertexHash::default()]),
-            )))),
-            encoded: vec![
-                10, 74, 0, 1, 10, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 18, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            ],
-        });
-
-        // GetPreference responses
-        let encoded = [
-            vec![
-                18, 36, 2, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            ],
-            vec![
-                18, 38, 2, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 1,
-            ],
-        ];
-        let preference_cases = generate_test_hashes()
-            .map(|tc| {
-                [
-                    Response::Preference(tc.decoded, false),
-                    Response::Preference(tc.decoded, true),
-                ]
-                .into_iter()
-            })
-            .flatten()
-            .zip_eq(encoded.into_iter())
-            .map(|(decoded, encoded)| ResponseTestCase { decoded, encoded })
-            .take(1); // Don't need to iterate all the test hashes for this
-
-        // Return the full set of test cases
-        block_cases.chain(vertex_cases).chain(preference_cases)
-    }
-
-    /// Attempt to serialize and deserialize each request test case
     #[test]
-    fn encoding_requests() {
-        for case in generate_test_requests() {
-            // Encode the request
-            let encoded = case.decoded.to_wire(true).unwrap();
-            assert_eq!(case.encoded, encoded);
-
-            // Decode the request
-            let decoded = Request::from_wire(&case.encoded, true).unwrap();
-            assert_eq!(case.decoded, decoded);
-        }
+    pub fn get_block_request() {
+        let decoded = Request::GetBlock(BlockHash::default());
+        let encoded = &[
+            2, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        let (encode_err, decode_err) = test_wire_format(decoded, encoded);
+        assert_matches!(encode_err, None);
+        assert_matches!(decode_err, None);
     }
 
-    /// Attempt to serialize and deserialize each response test case
     #[test]
-    fn encoding_responses() {
-        for case in generate_test_responses() {
-            // Encode the response
-            let encoded = case.decoded.to_wire(true).unwrap();
-            assert_eq!(case.encoded, encoded);
+    pub fn get_vertex_request() {
+        let decoded = Request::GetVertex(BlockHash::default());
+        let encoded = &[
+            10, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        let (encode_err, decode_err) = test_wire_format(decoded, encoded);
+        assert_matches!(encode_err, None);
+        assert_matches!(decode_err, None);
+    }
 
-            // Decode the response
-            let decoded = Response::from_wire(&case.encoded, true).unwrap();
-            assert_eq!(case.decoded, decoded);
-        }
+    #[test]
+    pub fn get_preference_request() {
+        let decoded = Request::GetPreference(BlockHash::default());
+        let encoded = &[
+            18, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        let (encode_err, decode_err) = test_wire_format(decoded, encoded);
+        assert_matches!(encode_err, None);
+        assert_matches!(decode_err, None);
+    }
+
+    #[test]
+    pub fn block_response() {
+        let decoded = Response::Block(Block::default().with_parents(vec![VertexHash::default()]));
+        let encoded = &[
+            2, 72, 0, 1, 8, 232, 7, 18, 2, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 25, 49, 57, 55, 48, 45,
+            48, 49, 45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 43, 48, 48, 58, 48, 48,
+        ];
+        let (encode_err, decode_err) = test_wire_format(decoded, encoded);
+        assert_matches!(encode_err, None);
+        assert_matches!(decode_err, None);
+    }
+
+    #[test]
+    pub fn vertex_response() {
+        // Full vertex
+        let decoded = Response::Vertex(Arc::new(Vertex::new_full(Arc::new(
+            Block::default().with_parents(vec![VertexHash::default()]),
+        ))));
+        let encoded = &[
+            10, 76, 0, 1, 26, 72, 0, 1, 8, 232, 7, 18, 2, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 25, 49,
+            57, 55, 48, 45, 48, 49, 45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 43, 48, 48, 58,
+            48, 48,
+        ];
+        let (encode_err, decode_err) = test_wire_format(decoded, encoded);
+        assert_matches!(encode_err, None);
+        assert_matches!(decode_err, None);
+
+        // Slim vertex
+        let decoded = Response::Vertex(Arc::new(Vertex::new_slim(
+            VertexHash::default(),
+            vec![VertexHash::default()],
+        )));
+        let encoded = &[
+            10, 74, 0, 1, 10, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 18, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        let (encode_err, decode_err) = test_wire_format(decoded, encoded);
+        assert_matches!(encode_err, None);
+        assert_matches!(decode_err, None);
+    }
+
+    #[test]
+    pub fn preference_response() {
+        // Negative preference
+        let decoded = Response::Preference(VertexHash::default(), false);
+        let encoded = &[
+            18, 36, 2, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        let (encode_err, decode_err) = test_wire_format(decoded, encoded);
+        assert_matches!(encode_err, None);
+        assert_matches!(decode_err, None);
+
+        // Positive preference
+        let decoded = Response::Preference(VertexHash::default(), true);
+        let encoded = &[
+            18, 38, 2, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 1,
+        ];
+        let (encode_err, decode_err) = test_wire_format(decoded, encoded);
+        assert_matches!(encode_err, None);
+        assert_matches!(decode_err, None);
     }
 }
