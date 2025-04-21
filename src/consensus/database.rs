@@ -15,6 +15,8 @@ pub enum Error {
     Block(#[from] block::Error),
     #[error("expected block")]
     ExpectedBlock,
+    #[error("expected height link")]
+    ExpectedHeightLink,
     #[error("expected vertex")]
     ExpectedVertex,
     #[error("expected vertex hash")]
@@ -81,13 +83,28 @@ impl ConsensusDb {
         if vertex.block.is_none() {
             return Err(Error::ExpectedBlock);
         };
-        // Write the link from block-hash to vertex
-        let mut wtxn = wtxn.unwrap_or(self.env.write_txn().unwrap());
         let vhash = vertex.hash();
+        // Unwrap or create a new write transaction
+        let mut wtxn = wtxn.unwrap_or(self.env.write_txn().unwrap());
+        // Write the link from block-hash to vertex
         self.db.put(
             &mut wtxn,
             &self.link_key(&vertex.bhash),
             &DbRecord::from(vhash),
+        )?;
+        // Write the link from height to vertex
+        let vertices_at_height = match self.db.get(&mut wtxn, &self.height_key(mined_height))? {
+            Some(DbRecord::HeightLink(mut vertices)) => {
+                vertices.push(vhash);
+                Ok(DbRecord::HeightLink(vertices))
+            }
+            None => Ok(DbRecord::HeightLink(vec![vhash])),
+            _ => Err(Error::ExpectedHeightLink),
+        }?;
+        self.db.put(
+            &mut wtxn,
+            &self.height_key(mined_height),
+            &vertices_at_height,
         )?;
         // Write the vertex itsself
         self.db.put(
@@ -112,9 +129,14 @@ impl ConsensusDb {
         DbKey(format!("vertex:{}", vhash.to_hex()))
     }
 
-    /// Construct the db key for the specified link object
+    /// Construct the db key for the specified blockhash-link object
     fn link_key(&self, bhash: &BlockHash) -> DbKey {
         DbKey(format!("link:{}", bhash.to_hex()))
+    }
+
+    /// Construct the db key for the specified height-link object
+    fn height_key(&self, height: u64) -> DbKey {
+        DbKey(format!("height:{height}"))
     }
 }
 
@@ -148,6 +170,9 @@ enum DbRecord {
 
     /// Link from [`BlockHash`] to the vertex it was decided in
     BlockLink(VertexHash),
+
+    /// Link to the vertices mined at a given height
+    HeightLink(Vec<VertexHash>),
 }
 
 impl<'a> WireFormat<'a, proto::DbRecord> for DbRecord {
@@ -166,6 +191,11 @@ impl<'a> WireFormat<'a, proto::DbRecord> for DbRecord {
                     l.to_protobuf(check)?,
                 ),
             }),
+            DbRecord::HeightLink(v) => Ok(proto::DbRecord {
+                RequestData: proto::mod_DbRecord::OneOfRequestData::height_link(proto::Hashes {
+                    hashes: v.into_iter().map(|v| v.to_protobuf(check)).try_collect()?,
+                }),
+            }),
         }
     }
 
@@ -181,6 +211,12 @@ impl<'a> WireFormat<'a, proto::DbRecord> for DbRecord {
             proto::mod_DbRecord::OneOfRequestData::block_link(l) => {
                 Ok(DbRecord::BlockLink(Hash::from_protobuf(l, check)?))
             }
+            proto::mod_DbRecord::OneOfRequestData::height_link(l) => Ok(DbRecord::HeightLink(
+                l.hashes
+                    .iter()
+                    .map(|h| VertexHash::from_protobuf(h, check))
+                    .try_collect()?,
+            )),
             proto::mod_DbRecord::OneOfRequestData::None => Err(Error::IncompleteResponse),
         }
     }

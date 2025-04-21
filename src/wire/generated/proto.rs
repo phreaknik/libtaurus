@@ -180,6 +180,7 @@ impl<'a> MessageRead<'a> for DbRecord {
             match r.next_tag(bytes) {
                 Ok(2) => msg.RequestData = generated::proto::mod_DbRecord::OneOfRequestData::vertex(r.read_message::<generated::proto::VertexRec>(bytes)?),
                 Ok(10) => msg.RequestData = generated::proto::mod_DbRecord::OneOfRequestData::block_link(r.read_message::<generated::proto::Hash>(bytes)?),
+                Ok(18) => msg.RequestData = generated::proto::mod_DbRecord::OneOfRequestData::height_link(r.read_message::<generated::proto::Hashes>(bytes)?),
                 Ok(t) => { r.read_unknown(bytes, t)?; }
                 Err(e) => return Err(e),
             }
@@ -194,12 +195,14 @@ impl MessageWrite for DbRecord {
         + match self.RequestData {
             generated::proto::mod_DbRecord::OneOfRequestData::vertex(ref m) => 1 + sizeof_len((m).get_size()),
             generated::proto::mod_DbRecord::OneOfRequestData::block_link(ref m) => 1 + sizeof_len((m).get_size()),
+            generated::proto::mod_DbRecord::OneOfRequestData::height_link(ref m) => 1 + sizeof_len((m).get_size()),
             generated::proto::mod_DbRecord::OneOfRequestData::None => 0,
     }    }
 
     fn write_message<W: WriterBackend>(&self, w: &mut Writer<W>) -> Result<()> {
         match self.RequestData {            generated::proto::mod_DbRecord::OneOfRequestData::vertex(ref m) => { w.write_with_tag(2, |w| w.write_message(m))? },
             generated::proto::mod_DbRecord::OneOfRequestData::block_link(ref m) => { w.write_with_tag(10, |w| w.write_message(m))? },
+            generated::proto::mod_DbRecord::OneOfRequestData::height_link(ref m) => { w.write_with_tag(18, |w| w.write_message(m))? },
             generated::proto::mod_DbRecord::OneOfRequestData::None => {},
     }        Ok(())
     }
@@ -213,6 +216,7 @@ use super::*;
 pub enum OneOfRequestData {
     vertex(generated::proto::VertexRec),
     block_link(generated::proto::Hash),
+    height_link(generated::proto::Hashes),
     None,
 }
 
@@ -328,6 +332,38 @@ impl MessageWrite for Hash {
 
     fn write_message<W: WriterBackend>(&self, w: &mut Writer<W>) -> Result<()> {
         if !self.hash.is_empty() { w.write_with_tag(2, |w| w.write_bytes(&**&self.hash))?; }
+        Ok(())
+    }
+}
+
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Debug, Default, PartialEq, Clone)]
+pub struct Hashes {
+    pub hashes: Vec<generated::proto::Hash>,
+}
+
+impl<'a> MessageRead<'a> for Hashes {
+    fn from_reader(r: &mut BytesReader, bytes: &'a [u8]) -> Result<Self> {
+        let mut msg = Self::default();
+        while !r.is_eof() {
+            match r.next_tag(bytes) {
+                Ok(2) => msg.hashes.push(r.read_message::<generated::proto::Hash>(bytes)?),
+                Ok(t) => { r.read_unknown(bytes, t)?; }
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(msg)
+    }
+}
+
+impl MessageWrite for Hashes {
+    fn get_size(&self) -> usize {
+        0
+        + self.hashes.iter().map(|s| 1 + sizeof_len((s).get_size())).sum::<usize>()
+    }
+
+    fn write_message<W: WriterBackend>(&self, w: &mut Writer<W>) -> Result<()> {
+        for s in &self.hashes { w.write_with_tag(2, |w| w.write_message(s))?; }
         Ok(())
     }
 }

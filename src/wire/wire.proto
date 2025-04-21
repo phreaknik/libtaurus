@@ -29,6 +29,7 @@ message DbRecord {
 	oneof RequestData {
 		VertexRec vertex = 0;
 		Hash block_link = 1;
+		Hashes height_link = 2;
 	}
 }
 
@@ -46,6 +47,12 @@ message PeerInfo {
 // Inner message types
 message Hash {
   bytes hash = 0;
+}
+
+// TODO: delete this type and use 'repeated Hash' instead
+// This is only used due to a bug in pb-rs using repeated bytes in oneof
+message Hashes {
+  repeated Hash hashes = 0;
 }
 
 message Preference {
