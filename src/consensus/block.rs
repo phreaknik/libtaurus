@@ -139,6 +139,14 @@ impl Block {
     }
 }
 
+impl PartialEq for Block {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash() == other.hash()
+    }
+}
+
+impl Eq for Block {}
+
 impl<'a> WireFormat<'a, proto::Block> for Block {
     type Error = Error;
 
@@ -220,8 +228,6 @@ impl std::fmt::Debug for Block {
     }
 }
 
-/// This implementation of [`Default`] is nonsense and should never be used. It is only implemented
-/// to satisfy a trait boundary, but the actual contents are not used.
 impl Default for Block {
     fn default() -> Self {
         Block {
@@ -290,4 +296,16 @@ impl From<&Block> for PrettyBlock {
             nonce: block.nonce,
         }
     }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+
+    pub struct TestCase<'a> {
+        pub decoded: Block,
+        pub long_hex: &'a str,
+        pub short_hex: &'a str,
+    }
+    pub const TEST_CASES: &[TestCase] = &[];
 }

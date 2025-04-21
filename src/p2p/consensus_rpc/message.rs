@@ -5,10 +5,10 @@ use crate::VertexHash;
 use std::fmt;
 use std::result;
 use std::sync::Arc;
-use strum_macros::EnumIter;
+use strum_macros::{EnumCount, EnumIter};
 
 /// Message type defining the peer RPC request messages
-#[derive(Debug, Clone, PartialEq, Eq, EnumIter)]
+#[derive(Debug, Clone, PartialEq, Eq, EnumIter, EnumCount)]
 pub enum Request {
     GetBlock(BlockHash),
     GetVertex(VertexHash),
@@ -61,7 +61,7 @@ impl fmt::Display for Request {
 }
 
 /// Message type defining the peer RPC response messages
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, EnumIter)]
 pub enum Response {
     Block(Block),
     Vertex(Arc<Vertex>),
@@ -112,27 +112,216 @@ impl<'a> WireFormat<'a, proto::Response> for Response {
 
 #[cfg(test)]
 mod tests {
-    use super::proto;
-    use super::Request;
-    use crate::wire::WireFormat;
+    use super::*;
+    use crate::{
+        consensus::block::tests::TEST_CASES as BLOCK_CASES, hash::tests::TEST_CASES as HASH_CASES,
+        wire::WireFormat,
+    };
     use quick_protobuf::{BytesReader, MessageRead, MessageWrite, Writer};
-    use strum::IntoEnumIterator;
+
+    pub struct RequestTestCase<'a> {
+        pub decoded: Request,
+        pub encoded: &'a [u8],
+    }
+
+    pub fn request_cases<'a>() -> impl Iterator<Item = RequestTestCase<'a>> {
+        // GetBlock requests
+        let encoded = [
+            &[
+                2, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0,
+            ],
+            &[
+                2, 34, 2, 32, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            ],
+            &[
+                2, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 1,
+            ],
+            &[
+                2, 34, 2, 32, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 255,
+            ],
+            &[
+                2, 34, 2, 32, 127, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 255,
+            ],
+            &[
+                2, 34, 2, 32, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 254,
+            ],
+        ];
+        assert_eq!(encoded.len(), HASH_CASES.len());
+        let get_block_cases = HASH_CASES
+            .iter()
+            .map(|tc| Request::GetBlock(tc.decoded))
+            .zip(encoded.into_iter())
+            .map(|(decoded, encoded)| RequestTestCase { decoded, encoded });
+        // GetVertex requests
+        let encoded = [
+            &[
+                10, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0,
+            ],
+            &[
+                10, 34, 2, 32, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            ],
+            &[
+                10, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 1,
+            ],
+            &[
+                10, 34, 2, 32, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 255, 255,
+            ],
+            &[
+                10, 34, 2, 32, 127, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 255, 255,
+            ],
+            &[
+                10, 34, 2, 32, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 255, 254,
+            ],
+        ];
+        assert_eq!(encoded.len(), HASH_CASES.len());
+        let get_vertex_cases = HASH_CASES
+            .iter()
+            .map(|tc| Request::GetVertex(tc.decoded))
+            .zip(encoded.into_iter())
+            .map(|(decoded, encoded)| RequestTestCase { decoded, encoded });
+        // GetPreference requests
+        let encoded = [
+            &[
+                18, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0,
+            ],
+            &[
+                18, 34, 2, 32, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            ],
+            &[
+                18, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 1,
+            ],
+            &[
+                18, 34, 2, 32, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 255, 255,
+            ],
+            &[
+                18, 34, 2, 32, 127, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 255, 255,
+            ],
+            &[
+                18, 34, 2, 32, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 255, 254,
+            ],
+        ];
+        assert_eq!(encoded.len(), HASH_CASES.len());
+        let get_preference_cases = HASH_CASES
+            .iter()
+            .map(|tc| Request::GetPreference(tc.decoded))
+            .zip(encoded.into_iter())
+            .map(|(decoded, encoded)| RequestTestCase { decoded, encoded });
+
+        // Return the full set of test cases
+        get_block_cases
+            .chain(get_vertex_cases)
+            .chain(get_preference_cases)
+    }
+
+    pub struct ResponseTestCase<'a> {
+        pub decoded: Response,
+        pub encoded: &'a [u8],
+    }
+
+    pub fn response_cases<'a>() -> impl Iterator<Item = ResponseTestCase<'a>> {
+        // GetBlock requests
+        let encoded = [
+            &[
+                2, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0,
+            ],
+            &[
+                2, 34, 2, 32, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            ],
+            &[
+                2, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 1,
+            ],
+            &[
+                2, 34, 2, 32, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 255,
+            ],
+            &[
+                2, 34, 2, 32, 127, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 255,
+            ],
+            &[
+                2, 34, 2, 32, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 254,
+            ],
+        ];
+        assert_eq!(encoded.len(), BLOCK_CASES.len());
+        let block_cases = BLOCK_CASES
+            .iter()
+            .map(|tc| Response::Block(tc.decoded.clone()))
+            .zip(encoded.into_iter())
+            .map(|(decoded, encoded)| ResponseTestCase { decoded, encoded });
+
+        // Return the full set of test cases
+        block_cases
+    }
 
     #[test]
-    fn protobuf_requests() {
-        // Attempt to serialize and deserialize each request type
-        for request_in in Request::iter() {
-            // Encode the message
+    fn encoding_requests() {
+        // Attempt to serialize and deserialize each request test case
+        for case in request_cases() {
+            // Encode the request
             let mut bytes = Vec::new();
             let mut writer = Writer::new(&mut bytes);
-            let protobuf = request_in.clone().to_protobuf(true).unwrap();
+            let protobuf = case.decoded.to_protobuf(true).unwrap();
             protobuf.write_message(&mut writer).unwrap();
+            assert_eq!(case.encoded, bytes);
 
             // Decode the request
-            let mut reader = BytesReader::from_bytes(&bytes);
+            let mut reader = BytesReader::from_bytes(&case.encoded);
             let protobuf = proto::Request::from_reader(&mut reader, &bytes).unwrap();
-            let request_out = Request::from_protobuf(&protobuf, true).unwrap();
-            assert_eq!(request_in, request_out);
+            let decoded = Request::from_protobuf(&protobuf, true).unwrap();
+            assert_eq!(case.decoded, decoded);
+        }
+    }
+
+    #[test]
+    fn encoding_responses() {
+        // Attempt to serialize and deserialize each request test case
+        for case in response_cases() {
+            // Encode the request
+            let mut bytes = Vec::new();
+            let mut writer = Writer::new(&mut bytes);
+            let protobuf = case.decoded.to_protobuf(true).unwrap();
+            protobuf.write_message(&mut writer).unwrap();
+            assert_eq!(case.encoded, bytes);
+
+            // Decode the request
+            let mut reader = BytesReader::from_bytes(&case.encoded);
+            let protobuf = proto::Response::from_reader(&mut reader, &bytes).unwrap();
+            let decoded = Response::from_protobuf(&protobuf, true).unwrap();
+            assert_eq!(case.decoded, decoded);
         }
     }
 }

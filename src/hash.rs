@@ -107,17 +107,17 @@ impl Default for Hash {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
-    struct TestCase<'a> {
-        input: Hash,
-        long_hex: &'a str,
-        short_hex: &'a str,
+    pub struct TestCase<'a> {
+        pub decoded: Hash,
+        pub long_hex: &'a str,
+        pub short_hex: &'a str,
     }
-    const TESTS: &[TestCase] = &[
+    pub const TEST_CASES: &[TestCase] = &[
         TestCase {
-            input: Hash([
+            decoded: Hash([
                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                 0, 0, 0, 0,
             ]),
@@ -125,7 +125,7 @@ mod tests {
             short_hex: "00000000..",
         },
         TestCase {
-            input: Hash([
+            decoded: Hash([
                 128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                 0, 0, 0, 0, 0,
             ]),
@@ -133,7 +133,7 @@ mod tests {
             short_hex: "80000000..",
         },
         TestCase {
-            input: Hash([
+            decoded: Hash([
                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                 0, 0, 0, 1,
             ]),
@@ -141,7 +141,7 @@ mod tests {
             short_hex: "00000000..",
         },
         TestCase {
-            input: Hash([
+            decoded: Hash([
                 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
                 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
             ]),
@@ -149,7 +149,7 @@ mod tests {
             short_hex: "ffffffff..",
         },
         TestCase {
-            input: Hash([
+            decoded: Hash([
                 127, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
                 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
             ]),
@@ -157,7 +157,7 @@ mod tests {
             short_hex: "7fffffff..",
         },
         TestCase {
-            input: Hash([
+            decoded: Hash([
                 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
                 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 254,
             ]),
@@ -168,16 +168,16 @@ mod tests {
 
     #[test]
     fn to_hex() -> Result<()> {
-        for test in TESTS {
-            assert_eq!(test.input.to_hex(), test.long_hex);
+        for test in TEST_CASES {
+            assert_eq!(test.decoded.to_hex(), test.long_hex);
         }
         Ok(())
     }
 
     #[test]
     fn to_short_hex() -> Result<()> {
-        for test in TESTS {
-            assert_eq!(test.input.to_short_hex(), test.short_hex);
+        for test in TEST_CASES {
+            assert_eq!(test.decoded.to_short_hex(), test.short_hex);
         }
         Ok(())
     }

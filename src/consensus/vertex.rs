@@ -47,7 +47,7 @@ pub type VertexHash = crate::hash::Hash;
 /// A vertex descibes a block's adapted position within the DAG. Importantly, its adapted position
 /// may differ from its mined position, due to dynamic parent reselection, in the case of
 /// non-virtuous parents of the mined block..
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct Vertex {
     /// Revision number of the vertex structure
     pub version: u32,
@@ -202,14 +202,6 @@ impl<'a> WireFormat<'a, proto::Vertex> for Vertex {
         Ok(vertex)
     }
 }
-
-impl PartialEq for Vertex {
-    fn eq(&self, other: &Self) -> bool {
-        self.version == other.version && self.parents == other.parents && self.bhash == other.bhash
-    }
-}
-
-impl Eq for Vertex {}
 
 impl PartialOrd for Vertex {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
