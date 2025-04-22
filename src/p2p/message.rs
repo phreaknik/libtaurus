@@ -80,7 +80,7 @@ pub struct MessageValidationReport {
     pub acceptance: MessageAcceptance,
 }
 
-#[derive(Clone, Debug, EnumIter, AsRefStr)]
+#[derive(Clone, Debug, PartialEq, Eq, EnumIter, AsRefStr)]
 pub enum BroadcastData {
     Vertex(Vertex),
 }

@@ -1,6 +1,7 @@
 mod block;
 mod consensus_requests;
 mod hash;
+mod p2p_broadcasts;
 mod transaction;
 mod vertex;
 
