@@ -117,7 +117,7 @@ impl From<BroadcastData> for TopicHash {
 }
 
 #[cfg(test)]
-mod tests {
+mod test {
     use super::*;
     use libp2p::multihash::Multihash;
     use std::assert_matches::assert_matches;
