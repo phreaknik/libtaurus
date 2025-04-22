@@ -2,6 +2,7 @@
 // crates.io/crystals/crystals-dilithium
 
 // TODO: ALTERNATE: Consider ledger using MiRitH signature algorithm: iacr 2023/1666
+// TODO: ALTERNATE: Consider ledger using MQ on My Mind signature algorithm: iacr 2023/1719
 
 pub mod avalanche;
 pub mod block;
