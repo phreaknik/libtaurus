@@ -115,3 +115,43 @@ impl From<BroadcastData> for TopicHash {
         Sha256Topic::from(&m).hash()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use libp2p::multihash::Multihash;
+    use std::assert_matches::assert_matches;
+
+    #[test]
+    fn message_accept() {
+        let m = Message {
+            msg_id: MessageId::new(b"hello"),
+            msg_source: PeerId::from_multihash(Multihash::default()).unwrap(),
+            data: BroadcastData::Vertex(Vertex::default()),
+        };
+        let response = m.accept();
+        assert_matches!(response.acceptance, MessageAcceptance::Accept);
+    }
+
+    #[test]
+    fn message_ignore() {
+        let m = Message {
+            msg_id: MessageId::new(b"hello"),
+            msg_source: PeerId::from_multihash(Multihash::default()).unwrap(),
+            data: BroadcastData::Vertex(Vertex::default()),
+        };
+        let response = m.ignore();
+        assert_matches!(response.acceptance, MessageAcceptance::Ignore);
+    }
+
+    #[test]
+    fn message_reject() {
+        let m = Message {
+            msg_id: MessageId::new(b"hello"),
+            msg_source: PeerId::from_multihash(Multihash::default()).unwrap(),
+            data: BroadcastData::Vertex(Vertex::default()),
+        };
+        let response = m.reject();
+        assert_matches!(response.acceptance, MessageAcceptance::Reject);
+    }
+}
