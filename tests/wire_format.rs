@@ -2,9 +2,10 @@
 
 use cordelia::{
     consensus::{block, vertex},
+    hash::Hash,
     p2p::consensus_rpc::{Request, Response},
     params::MIN_DIFFICULTY,
-    Block, BlockHash, Hash, Txo, TxoHash, Vertex, VertexHash, WireFormat,
+    Block, BlockHash, Txo, TxoHash, Vertex, VertexHash, WireFormat,
 };
 use quick_protobuf::{MessageRead, MessageWrite};
 use std::{assert_matches::assert_matches, fmt::Debug, sync::Arc};
@@ -411,4 +412,66 @@ pub fn preference_response() {
     let (encode_err, decode_err) = test_wire_format(decoded, encoded);
     assert_matches!(encode_err, None);
     assert_matches!(decode_err, None);
+}
+
+#[test]
+fn hash_corner_cases() {
+    pub struct HashTestCase<'a> {
+        pub decoded: Hash,
+        pub long_hex: &'a str,
+        pub short_hex: &'a str,
+    }
+    for test in [
+        HashTestCase {
+            decoded: Hash::with_bytes([
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0,
+            ]),
+            long_hex: "0000000000000000000000000000000000000000000000000000000000000000",
+            short_hex: "00000000..",
+        },
+        HashTestCase {
+            decoded: Hash::with_bytes([
+                128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0,
+            ]),
+            long_hex: "8000000000000000000000000000000000000000000000000000000000000000",
+            short_hex: "80000000..",
+        },
+        HashTestCase {
+            decoded: Hash::with_bytes([
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 1,
+            ]),
+            long_hex: "0000000000000000000000000000000000000000000000000000000000000001",
+            short_hex: "00000000..",
+        },
+        HashTestCase {
+            decoded: Hash::with_bytes([
+                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            ]),
+            long_hex: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            short_hex: "ffffffff..",
+        },
+        HashTestCase {
+            decoded: Hash::with_bytes([
+                127, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            ]),
+            long_hex: "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            short_hex: "7fffffff..",
+        },
+        HashTestCase {
+            decoded: Hash::with_bytes([
+                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 254,
+            ]),
+            long_hex: "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe",
+            short_hex: "ffffffff..",
+        },
+    ] {
+        assert_eq!(test.decoded.to_hex(), test.long_hex);
+        assert_eq!(test.decoded.to_short_hex(), test.short_hex);
+    }
 }
