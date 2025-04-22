@@ -879,7 +879,7 @@ impl Dag {
                     // Write the block to the database
                     txn = Some(self.database.write_vertex(
                         txn,
-                        vertex.mined_height,
+                        vertex.height,
                         vertex.inner.clone(),
                     )?);
                     // Remove this block's inputs from the set of undecided_txos

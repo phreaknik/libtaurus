@@ -78,7 +78,7 @@ impl ConsensusDb {
     pub fn write_vertex<'a>(
         &'a mut self,
         wtxn: Option<RwTxn<'a, 'a>>,
-        mined_height: u64,
+        height: u64,
         vertex: Arc<Vertex>,
     ) -> Result<RwTxn<'a, 'a>> {
         // Make sure this vertex includes the block. May not write slim vertices.
@@ -95,7 +95,7 @@ impl ConsensusDb {
             &DbRecord::from(vhash),
         )?;
         // Write the link from height to vertex
-        let vertices_at_height = match self.db.get(&mut wtxn, &self.height_key(mined_height))? {
+        let vertices_at_height = match self.db.get(&mut wtxn, &self.height_key(height))? {
             Some(DbRecord::HeightLink(mut vertices)) => {
                 vertices.push(vhash);
                 Ok(DbRecord::HeightLink(vertices))
@@ -103,16 +103,13 @@ impl ConsensusDb {
             None => Ok(DbRecord::HeightLink(vec![vhash])),
             _ => Err(Error::ExpectedHeightLink),
         }?;
-        self.db.put(
-            &mut wtxn,
-            &self.height_key(mined_height),
-            &vertices_at_height,
-        )?;
+        self.db
+            .put(&mut wtxn, &self.height_key(height), &vertices_at_height)?;
         // Write the vertex itsself
         self.db.put(
             &mut wtxn,
             &self.vertex_key(&vhash),
-            &DbRecord::Vertex((mined_height, vertex)),
+            &DbRecord::Vertex((height, vertex)),
         )?;
         Ok(wtxn)
     }
