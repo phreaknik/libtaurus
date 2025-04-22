@@ -23,6 +23,7 @@ fn test_human_readable() {
         TestCase(-10, "-10 Hz"),
         TestCase(-1, "-1 Hz"),
         TestCase(0, "0 Hz"),
+        TestCase(00000, "0 Hz"),
         TestCase(1, "1 Hz"),
         TestCase(10, "10 Hz"),
         TestCase(9999, "9999 Hz"),

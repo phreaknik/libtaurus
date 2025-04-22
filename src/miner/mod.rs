@@ -227,7 +227,7 @@ async fn stats_fn(mut solutions_receiver: UnboundedReceiver<usize>) {
             _ = ticker.tick() => {
                 let rate = count/ STATS_PERIOD_SECOND.as_secs();
                 count = 0;
-                info!("Current hashrate: {}", util::human_readable(rate, "h/s"));
+                info!("Current hashrate: {}", util::human_readable(rate as i64, "h/s"));
             }
         }
     }

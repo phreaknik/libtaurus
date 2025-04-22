@@ -119,7 +119,6 @@ impl Vertex {
     pub fn parents(&self) -> &Vec<VertexHash> {
         if let Some(b) = &self.block {
             assert!(self.parents.is_none(), "slim vertex must not have parents");
-            assert!(b.parents.is_empty(), "block does not have parents!");
             &b.parents
         } else {
             &self
