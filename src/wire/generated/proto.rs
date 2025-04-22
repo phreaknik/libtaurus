@@ -510,6 +510,38 @@ impl MessageWrite for Vertex {
 
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Debug, Default, PartialEq, Clone)]
+pub struct Transaction {
+    pub inputs: Vec<generated::proto::Txo>,
+}
+
+impl<'a> MessageRead<'a> for Transaction {
+    fn from_reader(r: &mut BytesReader, bytes: &'a [u8]) -> Result<Self> {
+        let mut msg = Self::default();
+        while !r.is_eof() {
+            match r.next_tag(bytes) {
+                Ok(2) => msg.inputs.push(r.read_message::<generated::proto::Txo>(bytes)?),
+                Ok(t) => { r.read_unknown(bytes, t)?; }
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(msg)
+    }
+}
+
+impl MessageWrite for Transaction {
+    fn get_size(&self) -> usize {
+        0
+        + self.inputs.iter().map(|s| 1 + sizeof_len((s).get_size())).sum::<usize>()
+    }
+
+    fn write_message<W: WriterBackend>(&self, w: &mut Writer<W>) -> Result<()> {
+        for s in &self.inputs { w.write_with_tag(2, |w| w.write_message(s))?; }
+        Ok(())
+    }
+}
+
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Debug, Default, PartialEq, Clone)]
 pub struct Txo {
     pub value: u64,
 }

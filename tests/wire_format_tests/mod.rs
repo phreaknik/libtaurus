@@ -1,6 +1,7 @@
 mod block;
 mod consensus_requests;
 mod hash;
+mod transaction;
 mod vertex;
 
 use cordelia::WireFormat;

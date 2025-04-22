@@ -40,5 +40,7 @@ pub mod util;
 pub mod wire;
 
 // TODO: rename avalanche
-pub use consensus::{avalanche, Block, BlockHash, GenesisConfig, Txo, TxoHash, Vertex, VertexHash};
+pub use consensus::{
+    avalanche, Block, BlockHash, GenesisConfig, Transaction, Txo, TxoHash, Vertex, VertexHash,
+};
 pub use wire::WireFormat;

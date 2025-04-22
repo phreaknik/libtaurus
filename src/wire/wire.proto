@@ -78,6 +78,10 @@ message Vertex {
   optional Block block = 3;
 }
 
+message Transaction {
+  repeated Txo inputs = 0;
+}
+
 message Txo {
   uint64 value = 0;
 }
