@@ -1,6 +1,6 @@
-use crate::wire_format_tests::test_wire_format;
 use cordelia::{
     p2p::consensus_rpc::{Request, Response},
+    wire::test_wire_format,
     Block, BlockHash, Vertex, VertexHash,
 };
 use std::{assert_matches::assert_matches, sync::Arc};

@@ -1,5 +1,6 @@
-use crate::wire_format_tests::test_wire_format;
-use cordelia::{consensus::vertex, hash::Hash, Block, BlockHash, Vertex, VertexHash};
+use cordelia::{
+    consensus::vertex, hash::Hash, wire::test_wire_format, Block, BlockHash, Vertex, VertexHash,
+};
 use std::{assert_matches::assert_matches, sync::Arc};
 
 #[test]

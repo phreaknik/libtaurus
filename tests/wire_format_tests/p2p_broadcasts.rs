@@ -1,5 +1,4 @@
-use crate::wire_format_tests::test_wire_format;
-use cordelia::{p2p::BroadcastData, Block, BlockHash, Vertex, VertexHash};
+use cordelia::{p2p::BroadcastData, wire::test_wire_format, Block, BlockHash, Vertex, VertexHash};
 use std::{assert_matches::assert_matches, sync::Arc};
 
 #[test]

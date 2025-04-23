@@ -1,5 +1,4 @@
-use crate::wire_format_tests::test_wire_format;
-use cordelia::Transaction;
+use cordelia::{wire::test_wire_format, Transaction};
 use std::assert_matches::assert_matches;
 
 #[test]
