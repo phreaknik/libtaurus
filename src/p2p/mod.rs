@@ -1,4 +1,4 @@
-mod behaviour;
+pub mod behaviour;
 pub mod broadcast;
 pub mod consensus_rpc;
 mod database;

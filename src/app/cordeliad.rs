@@ -173,6 +173,9 @@ fn setup_logger<'a>(args: &'a ArgMatches) {
 
 /// Determine system directories for the application to use
 fn parse_data_dir(args: &ArgMatches) -> PathBuf {
+    // TODO: look into etcetera AppStrategies. Instead of manually building data/config dirs, setup
+    // an app strategy and use the provided API any time you want a file or subdir of the data,
+    // config, etc dirs.
     let app_dirs = choose_native_strategy().expect("failed to build application directories");
     args.get_one::<String>("data_dir")
         .map(|s| PathBuf::from(s))
