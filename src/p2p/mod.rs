@@ -31,24 +31,6 @@ pub const P2P_EVENT_CHAN_CAPACITY: usize = 32;
 /// Path to the peer database, from within the peer data directory
 pub const DATABASE_DIR: &str = "peer_db/";
 
-/// Event produced by [`Behaviour`].
-#[derive(Debug, Clone)]
-pub enum Event {
-    Pubsub(Broadcast),
-    Avalanche(consensus_rpc::Event),
-}
-
-/// Actions that can be performed by the p2p client
-#[derive(Debug)]
-pub enum Action {
-    BlockPeer(PeerId),
-    Broadcast(BroadcastData),
-    GetLocalPeerId(oneshot::Sender<PeerId>),
-    ReportMessageValidity(BroadcastValidationReport),
-    AvalancheRequest(PeerId, consensus_rpc::Request),
-    AvalancheResponse(InboundRequestId, consensus_rpc::Response),
-}
-
 /// Error type for cordelia-p2p errors
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -82,6 +64,24 @@ pub enum Error {
 
 /// Result type for cordelia-p2p
 pub type Result<T> = result::Result<T, Error>;
+
+/// Event produced by [`Behaviour`].
+#[derive(Debug, Clone)]
+pub enum Event {
+    Pubsub(Broadcast),
+    Avalanche(consensus_rpc::Event),
+}
+
+/// Actions that can be performed by the p2p client
+#[derive(Debug)]
+pub enum Action {
+    BlockPeer(PeerId),
+    Broadcast(BroadcastData),
+    GetLocalPeerId(oneshot::Sender<PeerId>),
+    ReportMessageValidity(BroadcastValidationReport),
+    AvalancheRequest(PeerId, consensus_rpc::Request),
+    AvalancheResponse(InboundRequestId, consensus_rpc::Response),
+}
 
 /// Configuration details for [`cordelia-p2p`].
 #[derive(Clone)]
