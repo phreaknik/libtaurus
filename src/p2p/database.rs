@@ -72,7 +72,7 @@ impl From<&PeerId> for PeerDbKey {
 }
 
 /// Collection of data for a given peer
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct PeerInfo {
     /// Application-specific version of the protocol family used by the peer,
     /// e.g. `ipfs/1.0.0` or `polkadot/1.0.0`.
