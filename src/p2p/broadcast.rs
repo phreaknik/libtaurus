@@ -1,10 +1,7 @@
 use super::{Error, Result};
 use crate::{
     consensus::Vertex,
-    wire::{
-        proto::{self},
-        WireFormat,
-    },
+    wire::{proto, WireFormat},
 };
 use libp2p::{
     gossipsub::{self, MessageAcceptance, MessageId, Sha256Topic, TopicHash},
@@ -13,46 +10,46 @@ use libp2p::{
 use std::result;
 use strum_macros::{AsRefStr, EnumIter};
 
-/// Messages that can be sent to/from the gossipsub network
+/// Broadcasts that can be sent to/from the gossipsub network
 #[derive(Clone, Debug)]
-pub struct Message {
-    pub msg_id: MessageId,
-    pub msg_source: PeerId,
+pub struct Broadcast {
+    pub id: MessageId,
+    pub src: PeerId,
     pub data: BroadcastData,
 }
 
-impl Message {
+impl Broadcast {
     /// Generate a validation report to accept this message and propagate it to other peers.
-    pub fn accept(&self) -> MessageValidationReport {
-        MessageValidationReport {
-            msg_id: self.msg_id.clone(),
-            msg_source: self.msg_source,
+    pub(crate) fn accept(&self) -> BroadcastValidationReport {
+        BroadcastValidationReport {
+            id: self.id.clone(),
+            src: self.src,
             acceptance: MessageAcceptance::Accept,
         }
     }
 
     /// Generate a validation report to ignore this message and cease propagation, without
     /// penalty to the peer that sent it.
-    pub fn ignore(&self) -> MessageValidationReport {
-        MessageValidationReport {
-            msg_id: self.msg_id.clone(),
-            msg_source: self.msg_source,
+    pub(crate) fn ignore(&self) -> BroadcastValidationReport {
+        BroadcastValidationReport {
+            id: self.id.clone(),
+            src: self.src,
             acceptance: MessageAcceptance::Ignore,
         }
     }
 
     /// Generate a validation report to reject this message, cease propagation, and penalize the
     /// peer who sent it. Repeated penalization will eventually leading to that peer being banned.
-    pub fn reject(&self) -> MessageValidationReport {
-        MessageValidationReport {
-            msg_id: self.msg_id.clone(),
-            msg_source: self.msg_source,
+    pub(crate) fn reject(&self) -> BroadcastValidationReport {
+        BroadcastValidationReport {
+            id: self.id.clone(),
+            src: self.src,
             acceptance: MessageAcceptance::Reject,
         }
     }
 }
 
-impl TryFrom<gossipsub::Event> for Message {
+impl TryFrom<gossipsub::Event> for Broadcast {
     type Error = Error;
 
     fn try_from(event: gossipsub::Event) -> Result<Self> {
@@ -61,12 +58,12 @@ impl TryFrom<gossipsub::Event> for Message {
                 propagation_source,
                 message_id,
                 message,
-            } => Ok(Message {
-                msg_source: propagation_source,
-                msg_id: message_id,
+            } => Ok(Broadcast {
+                src: propagation_source,
+                id: message_id,
                 data: BroadcastData::from_wire(&message.data, true)?,
             }),
-            _ => Err(Error::NotAMessage),
+            _ => Err(Error::InvalidBroadast),
         }
     }
 }
@@ -74,9 +71,9 @@ impl TryFrom<gossipsub::Event> for Message {
 /// Validation report to send back to the p2p client, informing if this message should be accepted
 /// and propagated to peers, ignored, or rejected and penalize the peer.
 #[derive(Debug)]
-pub struct MessageValidationReport {
-    pub msg_id: MessageId,
-    pub msg_source: PeerId,
+pub struct BroadcastValidationReport {
+    pub id: MessageId,
+    pub src: PeerId,
     pub acceptance: MessageAcceptance,
 }
 
@@ -124,9 +121,9 @@ mod test {
 
     #[test]
     fn message_accept() {
-        let m = Message {
-            msg_id: MessageId::new(b"hello"),
-            msg_source: PeerId::from_multihash(Multihash::default()).unwrap(),
+        let m = Broadcast {
+            id: MessageId::new(b"hello"),
+            src: PeerId::from_multihash(Multihash::default()).unwrap(),
             data: BroadcastData::Vertex(Vertex::default()),
         };
         let response = m.accept();
@@ -135,9 +132,9 @@ mod test {
 
     #[test]
     fn message_ignore() {
-        let m = Message {
-            msg_id: MessageId::new(b"hello"),
-            msg_source: PeerId::from_multihash(Multihash::default()).unwrap(),
+        let m = Broadcast {
+            id: MessageId::new(b"hello"),
+            src: PeerId::from_multihash(Multihash::default()).unwrap(),
             data: BroadcastData::Vertex(Vertex::default()),
         };
         let response = m.ignore();
@@ -146,9 +143,9 @@ mod test {
 
     #[test]
     fn message_reject() {
-        let m = Message {
-            msg_id: MessageId::new(b"hello"),
-            msg_source: PeerId::from_multihash(Multihash::default()).unwrap(),
+        let m = Broadcast {
+            id: MessageId::new(b"hello"),
+            src: PeerId::from_multihash(Multihash::default()).unwrap(),
             data: BroadcastData::Vertex(Vertex::default()),
         };
         let response = m.reject();

@@ -283,17 +283,19 @@ impl Runtime {
 
     /// Handle a message from the peer to peer network, and generate a validation report back to the
     /// p2p client.
-    fn handle_p2p_pubsub(&mut self, msg: p2p::Message) -> Result<p2p::MessageValidationReport> {
-        let accept = msg.accept();
-        let ignore = msg.ignore();
-        let reject = msg.reject();
-        match msg.data {
+    fn handle_p2p_pubsub(
+        &mut self,
+        bcast: p2p::Broadcast,
+    ) -> Result<p2p::BroadcastValidationReport> {
+        let accept = bcast.accept();
+        let ignore = bcast.ignore();
+        let reject = bcast.reject();
+        match bcast.data {
             p2p::BroadcastData::Vertex(vertex) => {
                 let mut dag = self.dag.write().map_err(|_| Error::DagWriteLock)?;
-                match dag.try_insert_vertices(once(Arc::new(vertex)), Some(msg.msg_source), false) {
-                    Err(
-                        avalanche::Error::MissingBlock(_) | avalanche::Error::MissingVertices(_),
-                    ) => Ok(ignore),
+                match dag.try_insert_vertices(once(Arc::new(vertex)), Some(bcast.src), false) {
+                    Err(avalanche::Error::MissingBlock(_))
+                    | Err(avalanche::Error::MissingVertices(_)) => Ok(ignore),
                     Err(_) => Ok(reject),
                     Ok(_) => Ok(accept),
                 }

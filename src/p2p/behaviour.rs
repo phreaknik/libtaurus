@@ -1,6 +1,5 @@
-use crate::wire::WireFormat;
-
 use super::{consensus_rpc, BroadcastData, Event, PeerDatabase, PeerInfo};
+use crate::wire::WireFormat;
 use libp2p::{
     allow_block_list,
     core::Endpoint,

@@ -1,9 +1,10 @@
 mod behaviour;
+pub mod broadcast;
 pub mod consensus_rpc;
 mod database;
-pub mod message;
 
 pub use behaviour::Behaviour;
+pub use broadcast::{Broadcast, BroadcastData, BroadcastValidationReport};
 use core::result;
 pub use database::{PeerDatabase, PeerInfo};
 use futures::StreamExt;
@@ -11,13 +12,12 @@ use libp2p::{
     gossipsub, identity::Keypair, kad, multiaddr::Protocol, request_response::InboundRequestId,
     swarm::SwarmEvent, Multiaddr, PeerId,
 };
-pub use message::{BroadcastData, Message, MessageValidationReport};
 use std::{io, net::Ipv4Addr, path::PathBuf};
 use thiserror;
 use tokio::{
     select,
     sync::{
-        broadcast,
+        self,
         mpsc::{self, UnboundedReceiver, UnboundedSender},
         oneshot,
     },
@@ -34,7 +34,7 @@ pub const DATABASE_DIR: &str = "peer_db/";
 /// Event produced by [`Behaviour`].
 #[derive(Debug, Clone)]
 pub enum Event {
-    Pubsub(Message),
+    Pubsub(Broadcast),
     Avalanche(consensus_rpc::Event),
 }
 
@@ -44,7 +44,7 @@ pub enum Action {
     BlockPeer(PeerId),
     Broadcast(BroadcastData),
     GetLocalPeerId(oneshot::Sender<PeerId>),
-    ReportMessageValidity(MessageValidationReport),
+    ReportMessageValidity(BroadcastValidationReport),
     AvalancheRequest(PeerId, consensus_rpc::Request),
     AvalancheResponse(InboundRequestId, consensus_rpc::Response),
 }
@@ -58,6 +58,8 @@ pub enum Error {
     EmptyBroadcast,
     #[error(transparent)]
     Heed(#[from] heed::Error),
+    #[error("data is not a valid broadcast message")]
+    InvalidBroadast,
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
@@ -72,8 +74,6 @@ pub enum Error {
     Subscription(#[from] gossipsub::SubscriptionError),
     #[error(transparent)]
     NoKnownPeers(#[from] kad::NoKnownPeers),
-    #[error("data is not a message")]
-    NotAMessage,
     #[error(transparent)]
     Vertex(#[from] crate::consensus::vertex::Error),
     #[error(transparent)]
@@ -97,10 +97,10 @@ pub struct Config {
 /// Run the p2p networking client, spawning the client task as a new thread. Returns an
 /// [`UnboundedSender`], which can be used to send actions to the running task. Also returns a
 /// [`broadcast::Sender`], which can be subscribed to, to receive P2P events from the task.
-pub fn start(config: Config) -> (UnboundedSender<Action>, broadcast::Sender<Event>) {
+pub fn start(config: Config) -> (UnboundedSender<Action>, sync::broadcast::Sender<Event>) {
     // Spawn the task
     let (action_sender, action_receiver) = mpsc::unbounded_channel();
-    let (event_sender, _) = broadcast::channel(P2P_EVENT_CHAN_CAPACITY);
+    let (event_sender, _) = sync::broadcast::channel(P2P_EVENT_CHAN_CAPACITY);
     tokio::spawn(task_fn(config, action_receiver, event_sender.clone()));
 
     // Return the communication channels
@@ -111,7 +111,7 @@ pub fn start(config: Config) -> (UnboundedSender<Action>, broadcast::Sender<Even
 async fn task_fn(
     config: Config,
     mut actions_in: UnboundedReceiver<Action>,
-    events_out: broadcast::Sender<Event>,
+    events_out: sync::broadcast::Sender<Event>,
 ) {
     info!("Starting p2p client...");
 
@@ -193,10 +193,10 @@ async fn task_fn(
                     }
                 },
                 Some(Action::GetLocalPeerId(resp_ch)) => resp_ch.send(local_peer_id).unwrap(),
-                Some(Action::ReportMessageValidity(MessageValidationReport{
-                    msg_id, msg_source, acceptance,
+                Some(Action::ReportMessageValidity(BroadcastValidationReport{
+                    id, src, acceptance,
                 })) => {
-                    swarm.behaviour_mut().report_message_validation_result(&msg_id, &msg_source, acceptance)
+                    swarm.behaviour_mut().report_message_validation_result(&id, &src, acceptance)
                 },
                 Some(Action::AvalancheRequest(peer, request)) => {
                     // TODO: also look in DHT in case this peer fails
