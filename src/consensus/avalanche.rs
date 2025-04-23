@@ -387,6 +387,8 @@ impl Dag {
             }
         }
 
+        // TODO: decision to broadcast should be done outside of the DAG. Maybe DAG shouldn't emit
+        // any p2p requests?
         // Broadcast to peers if this vertex didn't already come from our peers
         if broadcast {
             let mut bcast = vertex.as_ref().clone();

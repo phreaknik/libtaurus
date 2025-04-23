@@ -57,6 +57,7 @@ pub struct Vertex {
     /// Revision number of the vertex structure
     pub version: u32,
 
+    // TODO: bhash should be optional & handled same as parents
     /// Hash of the block this vertex represents
     pub bhash: BlockHash,
 
@@ -128,6 +129,14 @@ impl Vertex {
         }
     }
 
+    /// Slim this vertex by removing the block
+    pub fn slim(self) -> (Option<Arc<Block>>, Vertex) {
+        let block = self.block.clone();
+        let parents = self.parents().clone();
+        let slim = self.with_new_parents(parents);
+        (block, slim)
+    }
+
     /// Make sure the vertex passes all basic sanity checks
     pub fn sanity_checks(&self) -> Result<()> {
         if self.version > VERSION {
@@ -146,17 +155,6 @@ impl Vertex {
             Err(Error::RepeatedParents)
         } else {
             Ok(())
-        }
-    }
-
-    /// Slim this vertex by removing the block
-    pub fn slim(mut self) -> (Option<Arc<Block>>, Vertex) {
-        if let Some(block) = self.block {
-            self.bhash = block.hash();
-            self.block = None;
-            (Some(block), self)
-        } else {
-            (None, self)
         }
     }
 }
