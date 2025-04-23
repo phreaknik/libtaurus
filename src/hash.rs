@@ -22,7 +22,7 @@ pub type Result<T> = result::Result<T, Error>;
 
 pub const HASH_LEN: usize = blake3::OUT_LEN;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash, PartialOrd, Ord)]
 pub struct Hash([u8; HASH_LEN]);
 
 impl Hash {
