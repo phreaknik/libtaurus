@@ -279,6 +279,7 @@ impl std::fmt::Display for Vertex {
     }
 }
 
+// TODO: this type should be private
 /// UndecidedVertex is a wrapper around [`Vertex`] which provides dynamic links and metadata useful
 /// during the decision process for accepting new vertices.
 #[derive(Debug, Clone)]
@@ -309,7 +310,7 @@ pub struct UndecidedVertex {
 }
 
 impl UndecidedVertex {
-    /// Create a genesis vertex from a given block
+    /// Create a genesis undecided-vertex
     pub fn genesis(vertex: Arc<Vertex>) -> UndecidedVertex {
         UndecidedVertex {
             inner: vertex,
@@ -318,7 +319,7 @@ impl UndecidedVertex {
             known_children: HashMap::new(),
             strongly_preferred: true,
             chit: 1,
-            confidence: 0,
+            confidence: usize::MAX,
         }
     }
 
