@@ -1,4 +1,7 @@
-use crate::wire::{proto, WireFormat};
+use crate::{
+    util::Randomizer,
+    wire::{proto, WireFormat},
+};
 use serde_derive::{Deserialize, Serialize};
 use std::result;
 
@@ -53,6 +56,14 @@ pub type TxoHash = crate::hash::Hash;
 #[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct Txo {
     value: u64,
+}
+
+impl Randomizer for Txo {
+    fn random() -> Self {
+        Txo {
+            value: rand::random(),
+        }
+    }
 }
 
 impl<'a> WireFormat<'a, proto::Txo> for Txo {

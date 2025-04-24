@@ -1,5 +1,9 @@
-use crate::wire::{proto, WireFormat};
+use crate::{
+    util::Randomizer,
+    wire::{proto, WireFormat},
+};
 use heed::{BytesDecode, BytesEncode};
+use rand::Fill;
 use serde_derive::{Deserialize, Serialize};
 use std::fmt;
 use std::result;
@@ -104,6 +108,14 @@ impl<'a> BytesDecode<'a> for Hash {
 
 impl Default for Hash {
     fn default() -> Self {
-        Hash([0; blake3::OUT_LEN])
+        Hash([0; HASH_LEN])
+    }
+}
+
+impl Randomizer for Hash {
+    fn random() -> Self {
+        let mut bytes = [0; HASH_LEN];
+        bytes.try_fill(&mut rand::thread_rng()).unwrap();
+        Hash(bytes)
     }
 }

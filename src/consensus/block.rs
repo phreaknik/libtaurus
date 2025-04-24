@@ -2,6 +2,7 @@ use super::transaction::{self, Txo, TxoHash};
 use crate::{
     params::{self, FUTURE_BLOCK_LIMIT_SECS, MIN_DIFFICULTY},
     randomx::{self, RandomXVMInstance},
+    util::Randomizer,
     wire::{proto, WireFormat},
     VertexHash,
 };
@@ -91,27 +92,6 @@ pub struct Block {
 }
 
 impl Block {
-    /// Make sure the block passes all basic sanity checks
-    pub fn sanity_checks(&self) -> Result<()> {
-        if self.version != VERSION {
-            Err(Error::UnsupportedVersion)
-        } else if self.difficulty < MIN_DIFFICULTY {
-            Err(Error::InvalidDifficulty)
-        } else if self.time - Utc::now() > Duration::seconds(FUTURE_BLOCK_LIMIT_SECS) {
-            Err(Error::FutureTime)
-        } else if self.parents.len() == 0 {
-            Err(Error::MissingParents)
-        } else if !self.parents.iter().all_unique() {
-            Err(Error::RepeatedParents)
-        } else if !self.inputs.iter().all_unique() {
-            Err(Error::RepeatedInputs)
-        } else if !self.outputs.iter().all_unique() {
-            Err(Error::RepeatedOutputs)
-        } else {
-            Ok(())
-        }
-    }
-
     /// Compute the hash of the block
     pub fn hash(&self) -> BlockHash {
         blake3::hash(&self.to_wire(false).expect("encode failure in hash")).into()
@@ -157,6 +137,27 @@ impl Block {
     pub fn with_parents(mut self, parents: Vec<VertexHash>) -> Block {
         self.parents = parents;
         self
+    }
+
+    /// Make sure the block passes all basic sanity checks
+    pub fn sanity_checks(&self) -> Result<()> {
+        if self.version != VERSION {
+            Err(Error::UnsupportedVersion)
+        } else if self.difficulty < MIN_DIFFICULTY {
+            Err(Error::InvalidDifficulty)
+        } else if self.time - Utc::now() > Duration::seconds(FUTURE_BLOCK_LIMIT_SECS) {
+            Err(Error::FutureTime)
+        } else if self.parents.is_empty() {
+            Err(Error::MissingParents)
+        } else if !self.parents.iter().all_unique() {
+            Err(Error::RepeatedParents)
+        } else if !self.inputs.iter().all_unique() {
+            Err(Error::RepeatedInputs)
+        } else if !self.outputs.iter().all_unique() {
+            Err(Error::RepeatedOutputs)
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -261,6 +262,54 @@ impl Default for Block {
             outputs: Vec::new(),
             time: DateTime::default(),
             nonce: 0,
+        }
+    }
+}
+
+impl Randomizer for Block {
+    fn random() -> Self {
+        Block {
+            version: VERSION,
+            difficulty: std::cmp::max(MIN_DIFFICULTY, rand::random()),
+            miner: PeerId::random(),
+            parents: vec![
+                VertexHash::random(),
+                VertexHash::random(),
+                VertexHash::random(),
+                VertexHash::random(),
+                VertexHash::random(),
+                VertexHash::random(),
+                VertexHash::random(),
+            ]
+            .into_iter()
+            .take(std::cmp::max(1, rand::random()))
+            .collect(),
+            inputs: vec![
+                TxoHash::random(),
+                TxoHash::random(),
+                TxoHash::random(),
+                TxoHash::random(),
+                TxoHash::random(),
+                TxoHash::random(),
+                TxoHash::random(),
+            ]
+            .into_iter()
+            .take(std::cmp::max(1, rand::random()))
+            .collect(),
+            outputs: vec![
+                Txo::random(),
+                Txo::random(),
+                Txo::random(),
+                Txo::random(),
+                Txo::random(),
+                Txo::random(),
+                Txo::random(),
+            ]
+            .into_iter()
+            .take(std::cmp::max(1, rand::random()))
+            .collect(),
+            time: Utc::now(),
+            nonce: rand::random(),
         }
     }
 }

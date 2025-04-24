@@ -1,12 +1,14 @@
 use chrono::Utc;
-use cordelia::{consensus::vertex, params::MIN_DIFFICULTY, Block, BlockHash, Vertex, VertexHash};
+use cordelia::{
+    consensus::vertex, params::MIN_DIFFICULTY, util::Randomizer, Block, BlockHash, Vertex,
+    VertexHash,
+};
 use libp2p::{multihash::Multihash, PeerId};
 use std::{assert_matches::assert_matches, sync::Arc};
 
-//TODO: default() should be replaced by random() in tests
 #[test]
 fn new_full() {
-    let block = Arc::new(Block::default().with_parents(vec![VertexHash::default()]));
+    let block = Arc::new(Block::random());
     let expected = Vertex {
         version: vertex::VERSION,
         bhash: block.hash(),

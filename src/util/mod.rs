@@ -15,3 +15,8 @@ pub fn human_readable(num: i64, units: &str) -> String {
         }
     }
 }
+
+pub trait Randomizer {
+    /// Generate a randomized object, useful for testing.
+    fn random() -> Self;
+}
