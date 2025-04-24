@@ -29,7 +29,7 @@ use tokio::{select, sync::broadcast};
 use tracing::{error, info, trace, warn};
 use tracing_mutex::stdsync::TracingRwLock;
 pub use transaction::{Transaction, Txo, TxoHash};
-pub use vertex::{UndecidedVertex, Vertex, VertexHash};
+pub use vertex::{Vertex, VertexHash};
 
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
 /// [`tokio::sync::broadcast`] for more information.
