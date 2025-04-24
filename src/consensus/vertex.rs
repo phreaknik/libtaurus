@@ -1,6 +1,6 @@
 use super::block;
 use crate::{
-    wire::{proto, WireFormat},
+    wire::{generated::proto, WireFormat},
     Block, BlockHash,
 };
 use itertools::Itertools;
@@ -8,25 +8,25 @@ use serde_derive::{Deserialize, Serialize};
 use std::{result, sync::Arc};
 
 /// Current revision of the vertex structure
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 0;
 
 /// Error type for vertex errors
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[error("block hash does not match vertex")]
+    #[error("block hash does not match block")]
     BadBlockHash,
-    #[error("block height does not extend parents")]
-    BadBlockHeight,
-    #[error("bad vertex version")]
-    BadVertexVersion(u32),
+    #[error("bad version")]
+    BadVersion(u32),
     #[error(transparent)]
     Block(#[from] block::Error),
+    #[error(transparent)]
+    ProstDecode(#[from] prost::DecodeError),
     #[error("vertex does not specify any parents")]
     EmptyParents,
     #[error(transparent)]
-    Hash(#[from] crate::hash::Error),
+    ProstEncode(#[from] prost::EncodeError),
     #[error(transparent)]
-    Protobuf(#[from] quick_protobuf::Error),
+    Hash(#[from] crate::hash::Error),
     #[error("encoded vertex contains redundant block hash")]
     RedundantBlockHash,
     #[error("vertex parents are redundant with block parents")]
@@ -113,7 +113,7 @@ impl Vertex {
     /// Get the parents for the given vertex
     pub fn parents(&self) -> &Vec<VertexHash> {
         if let Some(b) = &self.block {
-            assert!(self.parents.is_none(), "slim vertex must not have parents");
+            assert!(self.parents.is_none(), "full vertex must not have parents");
             &b.parents
         } else {
             &self
@@ -134,7 +134,7 @@ impl Vertex {
     /// Make sure the vertex passes all basic sanity checks
     pub fn sanity_checks(&self) -> Result<()> {
         if self.version > VERSION {
-            Err(Error::BadVertexVersion(self.version))
+            Err(Error::BadVersion(self.version))
         } else if let Some(block) = &self.block {
             if block.hash() != self.bhash {
                 Err(Error::BadBlockHash)

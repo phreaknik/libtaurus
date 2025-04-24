@@ -31,7 +31,7 @@ fn verify_pow() {
     )
     .unwrap();
     let mut block = Block::default();
-    block.nonce = 5104827130807080478;
+    block.nonce = 469;
     assert!(block.verify_pow(&randomx_vm).is_ok());
     block.nonce += 1;
     assert!(block.verify_pow(&randomx_vm).is_err());
@@ -74,7 +74,7 @@ fn sanity_checks() {
         miner: PeerId::random(),
         nonce: rand::random(),
     };
-    assert_matches!(block.sanity_checks(), Err(block::Error::UnsupportedVersion));
+    assert_matches!(block.sanity_checks(), Err(block::Error::BadVersion(1)));
     block.version = block::VERSION;
     assert_matches!(block.sanity_checks(), Err(block::Error::InvalidDifficulty));
     block.difficulty = MIN_DIFFICULTY;

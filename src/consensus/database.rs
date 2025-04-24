@@ -1,7 +1,7 @@
 use super::{block, vertex, BlockHash, Vertex};
 use crate::{
     hash::{self, Hash},
-    wire::{self, proto, WireFormat},
+    wire::{self, generated::proto, WireFormat},
     VertexHash,
 };
 use heed::{BytesDecode, BytesEncode, Database, Env, EnvOpenOptions, RwTxn};
@@ -13,6 +13,10 @@ use std::{fs, path::PathBuf, result, sync::Arc};
 pub enum Error {
     #[error(transparent)]
     Block(#[from] block::Error),
+    #[error(transparent)]
+    ProstDecode(#[from] prost::DecodeError),
+    #[error(transparent)]
+    ProstEncode(#[from] prost::EncodeError),
     #[error("expected block")]
     ExpectedBlock,
     #[error("expected height link")]
@@ -29,8 +33,6 @@ pub enum Error {
     IncompleteResponse,
     #[error(transparent)]
     Io(#[from] std::io::Error),
-    #[error(transparent)]
-    Protobuf(#[from] quick_protobuf::Error),
     #[error(transparent)]
     Vertex(#[from] vertex::Error),
     #[error(transparent)]
@@ -180,43 +182,43 @@ impl<'a> WireFormat<'a, proto::DbRecord> for DbRecord {
     fn to_protobuf(&self, check: bool) -> Result<proto::DbRecord> {
         match self {
             DbRecord::Vertex(v) => Ok(proto::DbRecord {
-                RequestData: proto::mod_DbRecord::OneOfRequestData::vertex(proto::VertexRec {
+                request_data: Some(proto::db_record::RequestData::Vertex(proto::VertexRec {
                     height: v.0,
                     vertex: Some(v.1.to_protobuf(check)?),
-                }),
+                })),
             }),
             DbRecord::BlockLink(l) => Ok(proto::DbRecord {
-                RequestData: proto::mod_DbRecord::OneOfRequestData::block_link(
+                request_data: Some(proto::db_record::RequestData::BlockLink(
                     l.to_protobuf(check)?,
-                ),
+                )),
             }),
             DbRecord::HeightLink(v) => Ok(proto::DbRecord {
-                RequestData: proto::mod_DbRecord::OneOfRequestData::height_link(proto::Hashes {
+                request_data: Some(proto::db_record::RequestData::HeightLink(proto::Hashes {
                     hashes: v.into_iter().map(|v| v.to_protobuf(check)).try_collect()?,
-                }),
+                })),
             }),
         }
     }
 
     fn from_protobuf(record: &proto::DbRecord, check: bool) -> Result<DbRecord> {
-        match &record.RequestData {
-            proto::mod_DbRecord::OneOfRequestData::vertex(v) => Ok(DbRecord::Vertex((
+        match &record.request_data {
+            Some(proto::db_record::RequestData::Vertex(v)) => Ok(DbRecord::Vertex((
                 v.height,
                 Arc::new(Vertex::from_protobuf(
                     v.vertex.as_ref().ok_or(Error::ExpectedVertex)?,
                     check,
                 )?),
             ))),
-            proto::mod_DbRecord::OneOfRequestData::block_link(l) => {
+            Some(proto::db_record::RequestData::BlockLink(l)) => {
                 Ok(DbRecord::BlockLink(Hash::from_protobuf(l, check)?))
             }
-            proto::mod_DbRecord::OneOfRequestData::height_link(l) => Ok(DbRecord::HeightLink(
+            Some(proto::db_record::RequestData::HeightLink(l)) => Ok(DbRecord::HeightLink(
                 l.hashes
                     .iter()
                     .map(|h| VertexHash::from_protobuf(h, check))
                     .try_collect()?,
             )),
-            proto::mod_DbRecord::OneOfRequestData::None => Err(Error::IncompleteResponse),
+            None => Err(Error::IncompleteResponse),
         }
     }
 }
@@ -288,10 +290,10 @@ mod test {
             ))),
         ));
         let encoded = &[
-            2, 89, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 1, 10, 76, 0, 1, 26, 72, 0, 1,
-            8, 232, 7, 18, 2, 0, 0, 26, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 25, 49, 57, 55, 48, 45, 48, 49, 45,
-            48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 43, 48, 48, 58, 48, 48,
+            10, 85, 8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 1, 18, 72, 34, 70, 16, 232, 7,
+            26, 2, 0, 0, 34, 34, 10, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 58, 25, 49, 57, 55, 48, 45, 48, 49, 45, 48, 49,
+            84, 48, 48, 58, 48, 48, 58, 48, 48, 43, 48, 48, 58, 48, 48,
         ];
         let (encode_err, decode_err) = test_wire_format(decoded, encoded);
         assert_matches!(encode_err, None);
@@ -308,9 +310,9 @@ mod test {
             )),
         ));
         let encoded = &[
-            2, 78, 0, 1, 10, 74, 0, 1, 10, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 18, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            10, 76, 8, 1, 18, 72, 18, 34, 10, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 26, 34, 10, 32, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         ];
         let (encode_err, decode_err) = test_wire_format(decoded, encoded);
         assert_matches!(encode_err, None);
@@ -321,7 +323,7 @@ mod test {
     pub fn encode_block_link_record() {
         let decoded = DbRecord::BlockLink(VertexHash::default());
         let encoded = &[
-            10, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            18, 34, 10, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0,
         ];
         let (encode_err, decode_err) = test_wire_format(decoded, encoded);
@@ -333,9 +335,9 @@ mod test {
     pub fn encode_height_link_record() {
         let decoded = DbRecord::HeightLink(vec![VertexHash::default(), VertexHash::default()]);
         let encoded = &[
-            18, 72, 2, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 34, 2, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            26, 72, 10, 34, 10, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 34, 10, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         ];
         let (encode_err, decode_err) = test_wire_format(decoded, encoded);
         assert_matches!(encode_err, None);

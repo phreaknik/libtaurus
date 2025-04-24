@@ -1,9 +1,8 @@
-use super::{Config, Request, Response};
-use crate::wire::{proto, WireFormat};
+use super::Config;
+use crate::wire::WireFormat;
 use async_trait::async_trait;
 use futures::prelude::*;
 use libp2p::request_response;
-use quick_protobuf::{BytesReader, MessageRead, MessageWrite, Writer};
 use std::io;
 
 pub const PROTOCOL_NAME: &str = "/cordelia/consensus_rpc/0.1.0";
@@ -44,19 +43,12 @@ impl request_response::Codec for ConsensusRpcCodec {
     {
         let mut bytes = Vec::new();
         io.read_to_end(&mut bytes).await?;
-        let mut protobuf = BytesReader::from_bytes(&bytes);
-        match proto::Request::from_reader(&mut protobuf, &bytes) {
-            Err(e) => Err(io::Error::new(
+        Self::Request::from_wire(&bytes, true).map_err(|e| {
+            io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("unable to read request message: {e}"),
-            )),
-            Ok(protobuf) => Request::from_protobuf(&protobuf, true).map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("parsed request message is missing data: {e}"),
-                )
-            }),
-        }
+            )
+        })
     }
 
     async fn read_response<T>(
@@ -69,19 +61,12 @@ impl request_response::Codec for ConsensusRpcCodec {
     {
         let mut bytes = Vec::new();
         io.read_to_end(&mut bytes).await?;
-        let mut protobuf = BytesReader::from_bytes(&bytes);
-        match proto::Response::from_reader(&mut protobuf, &bytes) {
-            Err(e) => Err(io::Error::new(
+        Self::Response::from_wire(&bytes, true).map_err(|e| {
+            io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("unable to read response message: {e}"),
-            )),
-            Ok(protobuf) => Response::from_protobuf(&protobuf, true).map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("parsed response message is missing data: {e}"),
-                )
-            }),
-        }
+            )
+        })
     }
 
     async fn write_request<T>(
@@ -93,18 +78,11 @@ impl request_response::Codec for ConsensusRpcCodec {
     where
         T: AsyncWrite + Send + Unpin,
     {
-        let mut bytes = Vec::new();
-        let mut writer = Writer::new(&mut bytes);
-        let protobuf = data.to_protobuf(true).map_err(|e| {
+        //TODO: Do we need to check before writing? maybe not?
+        let bytes = data.to_wire(true).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("unable to convert Request to protobuf: {e}"),
-            )
-        })?;
-        protobuf.write_message(&mut writer).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("unable to serialize request message: {e}"),
+                format!("unable to write request message: {e}"),
             )
         })?;
         io.write_all(bytes.as_slice()).await?;
@@ -120,18 +98,11 @@ impl request_response::Codec for ConsensusRpcCodec {
     where
         T: AsyncWrite + Send + Unpin,
     {
-        let mut bytes = Vec::new();
-        let mut writer = Writer::new(&mut bytes);
-        let protobuf = data.to_protobuf(true).map_err(|e| {
+        //TODO: Do we need to check before writing? maybe not?
+        let bytes = data.to_wire(true).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("unable to convert Response to protobuf: {e}"),
-            )
-        })?;
-        protobuf.write_message(&mut writer).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("unable to serialize response message: {e}"),
+                format!("unable to write response message: {e}"),
             )
         })?;
         io.write_all(bytes.as_slice()).await?;

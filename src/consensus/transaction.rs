@@ -1,6 +1,6 @@
 use crate::{
     util::Randomizer,
-    wire::{proto, WireFormat},
+    wire::{generated::proto, WireFormat},
 };
 use serde_derive::{Deserialize, Serialize};
 use std::result;
@@ -9,7 +9,9 @@ use std::result;
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error(transparent)]
-    Protobuf(#[from] quick_protobuf::Error),
+    ProstDecode(#[from] prost::DecodeError),
+    #[error(transparent)]
+    ProstEncode(#[from] prost::EncodeError),
     #[error(transparent)]
     TryFromSlice(#[from] std::array::TryFromSliceError),
 }

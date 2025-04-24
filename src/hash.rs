@@ -14,7 +14,9 @@ pub enum Error {
     #[error("bad hash")]
     BadHash,
     #[error(transparent)]
-    Protobuf(#[from] quick_protobuf::Error),
+    ProstDecode(#[from] prost::DecodeError),
+    #[error(transparent)]
+    ProstEncode(#[from] prost::EncodeError),
     #[error(transparent)]
     TryFromSlice(#[from] std::array::TryFromSliceError),
     #[error("error acquiring read lock on a vertex")]

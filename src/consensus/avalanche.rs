@@ -78,6 +78,8 @@ pub enum Error {
     VertexWriteLock,
     #[error(transparent)]
     VoterPool(#[from] voter_pool::Error),
+    #[error("waiting for missing vertices or blocks")]
+    Waiting,
     #[error(transparent)]
     WaitList(#[from] waitlist::Error),
     #[error(transparent)]
@@ -223,7 +225,7 @@ impl Dag {
                 }
                 Err(e @ Error::MissingBlock(_) | e @ Error::MissingVertices(_)) => {
                     info!("Error inserting {vhash}: {e}");
-                    Ok(None)
+                    Err(Error::Waiting)
                 }
                 Err(e) => {
                     info!("Error inserting {vhash}: {e}");
@@ -235,6 +237,8 @@ impl Dag {
         // Try to insert the given vertices
         let mut successful = Vec::new();
         for vertex in insert_list {
+            // TODO: this will bail if any is waiting on parents... need to rethink this
+            // insertion queue
             if let Some(success) = handle_insert(
                 vertex.clone(),
                 self.try_insert_vertex(vertex, sender, broadcast),
@@ -381,6 +385,8 @@ impl Dag {
         let vhash = vertex.hash();
         debug!("Vertex submitted: {vhash} = {vertex}");
 
+        debug_assert!(vertex.sanity_checks().is_ok());
+
         // Check if we already have this vertex
         if let Ok((_v, preferred)) = self.get_vertex(&vhash) {
             return Ok(preferred);
@@ -515,12 +521,8 @@ impl Dag {
         let bhash = vertex.bhash;
 
         // Determine full set of parents to search for
-        let mut parents = vertex.parents().iter().collect::<HashSet<_>>();
-        if let Some(b) = &vertex.block {
-            for vhash in &b.parents {
-                parents.insert(vhash);
-            }
-        }
+        let parents = vertex.parents().iter().collect::<HashSet<_>>();
+        assert!(!parents.is_empty()); // Should not be possible if inputs are sanitized
 
         // Lookup any missing parents
         let missing_parents: Vec<VertexHash> = parents
@@ -570,7 +572,7 @@ impl Dag {
         }?;
 
         // Return missing parent error if any
-        if missing_parents.len() > 0 {
+        if !missing_parents.is_empty() {
             let mut missing_str = format!("[{}", missing_parents[0]);
             for missing in missing_parents[1..].into_iter() {
                 missing_str += &format!(", {}", missing);
@@ -580,10 +582,10 @@ impl Dag {
                 "Missing parents for vertex {}: {missing_str}",
                 vertex.hash()
             );
-            return Err(Error::MissingVertices(missing_parents));
+            Err(Error::MissingVertices(missing_parents))
+        } else {
+            Ok(())
         }
-
-        Ok(())
     }
 
     /// Check that the vertex uniquely spends UTXOs. Returns true if no conflicts. Also reurns a
@@ -1199,8 +1201,8 @@ mod test {
         assert_eq!(
             genesis.hash(),
             VertexHash::with_bytes([
-                33, 180, 159, 199, 73, 80, 3, 76, 173, 198, 97, 18, 238, 185, 30, 114, 45, 40, 216,
-                37, 158, 44, 255, 255, 191, 100, 71, 154, 244, 153, 180, 31
+                130, 134, 225, 49, 43, 221, 164, 12, 38, 15, 125, 41, 246, 42, 39, 21, 251, 152,
+                53, 232, 109, 18, 23, 57, 78, 72, 63, 203, 39, 150, 0, 46
             ])
         );
     }

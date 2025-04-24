@@ -3,7 +3,7 @@ use crate::{
     params::{self, FUTURE_BLOCK_LIMIT_SECS, MIN_DIFFICULTY},
     randomx::{self, RandomXVMInstance},
     util::Randomizer,
-    wire::{proto, WireFormat},
+    wire::{generated::proto, WireFormat},
     VertexHash,
 };
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
@@ -15,13 +15,19 @@ use serde_derive::{Deserialize, Serialize};
 use std::result;
 
 /// Current version of the block structure
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 0;
 
 /// Error type for block errors
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    #[error("bad version")]
+    BadVersion(u32),
     #[error(transparent)]
     Chrono(#[from] chrono::ParseError),
+    #[error(transparent)]
+    ProstDecode(#[from] prost::DecodeError),
+    #[error(transparent)]
+    ProstEncode(#[from] prost::EncodeError),
     #[error("block has timestamp in the future")]
     FutureTime,
     #[error(transparent)]
@@ -37,8 +43,6 @@ pub enum Error {
     #[error(transparent)]
     Multihash(#[from] libp2p::multihash::Error),
     #[error(transparent)]
-    Protobuf(#[from] quick_protobuf::Error),
-    #[error(transparent)]
     RandomX(#[from] randomx::Error),
     #[error("some tx inputs are repeated")]
     RepeatedInputs,
@@ -48,8 +52,6 @@ pub enum Error {
     RepeatedParents,
     #[error(transparent)]
     Transaction(#[from] transaction::Error),
-    #[error("unsupported block version")]
-    UnsupportedVersion,
     #[error(transparent)]
     Utf8(#[from] std::string::FromUtf8Error),
 }
@@ -141,8 +143,8 @@ impl Block {
 
     /// Make sure the block passes all basic sanity checks
     pub fn sanity_checks(&self) -> Result<()> {
-        if self.version != VERSION {
-            Err(Error::UnsupportedVersion)
+        if self.version > VERSION {
+            Err(Error::BadVersion(self.version))
         } else if self.difficulty < MIN_DIFFICULTY {
             Err(Error::InvalidDifficulty)
         } else if self.time - Utc::now() > Duration::seconds(FUTURE_BLOCK_LIMIT_SECS) {

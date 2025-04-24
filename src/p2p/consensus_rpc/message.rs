@@ -1,7 +1,7 @@
 use super::Error;
 use crate::{
     consensus::{Block, BlockHash, Vertex},
-    wire::{proto, WireFormat},
+    wire::{generated::proto, WireFormat},
     VertexHash,
 };
 use std::{fmt, result, sync::Arc};
@@ -20,32 +20,32 @@ impl<'a> WireFormat<'a, proto::Request> for Request {
 
     fn to_protobuf(&self, check: bool) -> result::Result<proto::Request, Error> {
         Ok(proto::Request {
-            RequestData: match self {
-                Request::GetBlock(hash) => {
-                    proto::mod_Request::OneOfRequestData::get_block(hash.to_protobuf(check)?)
-                }
-                Request::GetVertex(hash) => {
-                    proto::mod_Request::OneOfRequestData::get_vertex(hash.to_protobuf(check)?)
-                }
-                Request::GetPreference(hash) => {
-                    proto::mod_Request::OneOfRequestData::get_preference(hash.to_protobuf(check)?)
-                }
+            request_data: match self {
+                Request::GetBlock(hash) => Some(proto::request::RequestData::GetBlock(
+                    hash.to_protobuf(check)?,
+                )),
+                Request::GetVertex(hash) => Some(proto::request::RequestData::GetVertex(
+                    hash.to_protobuf(check)?,
+                )),
+                Request::GetPreference(hash) => Some(proto::request::RequestData::GetPreference(
+                    hash.to_protobuf(check)?,
+                )),
             },
         })
     }
 
     fn from_protobuf(req: &proto::Request, check: bool) -> result::Result<Self, Error> {
-        match &req.RequestData {
-            proto::mod_Request::OneOfRequestData::get_block(message) => Ok(Request::GetBlock(
+        match &req.request_data {
+            Some(proto::request::RequestData::GetBlock(message)) => Ok(Request::GetBlock(
                 BlockHash::from_protobuf(&message, check)?,
             )),
-            proto::mod_Request::OneOfRequestData::get_vertex(message) => Ok(Request::GetVertex(
+            Some(proto::request::RequestData::GetVertex(message)) => Ok(Request::GetVertex(
                 VertexHash::from_protobuf(&message, check)?,
             )),
-            proto::mod_Request::OneOfRequestData::get_preference(message) => Ok(
+            Some(proto::request::RequestData::GetPreference(message)) => Ok(
                 Request::GetPreference(VertexHash::from_protobuf(&message, check)?),
             ),
-            proto::mod_Request::OneOfRequestData::None => Err(super::Error::IncompleteRequest),
+            None => Err(super::Error::IncompleteRequest),
         }
     }
 }
@@ -73,39 +73,39 @@ impl<'a> WireFormat<'a, proto::Response> for Response {
 
     fn to_protobuf(&self, check: bool) -> Result<proto::Response, Error> {
         Ok(proto::Response {
-            ResponseData: match self {
+            response_data: match self {
                 Response::Block(b) => {
-                    proto::mod_Response::OneOfResponseData::block(b.to_protobuf(check)?)
+                    Some(proto::response::ResponseData::Block(b.to_protobuf(check)?))
                 }
                 Response::Vertex(v) => {
-                    proto::mod_Response::OneOfResponseData::vertex(v.to_protobuf(check)?)
+                    Some(proto::response::ResponseData::Vertex(v.to_protobuf(check)?))
                 }
-                Response::Preference(hash, preferred) => {
-                    proto::mod_Response::OneOfResponseData::preference(proto::Preference {
+                Response::Preference(hash, preferred) => Some(
+                    proto::response::ResponseData::Preference(proto::Preference {
                         hash: Some(hash.to_protobuf(check)?),
                         preferred: *preferred,
-                    })
-                }
+                    }),
+                ),
             },
         })
     }
 
     fn from_protobuf(resp: &proto::Response, check: bool) -> Result<Self, Error> {
-        match &resp.ResponseData {
-            proto::mod_Response::OneOfResponseData::block(b) => {
+        match &resp.response_data {
+            Some(proto::response::ResponseData::Block(b)) => {
                 Ok(Response::Block(Block::from_protobuf(&b, check)?))
             }
-            proto::mod_Response::OneOfResponseData::vertex(v) => Ok(Response::Vertex(Arc::new(
+            Some(proto::response::ResponseData::Vertex(v)) => Ok(Response::Vertex(Arc::new(
                 Vertex::from_protobuf(&v, check)?,
             ))),
-            proto::mod_Response::OneOfResponseData::preference(h) => Ok(Response::Preference(
+            Some(proto::response::ResponseData::Preference(h)) => Ok(Response::Preference(
                 VertexHash::from_protobuf(
                     h.hash.as_ref().ok_or(Error::IncompleteResponse)?,
                     check,
                 )?,
                 h.preferred,
             )),
-            proto::mod_Response::OneOfResponseData::None => Err(super::Error::IncompleteResponse),
+            None => Err(super::Error::IncompleteResponse),
         }
     }
 }

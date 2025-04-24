@@ -12,6 +12,18 @@ name = "cordeliad"
 path = "src/app/cordeliad.rs"
 
 [dependencies]
+async-std = { version = "1.12", features = ["attributes"] }
+async-trait = "0.1"
+blake3 = "1.4"
+cached = "0.46"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4.2", features = ["cargo"] }
+etcetera = "0.8"
+futures = "0.3"
+heed = "0.11"
+hex = "0.4"
+hyper = { version = "0.14", features = ["server", "http1", "tcp"] }
+itertools = "0.11"
 libp2p = { version = "0.53", features = [
   "dns",
   "kad",
@@ -26,36 +38,27 @@ libp2p = { version = "0.53", features = [
   "quic",
   "upnp",
 ] }
-tokio = { version = "1.27.0", features = ["sync", "macros"] }
-futures = "0.3"
-async-std = { version = "1.12", features = ["attributes"] }
-async-trait = "0.1.68"
-thiserror = "1.0.40"
-clap = { version = "4.2.4", features = ["cargo"] }
-etcetera = "0.8.0"
-tracing = "0.1.37"
-tracing-subscriber = { version = "0.3.17", features = [
+lru = "0.11"
+num = "0.4"
+prost = "0.12"
+rand = "0.8"
+randomx-rs = { path = "../randomx-rs" }
+serde = "1.0"
+serde_derive = "1.0"
+serde_json = "1.0"
+strum = { version = "0.24", features = ["derive", "strum_macros"] }
+strum_macros = "0.24"
+thiserror = "1.0"
+time = { version = "0.3", features = ["macros"] }
+tokio = { version = "1.27", features = ["sync", "macros"] }
+tracing = "0.1"
+tracing-log = "0.1"
+tracing-mutex = "0.2"
+tracing-subscriber = { version = "0.3", features = [
   "std",
   "env-filter",
   "time",
 ] }
-tracing-log = "0.1.3"
-serde = "1.0.160"
-strum = { version = "0.24.1", features = ["derive", "strum_macros"] }
-strum_macros = "0.24.3"
-serde_derive = "1.0.160"
-serde_json = "1.0.96"
-hyper = { version = "0.14.26", features = ["server", "http1", "tcp"] }
-blake3 = "1.4.0"
-chrono = { version = "0.4.26", features = ["serde"] }
-num = "0.4.0"
-rand = "0.8.5"
-randomx-rs = { path = "../randomx-rs" }
-heed = "0.11.0"
-tracing-mutex = "0.2.1"
-itertools = "0.11.0"
-lru = "0.11.0"
-quick-protobuf = "0.8.1"
-hex = "0.4.3"
-cached = "0.46.0"
-time = { version = "0.3.30", features = ["macros"] }
+
+[build-dependencies]
+prost-build = "0.12"

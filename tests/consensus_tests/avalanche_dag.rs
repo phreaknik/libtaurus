@@ -1,6 +1,6 @@
 use std::{assert_matches::assert_matches, fs, path::PathBuf, sync::Arc};
 
-use chrono::{DateTime, Utc};
+use chrono::DateTime;
 use cordelia::{
     avalanche,
     consensus::{block, Dag},
@@ -39,8 +39,8 @@ fn genesis_hash() {
     assert_eq!(
         dag.genesis_hash(),
         VertexHash::with_bytes([
-            212, 240, 55, 179, 70, 28, 196, 11, 130, 42, 154, 243, 206, 30, 90, 74, 196, 164, 192,
-            169, 68, 15, 204, 248, 53, 149, 239, 50, 79, 111, 250, 245
+            16, 1, 166, 39, 114, 210, 177, 178, 9, 167, 220, 114, 151, 176, 143, 32, 45, 160, 117,
+            104, 217, 109, 72, 76, 160, 132, 76, 120, 253, 124, 68, 208
         ])
     );
 }
@@ -50,7 +50,7 @@ fn try_insert_block() {
     let mut dag = setup_test_dag();
     let mut block = Block {
         version: 0,
-        difficulty: 0,
+        difficulty: params::MIN_DIFFICULTY,
         miner: PeerId::from_multihash(Multihash::default()).unwrap(),
         parents: dag.get_frontier(),
         inputs: Vec::new(),
@@ -62,11 +62,6 @@ fn try_insert_block() {
     };
     assert_matches!(
         dag.try_insert_block(Arc::new(block.clone()), false),
-        Err(avalanche::Error::Block(block::Error::InvalidDifficulty))
-    );
-    block.difficulty = params::MIN_DIFFICULTY;
-    assert_matches!(
-        dag.try_insert_block(Arc::new(block.clone()), false),
         Err(avalanche::Error::Block(block::Error::InvalidPoW))
     );
     //while let Err(avalanche::Error::Block(block::Error::InvalidPoW)) =
@@ -75,8 +70,14 @@ fn try_insert_block() {
     //    block.nonce += 1;
     //}
     //println!("NONCE = {}", block.nonce);
-    block.nonce = 743;
-    assert_matches!(dag.try_insert_block(Arc::new(block), false), Ok(()));
+    block.nonce = 788;
+    assert_matches!(dag.try_insert_block(Arc::new(block.clone()), false), Ok(()));
+    block.parents.push(VertexHash::default()); // Insert missing parent
+    block.nonce = 1280;
+    assert_matches!(
+        dag.try_insert_block(Arc::new(block), false),
+        Err(avalanche::Error::Waiting)
+    );
     // TODO: test broadcast decision
 }
 

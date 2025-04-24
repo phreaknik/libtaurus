@@ -127,7 +127,7 @@ fn sanity_checks() {
             Block::default().with_parents(vec![VertexHash::default()]),
         )),
     };
-    assert_matches!(v.sanity_checks(), Err(vertex::Error::BadVertexVersion(999)));
+    assert_matches!(v.sanity_checks(), Err(vertex::Error::BadVersion(999)));
     v.version = 0;
     assert_matches!(v.sanity_checks(), Err(vertex::Error::BadBlockHash));
     v.bhash = v.block.as_ref().unwrap().hash();

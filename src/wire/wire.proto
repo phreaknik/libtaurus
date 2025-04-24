@@ -3,85 +3,85 @@ package generated.proto;
 
 // Broadcast message type
 message Broadcast {
-	Vertex vertex = 0;
+	Vertex vertex = 1;
 }
 
 // Request message type
 message Request {
 	oneof RequestData {
-		Hash get_block = 0;
-		Hash get_vertex = 1;
-		Hash get_preference = 2;
+		Hash get_block = 1;
+		Hash get_vertex = 2;
+		Hash get_preference = 3;
 	}
 }
 
 // Response message type
 message Response {
 	oneof ResponseData {
-		Block block = 0;
-		Vertex vertex = 1;
-		Preference preference = 2;
+		Block block = 1;
+		Vertex vertex = 2;
+		Preference preference = 3;
 	}
 }
 
 // Database records
 message DbRecord {
 	oneof RequestData {
-		VertexRec vertex = 0;
-		Hash block_link = 1;
-		Hashes height_link = 2;
+		VertexRec vertex = 1;
+		Hash block_link = 2;
+		Hashes height_link = 3;
 	}
 }
 
 message VertexRec {
-	uint64 height = 0;
-	Vertex vertex = 1;
+	uint64 height = 1;
+	Vertex vertex = 2;
 }
 
 message PeerInfo {
-	string protocol_version = 0;
-	string agent_version = 1;
-	repeated string addresses = 2;
+	string protocol_version = 1;
+	string agent_version = 2;
+	repeated string addresses = 3;
 }
 
 // Inner message types
 message Hash {
-  bytes hash = 0;
+  bytes hash = 1;
 }
 
 // TODO: delete this type and use 'repeated Hash' instead
 // This is only used due to a bug in pb-rs using repeated bytes in oneof
 message Hashes {
-  repeated Hash hashes = 0;
+  repeated Hash hashes = 1;
 }
 
 message Preference {
-  Hash hash = 0;
-  bool preferred = 1;
+  Hash hash = 1;
+  bool preferred = 2;
 }
 
 message Block {
-  uint32 version = 0;
-	uint64 difficulty = 1;
-	bytes miner = 2;
-	repeated Hash parents = 3;
-  repeated Hash inputs = 4;
-  repeated Txo outputs = 5;
-	bytes time = 6;
-	uint64 nonce = 7;
+  uint32 version = 1;
+	uint64 difficulty = 2;
+	bytes miner = 3;
+	repeated Hash parents = 4;
+  repeated Hash inputs = 5;
+  repeated Txo outputs = 6;
+	bytes time = 7;
+	uint64 nonce = 8;
 }
 
 message Vertex {
-  uint32 version = 0;
-	repeated Hash parents = 1;
-  optional Hash block_hash = 2;
-  optional Block block = 3;
+  uint32 version = 1;
+	repeated Hash parents = 2;
+  optional Hash block_hash = 3;
+  optional Block block = 4;
 }
 
 message Transaction {
-  repeated Txo inputs = 0;
+  repeated Txo inputs = 1;
 }
 
 message Txo {
-  uint64 value = 0;
+  uint64 value = 1;
 }

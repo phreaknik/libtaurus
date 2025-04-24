@@ -3,9 +3,7 @@ use clap::{arg, command, ArgMatches, Command};
 pub use cordelia::{
     consensus::{self, avalanche, Block, BlockHash, GenesisConfig, Vertex, VertexHash},
     hash::Hash,
-    http, miner,
-    p2p::{self},
-    params,
+    http, miner, p2p, params,
 };
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
 use libp2p::identity::Keypair;

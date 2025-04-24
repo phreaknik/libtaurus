@@ -36,8 +36,12 @@ const DATABASE_DIR: &str = "peer_db/";
 pub enum Error {
     #[error(transparent)]
     Dial(#[from] libp2p::swarm::DialError),
+    #[error(transparent)]
+    ProstDecode(#[from] prost::DecodeError),
     #[error("broadcast has no data")]
     EmptyBroadcast,
+    #[error(transparent)]
+    ProstEncode(#[from] prost::EncodeError),
     #[error(transparent)]
     Heed(#[from] heed::Error),
     #[error("data is not a valid broadcast message")]
@@ -48,8 +52,6 @@ pub enum Error {
     Multiaddr(#[from] libp2p::multiaddr::Error),
     #[error(transparent)]
     Transport(#[from] libp2p::TransportError<io::Error>),
-    #[error(transparent)]
-    Protobuf(#[from] quick_protobuf::Error),
     #[error(transparent)]
     Publish(#[from] gossipsub::PublishError),
     #[error(transparent)]

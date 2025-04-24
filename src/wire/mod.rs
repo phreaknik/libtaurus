@@ -1,8 +1,12 @@
-mod generated;
+pub mod generated {
+    pub mod proto {
+        include!(concat!(env!("OUT_DIR"), "/generated.proto.rs"));
+    }
+}
 
 use crate::{consensus::block, hash::Hash};
 pub use generated::proto;
-use quick_protobuf::{BytesReader, MessageRead, MessageWrite, Writer};
+use prost;
 use std::{
     fmt::{Debug, Display},
     result,
@@ -15,23 +19,25 @@ pub enum Error {
     BadBlockHash,
     #[error(transparent)]
     Block(#[from] block::Error),
+    #[error(transparent)]
+    ProstDecode(#[from] prost::DecodeError),
     #[error("vertex does not specify any parents")]
     EmptyParents,
+    #[error(transparent)]
+    ProstEncode(#[from] prost::EncodeError),
     #[error(transparent)]
     Hash(#[from] crate::hash::Error),
     #[error("missing block")]
     MissingBlock,
-    #[error("error decoding from protobuf")]
-    ProtoDecode(String),
     #[error("error acquiring read lock on a vertex")]
     VertexReadLock,
 }
 
 pub trait WireFormat<'a, P>: Sized
 where
-    P: MessageWrite + MessageRead<'a>,
+    P: prost::Message + Default,
 {
-    type Error: Debug + From<quick_protobuf::Error> + Display;
+    type Error: Debug + From<prost::DecodeError> + From<prost::EncodeError> + Display;
 
     /// Serialize into protobuf format
     fn to_protobuf(&self, check: bool) -> result::Result<P, Self::Error>;
@@ -43,17 +49,15 @@ where
     /// of the data before serialization.
     fn to_wire(&self, check: bool) -> result::Result<Vec<u8>, Self::Error> {
         let mut bytes = Vec::new();
-        let mut writer = Writer::new(&mut bytes);
         let protobuf = self.to_protobuf(check)?;
-        protobuf.write_message(&mut writer)?;
+        protobuf.encode(&mut bytes)?;
         Ok(bytes)
     }
 
     /// Deserialize data from wire format, optionally checking validity of the data before
     /// deserialization.
     fn from_wire(bytes: &'a [u8], check: bool) -> result::Result<Self, Self::Error> {
-        let protobuf =
-            <P as MessageRead>::from_reader(&mut BytesReader::from_bytes(bytes), &bytes)?;
+        let protobuf = prost::Message::decode(bytes)?;
         Self::from_protobuf(&protobuf, check)
     }
 
@@ -73,7 +77,7 @@ pub fn test_wire_format<'a, P, D>(
     Option<<D as WireFormat<'a, P>>::Error>,
 )
 where
-    P: MessageWrite + MessageRead<'a>,
+    P: prost::Message + Default,
     D: WireFormat<'a, P> + Debug + Eq,
 {
     let encode_err = match decoded.to_wire(true) {

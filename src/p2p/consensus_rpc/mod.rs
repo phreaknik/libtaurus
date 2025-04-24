@@ -34,13 +34,15 @@ pub enum Error {
     #[error(transparent)]
     Block(#[from] block::Error),
     #[error(transparent)]
+    ProstDecode(#[from] prost::DecodeError),
+    #[error(transparent)]
+    ProstEncode(#[from] prost::EncodeError),
+    #[error(transparent)]
     Hash(#[from] crate::hash::Error),
     #[error("request message is missing data")]
     IncompleteRequest,
     #[error("response message is missing data")]
     IncompleteResponse,
-    #[error(transparent)]
-    Protobuf(#[from] quick_protobuf::Error),
     #[error(transparent)]
     Vertex(#[from] vertex::Error),
     #[error(transparent)]
