@@ -4,7 +4,7 @@ pub use cordelia::{
     consensus::{self, avalanche, Block, BlockHash, GenesisConfig, Vertex, VertexHash},
     hash::Hash,
     http, miner,
-    p2p::{self, PeerDatabase},
+    p2p::{self},
     params,
 };
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
@@ -36,7 +36,6 @@ async fn main() {
     // Parse CLI arguments
     match parse_cli_args().subcommand() {
         Some(("run", sub_args)) => cmd_run(sub_args).await,
-        Some(("list-peers", sub_args)) => cmd_list_peers(sub_args),
         _ => unreachable!("Exausted list of subcommands and subcommand_requred prevents 'None'"),
     }
 }
@@ -89,33 +88,6 @@ async fn cmd_run(args: &ArgMatches) {
     }
 }
 
-/// Command to list peers
-fn cmd_list_peers(args: &ArgMatches) {
-    // Set up a subscriber to capture logs
-    setup_logger(&args);
-
-    // Build config from args
-    let cfg = build_cfg(&args);
-
-    // Open the peer database
-    let peer_db = match PeerDatabase::open(&cfg.p2p.data_dir.join(p2p::DATABASE_DIR), false) {
-        Ok(db) => db,
-        Err(e) => {
-            error!("Unable to open peer database: {e}");
-            return;
-        }
-    };
-
-    // Iterate the entries and print them out
-    let rtxn = peer_db.env.read_txn().unwrap();
-    for entry in peer_db.db.iter(&rtxn).unwrap() {
-        match entry {
-            Ok((peer, info)) => println!("{}:{info}", peer.as_peerid()),
-            Err(e) => error!("error getting peer info: {e}"),
-        }
-    }
-}
-
 /// Parse CLI args
 fn parse_cli_args() -> ArgMatches {
     command!() // initialize CLI with details from cargo.toml
@@ -136,13 +108,6 @@ fn parse_cli_args() -> ArgMatches {
                         .default_value("10"),
                 )
                 .arg(arg!(-v --verbosity ... "Increase verbosity level").required(false)),
-        )
-        .subcommand(
-            Command::new("list-peers")
-                .about("Lists all peers saved in the peer database")
-                .arg(arg!(-v --verbosity ... "Increase verbosity level").required(false))
-                .arg(arg!(-d --data_dir <PATH> "Specify data directory").required(false))
-                .arg(arg!(-n --max <COUNT> "Max number of peers to list").required(false)),
         )
         .subcommand_required(true)
         .get_matches()

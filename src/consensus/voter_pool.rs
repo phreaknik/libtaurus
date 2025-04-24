@@ -23,9 +23,9 @@ pub enum Error {
 }
 
 /// Result type for VoterPool errors
-pub type Result<T> = result::Result<T, Error>;
+type Result<T> = result::Result<T, Error>;
 
-pub struct VoterPool {
+pub(super) struct VoterPool {
     /// Set of all miners expected to participate as voters
     all_voters: HashMap<PeerId, Arc<TracingRwLock<VoterRecord>>>,
     /// Queue which drains one at a time, to ensure every miner gets queried within N blocks
@@ -101,7 +101,7 @@ impl VoterPool {
 }
 
 /// Information we track about each known miner eligible for voting
-pub struct VoterRecord {
+pub(super) struct VoterRecord {
     /// ID this voter record applies to
     id: PeerId,
 
@@ -158,7 +158,7 @@ impl VoterRecord {
 }
 
 /// A scorecard to count votes received from peers during a round of queries
-pub struct Scorecard {
+pub(super) struct Scorecard {
     /// Hash of the vertex being queried
     vhash: VertexHash,
     /// Events channel to notify of query events

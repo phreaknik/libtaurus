@@ -30,7 +30,7 @@ const DEFAULT_KAD_QUERY_TIMOUT: Duration = Duration::from_secs(60);
 
 /// Aggregate behaviour for all subprotocols used by the cordelia behaviour
 #[derive(NetworkBehaviour)]
-pub struct InnerBehaviour {
+pub(super) struct InnerBehaviour {
     identify: identify::Behaviour,
     kademlia: kad::Behaviour<MemoryStore>,
     gossipsub: gossipsub::Behaviour,
@@ -68,7 +68,7 @@ impl<'a> InnerBehaviour {
 }
 
 /// Network behavior that implements the cordelia p2p protocol
-pub struct Behaviour {
+pub(super) struct Behaviour {
     /// Sub protocols of cordelia-p2p
     inner: InnerBehaviour,
     /// Peer database
@@ -311,7 +311,7 @@ type SwarmAction<'a> =
 
 /// Configuration for the [`cordelia::Behaviour`](Behaviour).
 #[derive(Clone)]
-pub struct Config {
+pub(super) struct Config {
     /// Keypair used for signing messages
     keys: Keypair,
     /// Identify protocol configuration

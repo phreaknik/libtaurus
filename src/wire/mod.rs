@@ -27,9 +27,6 @@ pub enum Error {
     VertexReadLock,
 }
 
-/// Result type for vertex errors
-pub type Result<T> = result::Result<T, Error>;
-
 pub trait WireFormat<'a, P>: Sized
 where
     P: MessageWrite + MessageRead<'a>,

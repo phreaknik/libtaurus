@@ -38,11 +38,11 @@ pub enum Error {
 }
 
 /// Result type for consensus errors
-pub type Result<T> = result::Result<T, Error>;
+type Result<T> = result::Result<T, Error>;
 
 /// Database to store consensus data, using the [`heed`] LMDB database wrapper.
 #[derive(Clone)]
-pub struct ConsensusDb {
+pub(super) struct ConsensusDb {
     env: Env,
     db: Database<DbKey, DbRecord>,
 }

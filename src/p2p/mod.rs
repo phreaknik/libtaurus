@@ -1,9 +1,9 @@
-pub mod behaviour;
-pub mod broadcast;
+mod behaviour;
+mod broadcast;
 pub mod consensus_rpc;
 mod database;
 
-pub use behaviour::Behaviour;
+use behaviour::Behaviour;
 pub use broadcast::{Broadcast, BroadcastData, BroadcastValidationReport};
 use core::result;
 pub use database::{PeerDatabase, PeerInfo};
@@ -26,10 +26,10 @@ use tracing::{debug, error, info};
 
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
 /// [`tokio::sync::broadcast`] for more information.
-pub const P2P_EVENT_CHAN_CAPACITY: usize = 32;
+const P2P_EVENT_CHAN_CAPACITY: usize = 32;
 
 /// Path to the peer database, from within the peer data directory
-pub const DATABASE_DIR: &str = "peer_db/";
+const DATABASE_DIR: &str = "peer_db/";
 
 /// Error type for cordelia-p2p errors
 #[derive(thiserror::Error, Debug)]
@@ -63,7 +63,7 @@ pub enum Error {
 }
 
 /// Result type for cordelia-p2p
-pub type Result<T> = result::Result<T, Error>;
+type Result<T> = result::Result<T, Error>;
 
 /// Event produced by [`Behaviour`].
 #[derive(Debug, Clone)]

@@ -15,7 +15,7 @@ pub enum Error {
 }
 
 /// Result type for vertex errors
-pub type Result<T> = result::Result<T, Error>;
+type Result<T> = result::Result<T, Error>;
 
 /// Type alias for transaction hashes
 pub type TxHash = crate::hash::Hash;

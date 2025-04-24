@@ -85,7 +85,7 @@ pub enum Error {
 }
 
 /// Result type for avalanche errors
-pub type Result<T> = result::Result<T, Error>;
+type Result<T> = result::Result<T, Error>;
 
 /// Configuration details for the consensus process.
 #[derive(Debug, Clone)]
@@ -905,7 +905,7 @@ impl Dag {
 
 /// Wrapper around Utxo for use in undecided DAG
 #[derive(Debug, Clone)]
-pub struct DagTxo {
+pub(super) struct DagTxo {
     /// The underlying transaction output
     txo: Txo,
 

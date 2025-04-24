@@ -48,7 +48,7 @@ pub enum Error {
 }
 
 /// [`NetworkBehaviour`] to implement the peer RPC message routing
-pub struct Behaviour {
+pub(super) struct Behaviour {
     /// Inner behaviour for sending requests and receiving the response.
     inner: request_response::Behaviour<ConsensusRpcCodec>,
     /// Configuration parameters
@@ -200,4 +200,4 @@ type SwarmAction<'a> =
 
 /// Configuration for the [`consensus_rpc::Behaviour`](Behaviour)
 #[derive(Debug, Clone, Default)]
-pub struct Config {}
+pub(super) struct Config {}

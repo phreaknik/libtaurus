@@ -55,7 +55,7 @@ pub enum Error {
 }
 
 /// Result type for block errors
-pub type Result<T> = result::Result<T, Error>;
+type Result<T> = result::Result<T, Error>;
 
 /// Type alias for block hashes
 pub type BlockHash = crate::hash::Hash;

@@ -22,7 +22,7 @@ pub enum Error {
 }
 
 /// Result type for hash errors
-pub type Result<T> = result::Result<T, Error>;
+type Result<T> = result::Result<T, Error>;
 
 pub const HASH_LEN: usize = blake3::OUT_LEN;
 

@@ -52,7 +52,7 @@ pub enum Error {
 }
 
 /// Result type for mining errors
-pub type Result<T> = result::Result<T, Error>;
+type Result<T> = result::Result<T, Error>;
 
 /// Configuration details for the mining process.
 #[derive(Debug, Clone)]

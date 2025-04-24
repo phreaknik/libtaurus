@@ -16,11 +16,11 @@ use super::Vertex;
 pub enum Error {}
 
 /// Result type for avalanche errors
-pub type Result<T> = result::Result<T, Error>;
+type Result<T> = result::Result<T, Error>;
 
 /// A waitlist is a dependency graph of ancestor vertices which must be processed before future
 /// child vertices may be processed.
-pub struct WaitList {
+pub(super) struct WaitList {
     /// A collection of vertices waiting on a given block
     by_block: LruCache<BlockHash, HashMap<VertexHash, Arc<Vertex>>>,
     /// A collection of vertices waiting on a given parent vertex

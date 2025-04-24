@@ -78,7 +78,7 @@ pub enum Error {
 }
 
 /// Result type for consensus errors
-pub type Result<T> = result::Result<T, Error>;
+type Result<T> = result::Result<T, Error>;
 
 /// Configuration details for the consensus process.
 #[derive(Debug, Clone)]
