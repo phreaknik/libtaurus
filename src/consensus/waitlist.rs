@@ -43,7 +43,7 @@ impl WaitList {
     pub fn insert(
         &mut self,
         vertex: Arc<Vertex>,
-        missing_parents: Option<Vec<VertexHash>>,
+        missing_parents: Vec<VertexHash>,
         missing_block: Option<BlockHash>,
     ) -> Result<()> {
         let vhash = vertex.hash();
@@ -53,19 +53,17 @@ impl WaitList {
             Ok(())
         } else {
             // Add this vertex to its partens' wait queues
-            if let Some(parents) = missing_parents {
-                for parent_hash in parents {
-                    if let Some(parent_queue) = self.by_parent.get_mut(&parent_hash) {
-                        // Add this vertex as a descendent in the parent's queue
-                        parent_queue.insert(vhash, vertex.clone());
-                    } else {
-                        // Insert a new entry
-                        if let Some(evicted) = self
-                            .by_parent
-                            .put(parent_hash, once((vhash, vertex.clone())).collect())
-                        {
-                            warn!("Waitlist unexpectedly evicted vertices: {evicted:?}")
-                        }
+            for parent_hash in missing_parents {
+                if let Some(parent_queue) = self.by_parent.get_mut(&parent_hash) {
+                    // Add this vertex as a descendent in the parent's queue
+                    parent_queue.insert(vhash, vertex.clone());
+                } else {
+                    // Insert a new entry
+                    if let Some(evicted) = self
+                        .by_parent
+                        .put(parent_hash, once((vhash, vertex.clone())).collect())
+                    {
+                        warn!("Waitlist unexpectedly evicted vertices: {evicted:?}")
                     }
                 }
             }

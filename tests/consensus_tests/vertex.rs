@@ -34,7 +34,7 @@ fn new_slim() {
 #[test]
 fn genesis() {
     let block = Block {
-        version: 1,
+        version: 0,
         difficulty: MIN_DIFFICULTY,
         miner: PeerId::from_multihash(Multihash::default()).unwrap(),
         parents: Vec::new(),
@@ -44,7 +44,7 @@ fn genesis() {
         nonce: 0,
     };
     let expected = Vertex {
-        version: 1,
+        version: 0,
         bhash: block.hash(),
         parents: None,
         block: Some(Arc::new(block.clone())),

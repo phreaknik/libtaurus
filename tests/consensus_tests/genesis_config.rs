@@ -10,7 +10,7 @@ fn genesis_cfg_to_vertex() {
         time: Utc::now(),
     };
     let expected = Arc::new(Vertex::genesis(Block {
-        version: 1,
+        version: 0,
         difficulty: cfg.difficulty,
         miner: PeerId::from_multihash(Multihash::default()).unwrap(),
         parents: Vec::new(),

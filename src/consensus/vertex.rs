@@ -88,7 +88,7 @@ impl Vertex {
     /// Construct the genesis vertex, with the given the genesis block
     pub fn genesis(block: Block) -> Vertex {
         Vertex {
-            version: 1,
+            version: 0,
             parents: None,
             bhash: block.hash(),
             block: Some(Arc::new(block)),

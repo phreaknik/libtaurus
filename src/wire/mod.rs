@@ -27,8 +27,6 @@ pub enum Error {
     ProstEncode(#[from] prost::EncodeError),
     #[error(transparent)]
     Hash(#[from] crate::hash::Error),
-    #[error("missing block")]
-    MissingBlock,
     #[error("error acquiring read lock on a vertex")]
     VertexReadLock,
 }

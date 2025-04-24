@@ -115,7 +115,7 @@ impl GenesisConfig {
     pub fn to_vertex(&self) -> Arc<Vertex> {
         self.sanity_checks().expect("illegal genesis config");
         let block = Block {
-            version: 1,
+            version: 0,
             difficulty: self.difficulty,
             miner: PeerId::from_multihash(Multihash::default()).unwrap(),
             parents: Vec::new(),
@@ -214,7 +214,10 @@ impl Runtime {
         // Send initial NewFrontier event to initiate the miner
         self.events_out
             .send(Event::NewFrontier(
-                self.dag.read().expect("Failed to read DAG").get_frontier(),
+                self.dag
+                    .read()
+                    .expect("Failed to read DAG")
+                    .get_frontier_hashes(),
             ))
             .expect("Failed to send initial frontier!");
 
@@ -307,8 +310,7 @@ impl Runtime {
             p2p::BroadcastData::Vertex(vertex) => {
                 let mut dag = self.dag.write().map_err(|_| Error::DagWriteLock)?;
                 match dag.try_insert_vertices(once(Arc::new(vertex)), Some(bcast.src), false) {
-                    Err(avalanche::Error::MissingBlock(_))
-                    | Err(avalanche::Error::MissingVertices(_)) => Ok(ignore),
+                    Err(avalanche::Error::MissingData(_, _)) => Ok(ignore),
                     Err(_) => Ok(reject),
                     Ok(_) => Ok(accept),
                 }
