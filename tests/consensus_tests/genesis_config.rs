@@ -1,7 +1,7 @@
 use chrono::Utc;
-use cordelia::{params::MIN_DIFFICULTY, Block, GenesisConfig, Vertex};
+use cordelia::{consensus, params::MIN_DIFFICULTY, Block, GenesisConfig, Vertex};
 use libp2p::{multihash::Multihash, PeerId};
-use std::sync::Arc;
+use std::{assert_matches::assert_matches, sync::Arc};
 
 #[test]
 fn genesis_cfg_to_vertex() {
@@ -20,4 +20,25 @@ fn genesis_cfg_to_vertex() {
         nonce: 0,
     }));
     assert_eq!(expected, cfg.to_vertex());
+}
+
+#[test]
+#[should_panic]
+fn invalid_difficulty() {
+    GenesisConfig {
+        difficulty: MIN_DIFFICULTY - 1,
+        time: Utc::now(),
+    }
+    .to_vertex();
+}
+
+#[test]
+fn sanity_checks() {
+    let mut cfg = GenesisConfig {
+        difficulty: MIN_DIFFICULTY - 1,
+        time: Utc::now(),
+    };
+    assert_matches!(cfg.sanity_checks(), Err(consensus::Error::BadDifficulty(_)));
+    cfg.difficulty = MIN_DIFFICULTY;
+    assert!(cfg.sanity_checks().is_ok());
 }

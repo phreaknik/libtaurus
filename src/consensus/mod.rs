@@ -6,12 +6,13 @@
 
 pub mod avalanche;
 pub mod block;
-mod database;
+pub mod database;
 pub mod transaction;
 pub mod vertex;
 mod voter_pool;
 mod waitlist;
 
+use crate::params::MIN_DIFFICULTY;
 use crate::{p2p, randomx, randomx::RandomXVMInstance};
 pub use avalanche::Dag;
 pub use block::{Block, BlockHash};
@@ -59,6 +60,8 @@ pub enum Action {
 pub enum Error {
     #[error(transparent)]
     Avalanche(#[from] avalanche::Error),
+    #[error("illegal difficulty value")]
+    BadDifficulty(u64),
     #[error(transparent)]
     Block(#[from] block::Error),
     #[error("error acquiring write lock on Avalanche DAG")]
@@ -99,8 +102,18 @@ pub struct GenesisConfig {
 }
 
 impl GenesisConfig {
+    /// Make sure the vertex passes all basic sanity checks
+    pub fn sanity_checks(&self) -> Result<()> {
+        if self.difficulty < MIN_DIFFICULTY {
+            Err(Error::BadDifficulty(self.difficulty))
+        } else {
+            Ok(())
+        }
+    }
+
     /// Create a genesis block
     pub fn to_vertex(&self) -> Arc<Vertex> {
+        self.sanity_checks().expect("illegal genesis config");
         let block = Block {
             version: 1,
             difficulty: self.difficulty,
