@@ -188,30 +188,6 @@ impl Dag {
         self.config.genesis.hash()
     }
 
-    /// Register a block as available to be inserted into the DAG. Returns true if this is a new
-    /// registration; i.e. the block had not been seen before.
-    fn register_block(&mut self, block: Arc<Block>) -> Result<bool> {
-        // Check the block has sufficient proof-of-work
-        block.verify_pow(&self.randomx_vm)?;
-        let bhash = block.hash();
-        if let Some(vhash) = self.database.lookup_vertex_for_block(&bhash)? {
-            Err(Error::AlreadyDecided(vhash))
-        } else {
-            // Add the block to the list of undecided blocks
-            let new_block = self
-                .undecided_blocks
-                .cache_set(bhash, block.clone())
-                .is_none();
-            // Register this miner as a potential Avalanche voter
-            self.voter_pool.register_from_block(block);
-            // Attempt to insert any vertices waiting on that block
-            if let Some(vertices) = self.waitlist.get_by_block(&bhash)? {
-                self.try_insert_vertices(vertices, None, false)?;
-            }
-            Ok(new_block)
-        }
-    }
-
     /// Try to submit this block as a vertex at the frontier of the DAG
     pub fn try_insert_block(&mut self, block: Arc<Block>, broadcast: bool) -> Result<()> {
         let vertex = Arc::new(Vertex::new_full(block));
@@ -302,6 +278,96 @@ impl Dag {
             }
         }
         Ok(())
+    }
+
+    /// Remove completed query from pending queries
+    pub fn clear_pending_query(&mut self, vhash: &VertexHash) {
+        self.pending_queries.remove(vhash);
+    }
+
+    /// Look up a block from the DAG
+    pub fn get_block(&mut self, bhash: &BlockHash) -> Result<Arc<Block>> {
+        match self.undecided_blocks.cache_get(bhash) {
+            Some(block) => Ok(block.clone()),
+            None => {
+                let vhash = self
+                    .database
+                    .lookup_vertex_for_block(bhash)?
+                    .ok_or(Error::NotFound)?;
+                Ok(self
+                    .database
+                    .read_vertex(&vhash)?
+                    .ok_or(Error::NotFound)?
+                    .block
+                    .as_ref()
+                    .unwrap()
+                    .clone())
+            }
+        }
+    }
+
+    /// Look up a vertex from the DAG, and indicate if this vertex is strongly preferred.
+    pub fn get_vertex(&mut self, vhash: &VertexHash) -> Result<(Arc<Vertex>, bool)> {
+        match self.undecided_vertices.cache_get(vhash) {
+            Some(rw_vertex) => {
+                let vertex = rw_vertex.read().map_err(|_| Error::VertexReadLock)?;
+                Ok((vertex.inner.clone(), vertex.strongly_preferred))
+            }
+            None => Ok((
+                self.database.read_vertex(vhash)?.ok_or(Error::NotFound)?,
+                true,
+            )),
+        }
+    }
+
+    /// Handle any avalanche requests or responses
+    pub fn handle_avalanche_message(&mut self, message: consensus_rpc::Event) -> Result<()> {
+        // TODO: this method should not be part of DAG
+        match message {
+            consensus_rpc::Event::Requested(peer, request_id, request) => {
+                // Handle the request and respond to the requester
+                self.handle_avalanche_request(peer, request)
+                    .and_then(|opt_response| match opt_response {
+                        Some(response) => self
+                            .p2p_action_ch
+                            .send(p2p::Action::AvalancheResponse(request_id, response))
+                            .map_err(Error::from),
+                        None => Ok(()),
+                    })
+            }
+            consensus_rpc::Event::Responded(peer, response) => {
+                self.handle_avalanche_response(peer, response)
+            }
+        }
+    }
+
+    /// Method to request a copy of the current DAG frontier
+    pub fn get_frontier(&self) -> Vec<VertexHash> {
+        self.frontier.keys().copied().collect()
+    }
+
+    /// Register a block as available to be inserted into the DAG. Returns true if this is a new
+    /// registration; i.e. the block had not been seen before.
+    fn register_block(&mut self, block: Arc<Block>) -> Result<bool> {
+        // Check the block has sufficient proof-of-work
+        block.verify_pow(&self.randomx_vm)?;
+        let bhash = block.hash();
+        if let Some(vhash) = self.database.lookup_vertex_for_block(&bhash)? {
+            Err(Error::AlreadyDecided(vhash))
+        } else {
+            // Add the block to the list of undecided blocks
+            let new_block = self
+                .undecided_blocks
+                .cache_set(bhash, block.clone())
+                .is_none();
+            // Register this miner as a potential Avalanche voter
+            self.voter_pool.register_from_block(block);
+            // Attempt to insert any vertices waiting on that block
+            if let Some(vertices) = self.waitlist.get_by_block(&bhash)? {
+                self.try_insert_vertices(vertices, None, false)?;
+            }
+            Ok(new_block)
+        }
     }
 
     /// Attempt to insert the vertex into the DAG. If successful, will return true if the vertex is
@@ -435,9 +501,10 @@ impl Dag {
             // Add it to the frontier
             self.frontier.insert(vhash, rw_vertex.clone());
 
-            // Notify subscribers of new frontier
-            self.events_ch
-                .send(Event::NewFrontier(self.frontier.keys().cloned().collect()))?;
+            // Notify subscribers (if any) of new frontier
+            let _ = self
+                .events_ch
+                .send(Event::NewFrontier(self.frontier.keys().cloned().collect()));
         }
         Ok(dyn_vertex.strongly_preferred)
     }
@@ -575,46 +642,6 @@ impl Dag {
         Ok(())
     }
 
-    /// Remove completed query from pending queries
-    pub fn clear_pending_query(&mut self, vhash: &VertexHash) {
-        self.pending_queries.remove(vhash);
-    }
-
-    /// Look up a block from the DAG
-    pub fn get_block(&mut self, bhash: &BlockHash) -> Result<Arc<Block>> {
-        match self.undecided_blocks.cache_get(bhash) {
-            Some(block) => Ok(block.clone()),
-            None => {
-                let vhash = self
-                    .database
-                    .lookup_vertex_for_block(bhash)?
-                    .ok_or(Error::NotFound)?;
-                Ok(self
-                    .database
-                    .read_vertex(&vhash)?
-                    .ok_or(Error::NotFound)?
-                    .block
-                    .as_ref()
-                    .unwrap()
-                    .clone())
-            }
-        }
-    }
-
-    /// Look up a vertex from the DAG, and indicate if this vertex is strongly preferred.
-    pub fn get_vertex(&mut self, vhash: &VertexHash) -> Result<(Arc<Vertex>, bool)> {
-        match self.undecided_vertices.cache_get(vhash) {
-            Some(rw_vertex) => {
-                let vertex = rw_vertex.read().map_err(|_| Error::VertexReadLock)?;
-                Ok((vertex.inner.clone(), vertex.strongly_preferred))
-            }
-            None => Ok((
-                self.database.read_vertex(vhash)?.ok_or(Error::NotFound)?,
-                true,
-            )),
-        }
-    }
-
     /// Recompute the confidences of given vertex and all undecided ancestors. Returns the hashes of
     /// ancestors which can now be accepted.
     fn recompute_confidences(
@@ -719,26 +746,6 @@ impl Dag {
             }
         }
         Ok(())
-    }
-
-    /// Handle any avalanche requests or responses
-    pub fn handle_avalanche_message(&mut self, message: consensus_rpc::Event) -> Result<()> {
-        match message {
-            consensus_rpc::Event::Requested(peer, request_id, request) => {
-                // Handle the request and respond to the requester
-                self.handle_avalanche_request(peer, request)
-                    .and_then(|opt_response| match opt_response {
-                        Some(response) => self
-                            .p2p_action_ch
-                            .send(p2p::Action::AvalancheResponse(request_id, response))
-                            .map_err(Error::from),
-                        None => Ok(()),
-                    })
-            }
-            consensus_rpc::Event::Responded(peer, response) => {
-                self.handle_avalanche_response(peer, response)
-            }
-        }
     }
 
     /// Handle a received avalanche request message from one of our peers
@@ -895,11 +902,6 @@ impl Dag {
             }
         }
         Ok(())
-    }
-
-    /// Method to request a copy of the current DAG frontier
-    pub fn get_frontier(&self) -> Vec<VertexHash> {
-        self.frontier.keys().copied().collect()
     }
 }
 
