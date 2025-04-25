@@ -9,14 +9,14 @@ use cordelia::{
 use libp2p::{multihash::Multihash, PeerId};
 use rand::{thread_rng, Rng};
 use randomx_rs::RandomXFlag;
-use std::{
-    assert_matches::assert_matches, collections::HashMap, fs, iter::once, path::PathBuf, sync::Arc,
-};
+use std::{assert_matches::assert_matches, collections::HashMap, fs, iter::once, sync::Arc};
+use tempfile::TempDir;
 use tokio::sync::{broadcast, mpsc};
 
 /// Creates a new empty DAG with a fresh database in a temporary directory
 fn setup_test_dag() -> (Dag, RandomXVMInstance) {
-    let db_path: PathBuf = "test_outputs/consensus_db".into();
+    let tmp_dir = TempDir::new().unwrap();
+    let db_path = tmp_dir.path().join("test_outputs/consensus_db");
     let _ = fs::remove_dir_all(db_path.as_path());
     let config = avalanche::Config {
         data_dir: db_path,
