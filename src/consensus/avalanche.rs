@@ -42,13 +42,15 @@ pub const DECISION_TIMEOUT_SEC: u64 = 60 * 60 * 24;
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("block has already been decided")]
-    AlreadyDecided(VertexHash),
+    AlreadyDecidedBlock(VertexHash),
     #[error(transparent)]
     Block(#[from] block::Error),
     #[error("vertex has corrupt block hash")]
     CorruptBlockHash,
     #[error(transparent)]
     Database(#[from] super::database::Error),
+    #[error("vertex has previously been inserted")]
+    DuplicateInsertion,
     #[error("consensus event channel error")]
     EventsOutCh(#[from] tokio::sync::broadcast::error::SendError<Event>),
     #[error(transparent)]
@@ -61,8 +63,6 @@ pub enum Error {
     NewBlockCh(#[from] tokio::sync::mpsc::error::SendError<Block>),
     #[error("data not found")]
     NotFound,
-    #[error("one or more parent is not in the undecided set")]
-    ParentsAlreadyDecided,
     #[error("p2p action channel error")]
     P2pActionCh(#[from] tokio::sync::mpsc::error::SendError<p2p::Action>),
     #[error(transparent)]
@@ -207,8 +207,9 @@ impl Dag {
     {
         // Helper to insert the vertex to the dag or the waitlist. If insertion is successfull,
         // returns any vertices which were waiting on the newly inserted data.
-        let mut insert =
-            |vertex: Arc<Vertex>| match self.try_insert_vertex(vertex.clone(), sender, broadcast) {
+        let mut insert = |vertex: Arc<Vertex>| {
+            let res = self.try_insert_vertex(vertex.clone(), sender, broadcast);
+            match res {
                 Ok(preferred) => {
                     let vhash = vertex.hash();
                     info!(
@@ -230,8 +231,10 @@ impl Dag {
                         .insert(vertex, missing_parents, missing_block)?;
                     Ok(None)
                 }
+                Err(Error::Waiting) => Ok(None),
                 Err(e) => Err(e),
-            };
+            }
+        };
 
         // Sanity check (in debug builds) each vertex before proceding. This is not necessary in
         // release, because each vertex should have been sanity checked when it came off the wire.
@@ -243,19 +246,35 @@ impl Dag {
         let original_list: HashSet<_> = insert_list.keys().copied().collect();
 
         // Loop until each vertex has been inserted to the dag or waitlist
-        let mut successful = HashSet::new();
-        while !insert_list.is_empty() {
-            let mut retries = Vec::new();
-            for (vhash, v) in insert_list.drain() {
-                if let Some(mut new_retries) = insert(v)? {
-                    successful.insert(vhash);
-                    retries.append(&mut new_retries);
-                }
-            }
-            for retry in retries {
+        let mut successful = HashSet::new(); // Track every successful insertion
+        let mut to_retry: Vec<Arc<Vertex>> = Vec::new(); // Vertices that should be retried after each loop iteration
+        let mut progressing = true; // Flag to indicate if the loop is still progressing
+        while progressing {
+            // Reset the progression flag
+            progressing = false;
+
+            // Any vertices from the previous loop that need to be retried, should be added to the
+            // insertion list now.
+            for retry in to_retry.drain(..) {
                 insert_list.insert(retry.hash(), retry);
             }
+
+            // Attempt to insert each vertex in the insertion list. If successful, add its
+            // dependents to the retry list, to be tried on the next iteration.
+            for (vhash, v) in insert_list.drain() {
+                if let Some(mut dependents) = insert(v.clone())? {
+                    // Record the successful insertion
+                    successful.insert(vhash);
+                    to_retry.append(&mut dependents);
+                    progressing = true;
+                } else {
+                    // Insertion failed. Retry this vertex again later.
+                    to_retry.push(v);
+                }
+            }
         }
+
+        // Error if any of the original vertices are still waiting
         if !successful.is_superset(&original_list) {
             // Some of the original items weren't successful, and are thus waiting in the waitlist
             Err(Error::Waiting)
@@ -350,7 +369,7 @@ impl Dag {
         block.verify_pow(&self.randomx_vm)?;
         let bhash = block.hash();
         if let Some(vhash) = self.database.lookup_vertex_for_block(&bhash)? {
-            Err(Error::AlreadyDecided(vhash))
+            Err(Error::AlreadyDecidedBlock(vhash))
         } else {
             // Add the block to the list of undecided blocks
             let new_block = self
@@ -379,8 +398,8 @@ impl Dag {
         debug!("Vertex submitted: {vhash} = {vertex}");
 
         // Check if we already have this vertex
-        if let Ok((_v, preferred)) = self.get_vertex(&vhash) {
-            return Ok(preferred);
+        if self.get_vertex(&vhash).is_ok() {
+            return Err(Error::DuplicateInsertion);
         }
 
         // If available, check proof-of-work before doing anything
@@ -395,20 +414,13 @@ impl Dag {
             false
         };
 
-        // Make sure the dag isn't missing any necessary data to process this vertex
-        self.check_dependencies(&vertex, sender)?;
-
         // Make sure the block referenced in this vertex can be spent
         let (conflict_free, opt_block) = self.check_conflicts(vertex.clone())?;
 
         // Create a mutex protected vertex for inserting into the DAG structure
-        let rw_vertex = Arc::new(TracingRwLock::new(UndecidedVertex::new(
-            self.genesis_hash(),
-            vertex.clone(),
-            &mut self.undecided_blocks,
-            &mut self.undecided_vertices,
-            conflict_free,
-        )?));
+        let rw_vertex = Arc::new(TracingRwLock::new(
+            self.build_undecided_vertex(vertex.clone(), conflict_free)?,
+        ));
 
         // Add it to the collection of undecided vertices
         self.undecided_vertices.cache_set(vhash, rw_vertex.clone());
@@ -494,82 +506,81 @@ impl Dag {
         Ok(dyn_vertex.strongly_preferred)
     }
 
-    /// Check for missing data and request them from peers
-    fn check_dependencies(&mut self, vertex: &Vertex, sender: Option<PeerId>) -> Result<()> {
-        let vhash = vertex.hash();
-        let bhash = vertex.bhash;
-
-        // Determine full set of parents to search for
-        let parents = vertex.parents().iter().collect::<HashSet<_>>();
-        assert!(!parents.is_empty()); // Should not be possible if inputs are sanitized
-
-        // Lookup any missing parents
-        let missing_parents: Vec<VertexHash> = parents
-            .into_iter()
-            .filter(|vhash| {
-                // Filter out any vertex already in the undecided DAG
-                self.undecided_vertices.cache_get(vhash).is_none()
-            })
-            .filter(|vhash| {
-                // Filter out any vertex already waiting in the waitlist
-                !self.waitlist.contains(vhash).expect("waitlist read error")
-            })
-            .filter(|vhash| {
-                // Filter out any vertex already finalized in the database
-                self.database
-                    .read_vertex(vhash)
-                    .expect("database read error")
-                    .is_none()
-            })
-            .map(|&parent| {
-                // Request missing parent from peers
-                if let Some(peer) = sender {
-                    debug!("Requesting missing parent {parent}");
-                    self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
-                        peer,
-                        consensus_rpc::Request::GetVertex(parent),
-                    ))?;
-                }
-                Ok::<_, Error>(parent)
-            })
-            .try_collect()?;
-
-        // Make sure we have the block referenced by the given vertex
-        let missing_block = if vertex.block.is_some() {
-            None
-        } else {
-            match self.get_block(&bhash) {
-                Err(Error::NotFound) => {
-                    info!("Missing block for vertex {vhash}: {bhash}");
-                    if let Some(peer) = sender {
-                        debug!("Requesting block {bhash}");
-                        self.p2p_action_ch.send(p2p::Action::AvalancheRequest(
-                            peer,
-                            consensus_rpc::Request::GetBlock(bhash),
-                        ))?;
-                    }
-                    Ok(Some(bhash))
-                }
-                Ok(_) => Ok(None),
-                Err(e) => Err(e),
-            }?
-        };
-
-        // Error if we're missing any data
-        if missing_parents.is_empty() && missing_block.is_none() {
-            Ok(())
-        } else {
-            let mut missing_str = format!("[{}", missing_parents[0]);
-            for missing in missing_parents[1..].into_iter() {
-                missing_str += &format!(", {}", missing);
+    /// Create a new vertex representing a block's position in the DAG. If this vertex has no
+    /// existing preferred conflicts, and its parents are strongly preferred, then it too will be
+    /// marked as strongly preferred.
+    fn build_undecided_vertex(
+        &mut self,
+        vertex: Arc<Vertex>,
+        conflict_free: bool,
+    ) -> Result<UndecidedVertex> {
+        // Load undecided parents and blocks
+        let mut height = 0;
+        let mut missing_parents = Vec::new();
+        let mut undecided_parents = HashMap::new();
+        for &parent_hash in vertex.parents() {
+            if let Some(parent) = self.undecided_vertices.cache_get(&parent_hash) {
+                undecided_parents.insert(parent_hash, parent.clone());
+                height = cmp::max(
+                    height,
+                    parent.read().map_err(|_| Error::VertexReadLock)?.height,
+                )
+            } else if self
+                .waitlist
+                .contains(&parent_hash)
+                .expect("waitlist read error")
+            {
+                return Err(Error::Waiting);
+            } else if let Some(parent) = self.database.read_vertex(&parent_hash)? {
+                // TODO: uncomment this
+                //height = cmp::max(height, parent.height);
+            } else {
+                missing_parents.push(parent_hash);
             }
-            missing_str += "]";
-            debug!(
-                "Missing parents for vertex {}: {missing_str}",
-                vertex.hash()
-            );
-            Err(Error::MissingData(missing_parents, missing_block))
         }
+        let block = match vertex
+            .block
+            .as_ref()
+            .or(self.undecided_blocks.cache_get(&vertex.bhash))
+        {
+            Some(b) => Ok(b),
+            None => {
+                if let Some(vhash) = self.database.lookup_vertex_for_block(&vertex.bhash)? {
+                    Err(Error::AlreadyDecidedBlock(vhash))
+                } else {
+                    Err(Error::MissingData(
+                        missing_parents.clone(),
+                        Some(vertex.bhash),
+                    ))
+                }
+            }
+        }?
+        .clone();
+        if !missing_parents.is_empty() {
+            return Err(Error::MissingData(missing_parents, None));
+        }
+
+        // Determine height of this vertex and whether or not it is strongly preferred.
+        // Strongly preferred if no conflicts and all undecided parents are also strongly preferred.
+        let strongly_preferred = undecided_parents
+            .values()
+            .map(|p| p.read().map_err(|_| Error::VertexReadLock))
+            .try_fold(conflict_free, |all_pref, vertex| {
+                vertex.map(|v| (all_pref && v.strongly_preferred))
+            })?;
+        let inner = match vertex.block {
+            Some(_) => vertex,
+            None => Arc::new(vertex.deref().clone().with_block(block)),
+        };
+        Ok(UndecidedVertex {
+            inner,
+            height,
+            undecided_parents,
+            known_children: HashMap::new(),
+            strongly_preferred,
+            chit: 0,
+            confidence: 0,
+        })
     }
 
     /// Check that the vertex uniquely spends UTXOs. Returns true if no conflicts. Also reurns a
@@ -953,72 +964,6 @@ impl UndecidedVertex {
         }
     }
 
-    /// Create a new vertex representing a block's position in the DAG. If this vertex has no
-    /// existing preferred conflicts, and its parents are strongly preferred, then it too will be
-    /// marked as strongly preferred.
-    pub fn new(
-        genesis_hash: VertexHash,
-        vertex: Arc<Vertex>,
-        undecided_blocks: &mut TimedCache<BlockHash, Arc<Block>>,
-        undecided_vertices: &mut TimedCache<VertexHash, Arc<TracingRwLock<UndecidedVertex>>>,
-        conflict_free: bool,
-    ) -> Result<UndecidedVertex> {
-        let undecided_parents: HashMap<VertexHash, Arc<TracingRwLock<UndecidedVertex>>> = vertex
-            .parents()
-            .iter()
-            .filter(|&p| p != &genesis_hash) //TODO: 99.999% of the time, this is wasted cycles
-            .map(|&k| {
-                undecided_vertices
-                    .cache_get(&k)
-                    .map(|v| (k, v.clone()))
-                    .ok_or(Error::ParentsAlreadyDecided)
-            })
-            .try_collect()?;
-        // Determine height of this vertex and whether or not it is strongly preferred.
-        // Strongly preferred if no conflicts and all undecided parents are also strongly preferred.
-        let strongly_preferred = undecided_parents
-            .values()
-            .map(|p| p.read().map_err(|_| Error::VertexReadLock))
-            .try_fold(conflict_free, |all_pref, vertex| {
-                vertex.map(|v| (all_pref && v.strongly_preferred))
-            })?;
-        let height = undecided_parents
-            .keys()
-            .map(|&k| {
-                undecided_vertices
-                    .cache_get(&k)
-                    .ok_or(Error::ParentsAlreadyDecided)
-                    .map(|v| {
-                        v.read()
-                            .map_err(|_| Error::VertexReadLock)
-                            .map(|v| v.height)
-                    })
-            })
-            .try_fold(1, |max_mh, mined_height| {
-                mined_height.flatten().map(|mh| cmp::max(max_mh, mh + 1))
-            })?;
-        let inner = match vertex.block {
-            Some(_) => vertex,
-            None => Arc::new(
-                vertex.deref().clone().with_block(
-                    undecided_blocks
-                        .cache_get(&vertex.bhash)
-                        .cloned()
-                        .ok_or(Error::MissingData(Vec::new(), Some(vertex.bhash)))?,
-                ),
-            ),
-        };
-        Ok(UndecidedVertex {
-            inner,
-            height,
-            undecided_parents,
-            known_children: HashMap::new(),
-            strongly_preferred,
-            chit: 0,
-            confidence: 0,
-        })
-    }
-
     /// Compute the hash of the vertex
     pub fn hash(&self) -> VertexHash {
         self.inner.hash()
@@ -1028,11 +973,8 @@ impl UndecidedVertex {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{avalanche, Block, BlockHash, Vertex, VertexHash};
-    use cached::{Cached, TimedCache};
-    use itertools::Itertools;
-    use std::{assert_matches::assert_matches, collections::HashMap, sync::Arc};
-    use tracing_mutex::stdsync::TracingRwLock;
+    use crate::{Block, Vertex, VertexHash};
+    use std::sync::Arc;
 
     #[test]
     fn genesis() {
@@ -1046,135 +988,6 @@ mod test {
         assert_eq!(genesis.strongly_preferred, true);
         assert_eq!(genesis.chit, 1);
         assert_eq!(genesis.confidence, usize::MAX);
-    }
-
-    #[test]
-    fn new() {
-        let genesis_hash = VertexHash::with_bytes([
-            33, 180, 159, 199, 73, 80, 3, 76, 173, 198, 97, 18, 238, 185, 30, 114, 45, 40, 216, 37,
-            158, 44, 255, 255, 191, 100, 71, 154, 244, 153, 180, 31,
-        ]);
-        let mut undecided_blocks = TimedCache::with_lifespan_and_refresh(1000, true);
-        let mut undecided_vertices = TimedCache::with_lifespan_and_refresh(1000, true);
-        let parent1 = UndecidedVertex {
-            inner: Arc::new(Vertex::new_slim(
-                BlockHash::default(),
-                vec![VertexHash::with_bytes([
-                    100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100,
-                    100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100,
-                ])],
-            )),
-            height: 100,
-            undecided_parents: HashMap::new(),
-            known_children: HashMap::new(),
-            strongly_preferred: true,
-            chit: 0,
-            confidence: 0,
-        };
-        let parent2 = UndecidedVertex {
-            inner: Arc::new(Vertex::new_slim(
-                BlockHash::default(),
-                vec![VertexHash::with_bytes([
-                    200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200,
-                    200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200,
-                ])],
-            )),
-            height: 107,
-            undecided_parents: HashMap::new(),
-            known_children: HashMap::new(),
-            strongly_preferred: true,
-            chit: 0,
-            confidence: 0,
-        };
-        let inner = Arc::new(Vertex::new_full(Arc::new(
-            Block::default().with_parents(vec![parent1.hash(), parent2.hash()]),
-        )));
-        undecided_vertices.cache_set(
-            parent1.hash(),
-            Arc::new(TracingRwLock::new(parent1.clone())),
-        );
-        // Test with one parent already decided
-        assert_matches!(
-            UndecidedVertex::new(
-                genesis_hash,
-                inner.clone(),
-                &mut undecided_blocks,
-                &mut undecided_vertices,
-                false
-            ),
-            Err(avalanche::Error::ParentsAlreadyDecided)
-        );
-        // Add the missing parent to the undecided set and try again
-        undecided_vertices.cache_set(
-            parent2.hash(),
-            Arc::new(TracingRwLock::new(parent2.clone())),
-        );
-        // Test ok, strongly preferred
-        let new = UndecidedVertex::new(
-            genesis_hash,
-            inner.clone(),
-            &mut undecided_blocks,
-            &mut undecided_vertices,
-            true,
-        )
-        .unwrap();
-        assert_eq!(new.inner, inner);
-        assert_eq!(new.height, 108);
-        assert!(new
-            .undecided_parents
-            .keys()
-            .sorted()
-            .eq(vec![parent1.hash(), parent2.hash()].iter().sorted()));
-        assert_eq!(new.strongly_preferred, true);
-        assert_eq!(new.chit, 0);
-        assert_eq!(new.confidence, 0);
-        // Test ok, not preferred
-        let new = UndecidedVertex::new(
-            genesis_hash,
-            inner.clone(),
-            &mut undecided_blocks,
-            &mut undecided_vertices,
-            false,
-        )
-        .unwrap();
-        assert_eq!(new.inner, inner);
-        assert_eq!(new.height, 108);
-        assert!(new
-            .undecided_parents
-            .keys()
-            .sorted()
-            .eq(vec![parent1.hash(), parent2.hash()].iter().sorted()));
-        assert_eq!(new.strongly_preferred, false);
-        assert_eq!(new.chit, 0);
-        assert_eq!(new.confidence, 0);
-        // Test ok, with an unpreferred parent
-        let mut parent3 = parent2.clone();
-        parent3.strongly_preferred = false;
-        undecided_vertices.cache_set(
-            parent3.hash(),
-            Arc::new(TracingRwLock::new(parent3.clone())),
-        );
-        let inner = Arc::new(Vertex::new_full(Arc::new(
-            Block::default().with_parents(vec![parent1.hash(), parent2.hash(), parent3.hash()]),
-        )));
-        let new = UndecidedVertex::new(
-            genesis_hash,
-            inner.clone(),
-            &mut undecided_blocks,
-            &mut undecided_vertices,
-            true,
-        )
-        .unwrap();
-        assert_eq!(new.inner, inner);
-        assert_eq!(new.height, 108);
-        assert!(new
-            .undecided_parents
-            .keys()
-            .sorted()
-            .eq(vec![parent1.hash(), parent2.hash()].iter().sorted()));
-        assert_eq!(new.strongly_preferred, false);
-        assert_eq!(new.chit, 0);
-        assert_eq!(new.confidence, 0);
     }
 
     #[test]

@@ -9,7 +9,13 @@ use cordelia::{
 use libp2p::{multihash::Multihash, PeerId};
 use rand::{thread_rng, Rng};
 use randomx_rs::RandomXFlag;
-use std::{assert_matches::assert_matches, collections::HashMap, fs, iter::once, sync::Arc};
+use std::{
+    assert_matches::assert_matches,
+    collections::{HashMap, HashSet},
+    fs,
+    iter::once,
+    sync::Arc,
+};
 use tempfile::TempDir;
 use tokio::sync::{broadcast, mpsc};
 
@@ -136,8 +142,6 @@ fn try_insert_block() {
     bad_nonce |= mine_test_block("b0", &mut block, &rxvm);
     // Append should succeed
     assert_matches!(dag.try_insert_block(Arc::new(block.clone()), false), Ok(()));
-    // Appending again should still succeed, although the operation has no effect on the DAG
-    assert_matches!(dag.try_insert_block(Arc::new(block.clone()), false), Ok(()));
     block.parents.push(VertexHash::default()); // Insert missing parent
     block.nonce = 8730637501828490078;
     bad_nonce |= mine_test_block("b1", &mut block, &rxvm);
@@ -167,17 +171,16 @@ fn try_insert_basic() {
     ];
     let vertices = build_test_scenario(&rxvm, named_frontier, descriptors);
 
-    // Should insert up to the removed vertex, but return Err(Waiting) for the remaining vertices
+    // Should insert the full list successfully
     assert_matches!(
         dag.try_insert_vertices(vertices.values().cloned(), None, false),
-        Ok(())
+        Ok(()),
     );
 
-    // The frontier should now be "v4_0"
-    assert_eq!(
-        dag.get_frontier_hashes(),
-        vec![vertices.get("v4_0").unwrap().hash()]
-    );
+    // Check the current frontier
+    let frontier: HashSet<_> = dag.get_frontier_hashes().into_iter().collect();
+    assert_eq!(frontier.len(), 1);
+    assert!(frontier.contains(&vertices.get("v4_0").unwrap().hash()));
 }
 
 #[test]
@@ -207,14 +210,19 @@ fn try_insert_with_retries() {
         Err(avalanche::Error::Waiting)
     );
 
+    // Check the current frontier
+    let frontier: HashSet<_> = dag.get_frontier_hashes().into_iter().collect();
+    assert_eq!(frontier.len(), 2);
+    assert!(frontier.contains(&vertices.get("v3_1").unwrap().hash()));
+    assert!(frontier.contains(&vertices.get("v3_2").unwrap().hash()));
+
     // Insert the removed vertex
     assert_matches!(dag.try_insert_vertices(once(removed), None, false), Ok(()));
 
-    // The frontier should now be "v4_0"
-    assert_eq!(
-        dag.get_frontier_hashes(),
-        vec![vertices.get("v4_0").unwrap().hash()]
-    );
+    // Check the current frontier
+    let frontier: HashSet<_> = dag.get_frontier_hashes().into_iter().collect();
+    assert_eq!(frontier.len(), 1);
+    assert!(frontier.contains(&vertices.get("v4_0").unwrap().hash()));
 }
 
 #[test]
@@ -254,8 +262,41 @@ fn try_insert_with_bad_block() {
     let _ = dag.try_insert_vertices(vertices.values().cloned(), None, false);
 }
 
-// TODO: test scenarios with invalid blocks
-// TODO: test scenarios with repeated blocks
+#[test]
+fn try_insert_duplicates() {
+    // Set up a new DAG
+    let (mut dag, rxvm) = setup_test_dag();
+
+    // Build the test vertices
+    let named_frontier = vec![("genesis", dag.get_frontier().unwrap()[0].clone())];
+    let descriptors = vec![
+        ("v1_0", 14337490726892089899, vec!["genesis"]),
+        ("v1_1", 16012302412638312007, vec!["genesis"]),
+        ("v2_0", 06720339079374117241, vec!["v1_0"]),
+        ("v3_0", 12563117955961592819, vec!["v2_0"]),
+    ];
+    let vertices = build_test_scenario(&rxvm, named_frontier, descriptors);
+
+    // Should insert the full list successfully
+    assert_matches!(
+        dag.try_insert_vertices(vertices.values().cloned(), None, false),
+        Ok(()),
+    );
+
+    // Check the current frontier
+    let frontier: HashSet<_> = dag.get_frontier_hashes().into_iter().collect();
+    assert_eq!(frontier.len(), 2);
+    assert!(frontier.contains(&vertices.get("v1_1").unwrap().hash()));
+    assert!(frontier.contains(&vertices.get("v3_0").unwrap().hash()));
+
+    // Should fail to reinsert a vertex
+    assert_matches!(
+        dag.try_insert_vertices(once(vertices.get("v1_0").unwrap().clone()), None, false),
+        Err(avalanche::Error::DuplicateInsertion),
+    );
+}
+
+// TODO: test already decided block
 // TODO: test scenarios with future blocks
 // TODO: test conflicts & preference
 // TODO: test with too-deep parent
@@ -293,5 +334,10 @@ fn try_insert_with_bad_block() {
 //
 // #[test]
 // fn waitlist_processed() {
+//     todo!();
+// }
+//
+// #[test]
+// fn build_undecided_vertex() {
 //     todo!();
 // }

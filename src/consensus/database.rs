@@ -13,10 +13,6 @@ use std::{fs, path::PathBuf, result, sync::Arc};
 pub enum Error {
     #[error(transparent)]
     Block(#[from] block::Error),
-    #[error(transparent)]
-    ProstDecode(#[from] prost::DecodeError),
-    #[error(transparent)]
-    ProstEncode(#[from] prost::EncodeError),
     #[error("expected block")]
     ExpectedBlock,
     #[error("expected height link")]
@@ -33,6 +29,10 @@ pub enum Error {
     IncompleteResponse,
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    #[error(transparent)]
+    ProstDecode(#[from] prost::DecodeError),
+    #[error(transparent)]
+    ProstEncode(#[from] prost::EncodeError),
     #[error(transparent)]
     Vertex(#[from] vertex::Error),
     #[error(transparent)]
@@ -64,7 +64,7 @@ impl ConsensusDb {
         Ok(ConsensusDb { env, db })
     }
 
-    /// Read a block from the database
+    /// Look for a vertex in the database for the given block
     pub fn lookup_vertex_for_block<'a>(&'a self, bhash: &BlockHash) -> Result<Option<VertexHash>> {
         let mut rtxn = self.env.read_txn().unwrap();
         Ok(self
