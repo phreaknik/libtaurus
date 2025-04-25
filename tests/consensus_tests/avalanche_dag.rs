@@ -165,7 +165,7 @@ fn try_insert_basic() {
         ("v3_2", 14749812702066963736, vec!["v1_0", "v1_1"]),
         ("v4_0", 14143367919018540815, vec!["v3_0", "v3_1", "v3_2"]),
     ];
-    let mut vertices = build_test_scenario(&rxvm, named_frontier, descriptors);
+    let vertices = build_test_scenario(&rxvm, named_frontier, descriptors);
 
     // Should insert up to the removed vertex, but return Err(Waiting) for the remaining vertices
     assert_matches!(
@@ -217,11 +217,49 @@ fn try_insert_with_retries() {
     );
 }
 
-// TODO: test scenarios with waiting blocks
+#[test]
+#[should_panic]
+fn try_insert_with_bad_block() {
+    // Set up a new DAG
+    let (mut dag, rxvm) = setup_test_dag();
+
+    // Build the test vertices, with one bad block given
+    let bad_vertex = Arc::new(Vertex::new_full(Arc::new(Block {
+        version: 0,
+        difficulty: params::MIN_DIFFICULTY,
+        miner: PeerId::from_multihash(Multihash::default()).unwrap(),
+        parents: Vec::new(), // no parents!
+        inputs: Vec::new(),
+        outputs: Vec::new(),
+        time: dag.get_frontier().unwrap()[0].block.as_ref().unwrap().time + Duration::seconds(5),
+        nonce: 13800265558186205210,
+    })));
+
+    let given = vec![
+        ("genesis", dag.get_frontier().unwrap()[0].clone()),
+        ("v3_2", bad_vertex.clone()),
+    ];
+    let descriptors = vec![
+        ("v1_0", 14337490726892089899, vec!["genesis"]),
+        ("v1_1", 16012302412638312007, vec!["genesis"]),
+        ("v2_0", 06720339079374117241, vec!["v1_0"]),
+        ("v3_0", 12563117955961592819, vec!["v2_0"]),
+        ("v3_1", 09660934870233600764, vec!["v2_0", "v1_1"]),
+        ("v4_0", 11632464252622328349, vec!["v3_0", "v3_1", "v3_2"]), // references bad block
+    ];
+    let mut vertices = build_test_scenario(&rxvm, given, descriptors);
+    vertices.insert("v3_2", bad_vertex);
+
+    // Insert should panic on bad block
+    let _ = dag.try_insert_vertices(vertices.values().cloned(), None, false);
+}
+
 // TODO: test scenarios with invalid blocks
 // TODO: test scenarios with repeated blocks
 // TODO: test scenarios with future blocks
 // TODO: test conflicts & preference
+// TODO: test with too-deep parent
+// TODO: test block finalization
 
 // #[test]
 // fn clear_pending_query() {
