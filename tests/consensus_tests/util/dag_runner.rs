@@ -9,6 +9,7 @@ use randomx_rs::RandomXFlag;
 use std::{
     collections::{HashMap, HashSet},
     iter::once,
+    ops::Deref,
     sync::Arc,
 };
 use tempfile::TempDir;
@@ -17,7 +18,7 @@ use tokio::sync::{broadcast, mpsc};
 pub struct DagTestRunner<'a> {
     pub dag: Dag,
     pub randomx_vm: RandomXVMInstance,
-    pub vertices: HashMap<&'a str, Arc<Vertex>>,
+    pub vertices: HashMap<&'a str, Vertex>,
 }
 
 impl<'a> DagTestRunner<'a> {
@@ -47,7 +48,15 @@ impl<'a> DagTestRunner<'a> {
         let mut dag = Dag::new(config, randomx_vm.clone(), action_sender, event_sender);
 
         // Initialize vertex list with the genesis vertex
-        let vertices = once(("genesis", dag.get_vertex(&dag.genesis_hash()).unwrap().0)).collect();
+        let vertices = once((
+            "genesis",
+            dag.get_vertex(&dag.genesis_hash())
+                .unwrap()
+                .0
+                .deref()
+                .clone(),
+        ))
+        .collect();
 
         DagTestRunner {
             dag,
@@ -70,26 +79,28 @@ impl<'a> DagTestRunner<'a> {
     }
 
     /// Builds a block descending from the given parents
-    pub fn build_test_block(&self, parents: Vec<Arc<Vertex>>, nonce: u64) -> Block {
+    pub fn build_test_block<V>(&self, parents: V, nonce: u64) -> Block
+    where
+        V: IntoIterator<Item = Arc<Vertex>>,
+    {
+        let (hashes, times): (Vec<_>, Vec<_>) = parents
+            .into_iter()
+            .map(|v| (v.hash(), v.block.as_ref().unwrap().time))
+            .unzip();
         Block {
             version: 0,
             difficulty: params::MIN_DIFFICULTY,
             miner: PeerId::from_multihash(Multihash::default()).unwrap(),
-            parents: parents.iter().map(|v| v.hash()).collect(),
+            parents: hashes,
             inputs: Vec::new(),
             outputs: Vec::new(),
-            time: parents
-                .iter()
-                .map(|v| v.block.as_ref().unwrap().time)
-                .max()
-                .unwrap()
-                + Duration::seconds(1),
+            time: *times.iter().max().unwrap() + Duration::seconds(1),
             nonce,
         }
     }
 
     /// Add a vertex to the list of test vertices
-    pub fn add_test_vertex(&mut self, id: &'a str, vertex: Arc<Vertex>) {
+    pub fn add_test_vertex(&mut self, id: &'a str, vertex: Vertex) {
         self.vertices.insert(id, vertex);
     }
 
@@ -103,15 +114,14 @@ impl<'a> DagTestRunner<'a> {
         // Initialize a list of vertices with the frontier vertices
         for (vid, nonce, parents) in edges {
             let mut block = self.build_test_block(
-                parents
-                    .iter()
-                    .map(|vid| {
+                parents.iter().map(|vid| {
+                    Arc::new(
                         self.vertices
                             .get(vid)
                             .expect(format!("didn't find {vid} in vertices").as_str())
-                            .clone()
-                    })
-                    .collect(),
+                            .clone(),
+                    )
+                }),
                 nonce,
             );
             let incorrect_start_nonce = self.mine_test_block(&mut block);
@@ -119,7 +129,7 @@ impl<'a> DagTestRunner<'a> {
                 println!("Block for {vid} should have had nonce {}", block.nonce);
             }
             bad_nonce |= incorrect_start_nonce;
-            self.add_test_vertex(vid, Arc::new(Vertex::new_full(Arc::new(block))));
+            self.add_test_vertex(vid, Vertex::new_full(Arc::new(block)));
         }
         assert_eq!(bad_nonce, false, "Generated blocks have incorrect nonces");
     }
@@ -131,7 +141,7 @@ impl<'a> DagTestRunner<'a> {
     {
         self.dag.try_insert_vertices(
             ids.into_iter()
-                .map(|vid| self.vertices.get(vid).expect("id does not exist").clone()),
+                .map(|vid| Arc::new(self.vertices.get(vid).expect("id does not exist").clone())),
             None,
             false,
         )

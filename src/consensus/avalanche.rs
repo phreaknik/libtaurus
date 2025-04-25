@@ -2,7 +2,7 @@ use super::{
     block,
     database::ConsensusDb,
     transaction::{self, Txo, TxoHash},
-    vertex::{self, Vertex},
+    vertex::Vertex,
     voter_pool::{self, Scorecard, VoterPool},
     waitlist::{self, WaitList},
     Block, BlockHash, Event,
@@ -69,8 +69,6 @@ pub enum Error {
     Transaction(#[from] transaction::Error),
     #[error("block spends unknown UTXOs")]
     UnknownTransactionInputs,
-    #[error(transparent)]
-    UndecidedVertex(#[from] vertex::Error),
     #[error("error acquiring read lock on a vertex")]
     VertexReadLock,
     #[error("error acquiring write lock on a vertex")]
@@ -208,7 +206,7 @@ impl Dag {
         // Helper to insert the vertex to the dag or the waitlist. If insertion is successfull,
         // returns any vertices which were waiting on the newly inserted data.
         let mut insert = |vertex: Arc<Vertex>| {
-            let res = self.try_insert_vertex(vertex.clone(), sender, broadcast);
+            let res = self.try_insert_vertex(vertex.deref().clone(), sender, broadcast);
             match res {
                 Ok(preferred) => {
                     let vhash = vertex.hash();
@@ -226,13 +224,18 @@ impl Dag {
                     );
                     Ok(Some(waiting))
                 }
+                // TODO: figure out how to report missing data for entire insertion list
                 Err(Error::MissingData(missing_parents, missing_block)) => {
                     self.waitlist
                         .insert(vertex, missing_parents, missing_block)?;
                     Ok(None)
                 }
                 Err(Error::Waiting) => Ok(None),
-                Err(e) => Err(e),
+                Err(e) => {
+                    // TODO: should also remove this and children from the waitlist.
+                    // TODO: should test this ^
+                    Err(e)
+                }
             }
         };
 
@@ -403,50 +406,39 @@ impl Dag {
     /// currently strongly preferred.
     fn try_insert_vertex(
         &mut self,
-        vertex: Arc<Vertex>,
+        vertex: Vertex,
         sender: Option<PeerId>,
         broadcast: bool,
     ) -> Result<bool> {
         let vhash = vertex.hash();
         debug!("Vertex submitted: {vhash} = {vertex}");
 
-        // Check if we already have this vertex
-        if self.get_vertex(&vhash).is_ok() {
-            return Err(Error::DuplicateInsertion);
-        } else if let Some(decided_vertex) = self.database.lookup_vertex_for_block(&vertex.bhash)? {
-            return Err(Error::AlreadyDecidedBlock(decided_vertex));
-        }
-
-        // If available, check proof-of-work before doing anything
-        let full_broadcast = if let Some(block) = &vertex.block {
+        // If available, register block before anything else
+        if let Some(block) = &vertex.block {
+            // Check for blockhash mismatch
             if vertex.bhash != block.hash() {
                 return Err(Error::CorruptBlockHash);
             }
-            // Register the block. If this block has not been seen before, we should broadcast it
-            // with the vertex later
-            self.register_block(block.clone())?
-        } else {
-            false
-        };
 
-        // Make sure the block referenced in this vertex can be spent
-        let (conflict_free, opt_block) = self.check_conflicts(vertex.clone())?;
+            // Register the block as available for insertion.
+            self.register_block(block.clone())?;
+        } else if let Some(vhash) = self.database.lookup_vertex_for_block(&vertex.bhash)? {
+            // Check if block has already been decided by another vertex
+            return Err(Error::AlreadyDecidedBlock(vhash));
+        }
 
-        // Create a mutex protected vertex for inserting into the DAG structure
-        let rw_vertex = Arc::new(TracingRwLock::new(
-            self.build_undecided_vertex(vertex.clone(), conflict_free)?,
-        ));
+        // Create an [`UndecidedVertex`], checking if this vertex can be inserted without violating
+        // any DAG rules
+        let (rw_vertex, conflict_free) = self.create_insertable_vertex(vertex)?;
+        let undecided = rw_vertex.read().map_err(|_| Error::VertexWriteLock)?;
+        let block = undecided.inner.block.as_ref().unwrap();
 
         // Add it to the collection of undecided vertices
         self.undecided_vertices.cache_set(vhash, rw_vertex.clone());
 
         // If this vertex is conflict free, mark it as the preferred spender of its tx inputs
         if conflict_free {
-            for txo_hash in opt_block
-                .as_ref()
-                .map(|b| b.inputs.iter())
-                .unwrap_or_else(|| vertex.block.as_ref().unwrap().inputs.iter())
-            {
+            for txo_hash in &block.inputs {
                 self.undecided_txos
                     .get_mut(txo_hash)
                     .expect("Attempted to spend non-existent UTXO")
@@ -455,31 +447,25 @@ impl Dag {
         };
 
         // Add its outputs to the list of undecided TXOs
-        for &txo in opt_block
-            .as_ref()
-            .map(|b| b.outputs.iter())
-            .unwrap_or_else(|| vertex.block.as_ref().unwrap().outputs.iter())
-        {
-            let txo_hash = txo.hash();
-            if self
-                .undecided_txos
-                .insert(txo_hash, DagTxo::new(txo))
-                .is_some()
-            {
-                error!("Registered duplicate txo: {txo_hash}");
-            }
+        for &txo in &block.outputs {
+            assert!(
+                self.undecided_txos
+                    .insert(txo.hash(), DagTxo::new(txo))
+                    .is_none(),
+                "Registered duplicate txo: {}",
+                txo.hash()
+            );
         }
 
         // TODO: decision to broadcast should be done outside of the DAG. Maybe DAG shouldn't emit
         // any p2p requests?
         // Broadcast to peers if this vertex didn't already come from our peers
         if broadcast {
-            let mut bcast = vertex.as_ref().clone();
-            if !full_broadcast {
-                bcast = bcast.slim().1;
-            }
             self.p2p_action_ch
-                .send(p2p::Action::Broadcast(p2p::BroadcastData::Vertex(bcast)))?;
+                .send(p2p::Action::Broadcast(p2p::BroadcastData::Vertex(
+                    // TODO: this really wont work
+                    Vertex::default(),
+                )))?;
         }
 
         // Query peers for their preference, according to the avalanche consensus protocol
@@ -492,8 +478,7 @@ impl Dag {
         }?;
 
         // Add vertex as known child to each of its parents
-        let dyn_vertex = rw_vertex.read().map_err(|_| Error::VertexWriteLock)?;
-        for parent in dyn_vertex.undecided_parents.values() {
+        for parent in undecided.undecided_parents.values() {
             parent
                 .write()
                 .map_err(|_| Error::VertexWriteLock)?
@@ -502,11 +487,11 @@ impl Dag {
         }
 
         // Remove this vertex from the waitlist
-        self.waitlist.remove_inserted(vertex.clone())?;
+        self.waitlist.remove_inserted(&undecided.inner)?;
 
-        if dyn_vertex.strongly_preferred {
+        if undecided.strongly_preferred {
             // Remove its parents from the frontier, as they are no longer the youngest
-            for parent in dyn_vertex.inner.parents() {
+            for parent in undecided.inner.parents() {
                 self.frontier.remove(parent);
             }
 
@@ -518,21 +503,26 @@ impl Dag {
                 .events_ch
                 .send(Event::NewFrontier(self.frontier.keys().cloned().collect()));
         }
-        Ok(dyn_vertex.strongly_preferred)
+        Ok(undecided.strongly_preferred)
     }
 
-    /// Create a new vertex representing a block's position in the DAG. If this vertex has no
-    /// existing preferred conflicts, and its parents are strongly preferred, then it too will be
-    /// marked as strongly preferred.
-    fn build_undecided_vertex(
+    /// Check that the given vertex can be inserted without violating any rules, and return an
+    /// [`UndecidedVertex`] which can be inserted into the [`DAG`]. Additionally returns a boolean
+    /// value indicating whether or not the vertex is conflict free.
+    fn create_insertable_vertex(
         &mut self,
-        vertex: Arc<Vertex>,
-        conflict_free: bool,
-    ) -> Result<UndecidedVertex> {
-        // Load undecided parents and blocks
+        mut vertex: Vertex,
+    ) -> Result<(Arc<TracingRwLock<UndecidedVertex>>, bool)> {
+        // Check if we already have this vertex
+        if self.get_vertex(&vertex.hash()).is_ok() {
+            return Err(Error::DuplicateInsertion);
+        }
+
+        // Gather parents
         let mut height = 0;
         let mut missing_parents = Vec::new();
         let mut undecided_parents = HashMap::new();
+        let mut decided_parents = HashMap::new();
         for &parent_hash in vertex.parents() {
             if let Some(parent) = self.undecided_vertices.cache_get(&parent_hash) {
                 undecided_parents.insert(parent_hash, parent.clone());
@@ -547,72 +537,96 @@ impl Dag {
             {
                 return Err(Error::Waiting);
             } else if let Some(parent) = self.database.read_vertex(&parent_hash)? {
-                // TODO: uncomment this
-                //height = cmp::max(height, parent.height);
+                decided_parents.insert(parent_hash, parent);
             } else {
                 missing_parents.push(parent_hash);
             }
         }
-        let block = match vertex
-            .block
-            .as_ref()
-            .or(self.undecided_blocks.cache_get(&vertex.bhash))
-        {
-            Some(b) => Ok(b),
-            None => {
-                if let Some(vhash) = self.database.lookup_vertex_for_block(&vertex.bhash)? {
-                    Err(Error::AlreadyDecidedBlock(vhash))
-                } else {
-                    Err(Error::MissingData(
-                        missing_parents.clone(),
-                        Some(vertex.bhash),
-                    ))
-                }
-            }
-        }?
-        .clone();
-        if !missing_parents.is_empty() {
-            return Err(Error::MissingData(missing_parents, None));
+
+        // Fill the vertex block if we can
+        if vertex.block.is_none() {
+            vertex.block = self.undecided_blocks.cache_get(&vertex.bhash).cloned();
         }
 
-        // Determine height of this vertex and whether or not it is strongly preferred.
-        // Strongly preferred if no conflicts and all undecided parents are also strongly preferred.
+        // Check for missing data
+        if !missing_parents.is_empty() || vertex.block.is_none() {
+            return Err(Error::MissingData(
+                missing_parents,
+                match vertex.block {
+                    Some(_) => None,
+                    None => Some(vertex.bhash),
+                },
+            ));
+        }
+
+        // Gather info from parent blocks to check transition rules
+        undecided_parents
+            .values()
+            .map(|locked| {
+                locked
+                    .read()
+                    .map_err(|_| Error::VertexReadLock)
+                    .map(|v| v.inner.bhash)
+            })
+            .chain(decided_parents.values().map(|v| Ok(v.bhash)))
+            .map(|bhash_res| bhash_res.map(|bhash| self.get_block(&bhash)).flatten())
+            .try_for_each(|b_res| {
+                b_res
+                    .map(|parent_block| {
+                        // Check that block is a legal extension of the given parent
+                        vertex
+                            .block
+                            .as_ref()
+                            .unwrap()
+                            .extends_parent(&parent_block)
+                            .map_err(Error::from)
+                    })
+                    .flatten()
+            })?;
+
+        // Check if the vertex is conflict free
+        let conflict_free = self.check_conflicts(&vertex)?;
+
+        // TODO: check vertex height
+        // TODO: Check ledger rules
+
+        // Determine if this vertex is strongly preferred
         let strongly_preferred = undecided_parents
             .values()
             .map(|p| p.read().map_err(|_| Error::VertexReadLock))
             .try_fold(conflict_free, |all_pref, vertex| {
                 vertex.map(|v| (all_pref && v.strongly_preferred))
             })?;
-        let inner = match vertex.block {
-            Some(_) => vertex,
-            None => Arc::new(vertex.deref().clone().with_block(block)),
-        };
-        Ok(UndecidedVertex {
-            inner,
-            height,
-            undecided_parents,
-            known_children: HashMap::new(),
-            strongly_preferred,
-            chit: 0,
-            confidence: 0,
-        })
+
+        // Build an [`UndecidedVertex`] which can be inserted into the DAG
+        Ok((
+            Arc::new(TracingRwLock::new(UndecidedVertex {
+                inner: Arc::new(vertex),
+                height,
+                undecided_parents,
+                known_children: HashMap::new(),
+                strongly_preferred,
+                chit: 0,
+                confidence: 0,
+            })),
+            conflict_free,
+        ))
     }
 
-    /// Check that the vertex uniquely spends UTXOs. Returns true if no conflicts. Also reurns a
-    /// reference to the block, if the block is not included in the Vertex.
-    fn check_conflicts(&mut self, vertex: Arc<Vertex>) -> Result<(bool, Option<Arc<Block>>)> {
+    /// Check that the vertex does not conflict with other vertices. Returns true if no conflicts.
+    /// Also reurns a reference to the block, to avoid additional lookups elsewhere.
+    fn check_conflicts(&mut self, vertex: &Vertex) -> Result<bool> {
         // Make sure transaction inputs are in the txo set. If they are not in the txo set at all,
         // then reject this vertex entirely. If they are in the txo set, but spent by another
         // vertex, it is still possible to insert this vertex, but it will be in conflict and
         // according to Avalanche consensus rules, it will not be accepted unless its confidence
         // exceeds that of its conflicts.
 
-        let bhash = vertex.bhash;
         let block = vertex
             .block
             .as_ref()
             .cloned()
-            .unwrap_or(self.get_block(&bhash)?);
+            .expect("cannot check conflicts for slim vertex");
 
         // Make sure each UTXO is in the UTXO set
         if block
@@ -631,7 +645,7 @@ impl Dag {
                     .preferred_spender
                     .is_none()
             });
-            Ok((conflict_free, Some(block)))
+            Ok(conflict_free)
         }
     }
 

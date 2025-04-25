@@ -96,7 +96,7 @@ fn try_insert_with_bad_block() {
     let mut runner = DagTestRunner::new();
 
     // Build the test vertices, with one bad block given
-    let bad_vertex = Arc::new(Vertex::new_full(Arc::new(Block {
+    let bad_vertex = Vertex::new_full(Arc::new(Block {
         version: 0,
         difficulty: params::MIN_DIFFICULTY,
         miner: PeerId::from_multihash(Multihash::default()).unwrap(),
@@ -110,7 +110,7 @@ fn try_insert_with_bad_block() {
             .time
             + Duration::seconds(5),
         nonce: 13800265558186205210,
-    })));
+    }));
 
     // Add all test vertices, including the bad vertex
     runner.add_test_vertex("bad", bad_vertex);
@@ -157,23 +157,23 @@ fn try_insert_already_decided() {
     runner.build_test_vertices([("v1_0", 14337490726892089899, vec!["genesis"])]);
 
     // Build two vertices for the same block
-    let orig_vertex = runner.vertices.get("v1_0").unwrap().clone();
+    let orig_vertex = Arc::new(runner.vertices.get("v1_0").unwrap().clone());
     let block = orig_vertex.block.clone().unwrap();
     let alt_vertex = Arc::new(Vertex::new_slim(block.hash(), vec![VertexHash::default()]));
 
     // Should succeed to insert the first time
     assert_matches!(runner.try_insert_vertices(["v1_0"]), Ok(()));
 
-    // Force a decision for the given vertex, causing it to become decided
-    runner.dag.force_decision(orig_vertex.hash(), true).unwrap();
-
     // Should return Error::DuplicateInsertion when reinserting the same vertex
     assert_matches!(
         runner
             .dag
-            .try_insert_vertices(once(orig_vertex), None, false),
+            .try_insert_vertices(once(orig_vertex.clone()), None, false),
         Err(avalanche::Error::DuplicateInsertion)
     );
+
+    // Force a decision for the given vertex, causing it to become decided
+    runner.dag.force_decision(orig_vertex.hash(), true).unwrap();
 
     // Should return Error::AlreadyDecidedBlock() if inserting a new vertex for the same block
     assert_matches!(
@@ -184,11 +184,44 @@ fn try_insert_already_decided() {
     );
 }
 
-// TODO: test scenarios with future blocks
-// TODO: test scenarios with non-monotonic time
+#[test]
+fn try_insert_decreasing_time() {
+    let mut runner = DagTestRunner::new();
+    runner.build_test_vertices([
+        ("v1_0", 14337490726892089899, vec!["genesis"]),
+        ("v1_1", 16012302412638312007, vec!["genesis"]),
+        ("v2_0", 06720339079374117241, vec!["v1_0"]),
+        ("v3_0", 12563117955961592819, vec!["v2_0"]),
+        ("v3_1", 09660934870233600764, vec!["v2_0", "v1_1"]),
+        ("v3_2", 14749812702066963736, vec!["v1_0", "v1_1"]),
+        ("v4_0", 14143367919018540815, vec!["v3_0", "v3_1", "v3_2"]),
+    ]);
+    let parent = runner.vertices.get("v4_0").unwrap();
+    let mut block = runner.build_test_block(once(Arc::new(parent.clone())), 2299226933476400337);
+    block.time = parent.block.as_ref().unwrap().time - Duration::seconds(1);
+    assert!(
+        !runner.mine_test_block(&mut block),
+        "block nonce should have been {}",
+        block.nonce
+    );
+    // Insert every test vertex. Should succeed.
+    assert_matches!(
+        runner.try_insert_vertices(["v1_0", "v1_1", "v2_0", "v3_0", "v3_1", "v3_2", "v4_0"]),
+        Ok(())
+    );
+    runner.expect_frontier(["v4_0"]);
+
+    // Attempt to insert the block with decreasing time. Should fail.
+    assert_matches!(
+        runner.dag.try_insert_block(Arc::new(block.clone()), false),
+        Err(avalanche::Error::Block(block::Error::DecreasingTime))
+    );
+}
+
 // TODO: test conflicts & preference
 // TODO: test with too-deep parent
 // TODO: test block finalization
+// TODO: test with slim vertices
 
 // #[test]
 // fn clear_pending_query() {

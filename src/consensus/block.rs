@@ -24,10 +24,8 @@ pub enum Error {
     BadVersion(u32),
     #[error(transparent)]
     Chrono(#[from] chrono::ParseError),
-    #[error(transparent)]
-    ProstDecode(#[from] prost::DecodeError),
-    #[error(transparent)]
-    ProstEncode(#[from] prost::EncodeError),
+    #[error("time is older than parent time")]
+    DecreasingTime,
     #[error("block has timestamp in the future")]
     FutureTime,
     #[error(transparent)]
@@ -42,6 +40,10 @@ pub enum Error {
     MissingParents,
     #[error(transparent)]
     Multihash(#[from] libp2p::multihash::Error),
+    #[error(transparent)]
+    ProstDecode(#[from] prost::DecodeError),
+    #[error(transparent)]
+    ProstEncode(#[from] prost::EncodeError),
     #[error(transparent)]
     RandomX(#[from] randomx::Error),
     #[error("some tx inputs are repeated")]
@@ -160,6 +162,19 @@ impl Block {
         } else {
             Ok(())
         }
+    }
+
+    /// Check if the block is a legal extension of the specified parent
+    // TODO: test this
+    pub fn extends_parent(&self, parent: &Block) -> Result<()> {
+        if self.time <= parent.time {
+            Err(Error::DecreasingTime)
+        } else {
+            Ok(())
+        }
+        // TODO: check InvalidDifficulty
+        // TODO: check block height
+        // TODO: check other block constraints
     }
 }
 

@@ -1,3 +1,4 @@
+use super::Vertex;
 use crate::{wire::WireFormat, BlockHash, VertexHash};
 use lru::LruCache;
 use std::{
@@ -8,8 +9,6 @@ use std::{
     sync::Arc,
 };
 use tracing::warn;
-
-use super::Vertex;
 
 /// Error type for avalanche errors
 #[derive(thiserror::Error, Debug)]
@@ -47,7 +46,7 @@ impl WaitList {
         missing_block: Option<BlockHash>,
     ) -> Result<()> {
         let vhash = vertex.hash();
-        // Add vertex hash to the list of waiting vertexes
+        // Add vertex hash to the list of waiting vertices
         if !self.manifest.insert(vhash) {
             // Already in the list
             Ok(())
@@ -108,9 +107,9 @@ impl WaitList {
     }
 
     /// Remove a vertex from the waitlist which was inserted into the DAG.
-    pub fn remove_inserted(&mut self, vertex: Arc<Vertex>) -> Result<()> {
+    pub fn remove_inserted(&mut self, vertex: &Vertex) -> Result<()> {
         let vhash = vertex.hash();
-        // Remove from the contents
+        // Remove from the manifest
         self.manifest.remove(&vhash);
         // Remove from each of parents' queues, if any
         for parent in vertex.parents() {
