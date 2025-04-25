@@ -1,0 +1,153 @@
+use chrono::{DateTime, Duration};
+use cordelia::{
+    avalanche, consensus::Dag, params, randomx::RandomXVMInstance, Block, GenesisConfig, Vertex,
+    WireFormat,
+};
+use libp2p::{multihash::Multihash, PeerId};
+use rand::{thread_rng, Rng};
+use randomx_rs::RandomXFlag;
+use std::{
+    collections::{HashMap, HashSet},
+    iter::once,
+    sync::Arc,
+};
+use tempfile::TempDir;
+use tokio::sync::{broadcast, mpsc};
+
+pub struct DagTestRunner<'a> {
+    pub dag: Dag,
+    pub randomx_vm: RandomXVMInstance,
+    pub vertices: HashMap<&'a str, Arc<Vertex>>,
+}
+
+impl<'a> DagTestRunner<'a> {
+    /// Initialize the test runner
+    pub fn new() -> DagTestRunner<'a> {
+        let db_path = TempDir::new()
+            .unwrap()
+            .path()
+            .join("test_outputs/consensus_db");
+        let config = avalanche::Config {
+            data_dir: db_path,
+            genesis: GenesisConfig {
+                difficulty: params::MIN_DIFFICULTY,
+                time: DateTime::parse_from_rfc2822("Wed, 18 Feb 2015 23:16:09 GMT")
+                    .unwrap()
+                    .into(),
+            }
+            .to_vertex(),
+            waitlist_cap: 10.try_into().unwrap(),
+        };
+        let randomx_vm =
+            RandomXVMInstance::new(b"test-key", RandomXFlag::get_recommended_flags()).unwrap();
+        let (action_sender, _action_receiver) = mpsc::unbounded_channel();
+        let (event_sender, _) = broadcast::channel(10);
+
+        // Construct a dag instance
+        let mut dag = Dag::new(config, randomx_vm.clone(), action_sender, event_sender);
+
+        // Initialize vertex list with the genesis vertex
+        let vertices = once(("genesis", dag.get_vertex(&dag.genesis_hash()).unwrap().0)).collect();
+
+        DagTestRunner {
+            dag,
+            randomx_vm,
+            vertices,
+        }
+    }
+
+    /// Finds a nonce to satisfy the POW. Returns false if the block already had a valid nonce.
+    pub fn mine_test_block(&self, block: &mut Block) -> bool {
+        if block.verify_pow(&self.randomx_vm).is_ok() {
+            false
+        } else {
+            block.nonce = thread_rng().gen();
+            while block.verify_pow(&self.randomx_vm).is_err() {
+                block.nonce += 1;
+            }
+            true
+        }
+    }
+
+    /// Builds a block descending from the given parents
+    pub fn build_test_block(&self, parents: Vec<Arc<Vertex>>, nonce: u64) -> Block {
+        Block {
+            version: 0,
+            difficulty: params::MIN_DIFFICULTY,
+            miner: PeerId::from_multihash(Multihash::default()).unwrap(),
+            parents: parents.iter().map(|v| v.hash()).collect(),
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            time: parents
+                .iter()
+                .map(|v| v.block.as_ref().unwrap().time)
+                .max()
+                .unwrap()
+                + Duration::seconds(1),
+            nonce,
+        }
+    }
+
+    /// Add a vertex to the list of test vertices
+    pub fn add_test_vertex(&mut self, id: &'a str, vertex: Arc<Vertex>) {
+        self.vertices.insert(id, vertex);
+    }
+
+    /// Builds a list of vertices to create a DAG scenario.
+    pub fn build_test_vertices<E>(&mut self, edges: E)
+    where
+        E: IntoIterator<Item = (&'a str, u64, Vec<&'a str>)>,
+    {
+        let mut bad_nonce = false;
+
+        // Initialize a list of vertices with the frontier vertices
+        for (vid, nonce, parents) in edges {
+            let mut block = self.build_test_block(
+                parents
+                    .iter()
+                    .map(|vid| {
+                        self.vertices
+                            .get(vid)
+                            .expect(format!("didn't find {vid} in vertices").as_str())
+                            .clone()
+                    })
+                    .collect(),
+                nonce,
+            );
+            let incorrect_start_nonce = self.mine_test_block(&mut block);
+            if incorrect_start_nonce {
+                println!("Block for {vid} should have had nonce {}", block.nonce);
+            }
+            bad_nonce |= incorrect_start_nonce;
+            self.add_test_vertex(vid, Arc::new(Vertex::new_full(Arc::new(block))));
+        }
+        assert_eq!(bad_nonce, false, "Generated blocks have incorrect nonces");
+    }
+
+    /// Insert the specified vertices and return the result
+    pub fn try_insert_vertices<I>(&mut self, ids: I) -> Result<(), avalanche::Error>
+    where
+        I: IntoIterator<Item = &'a str>,
+    {
+        self.dag.try_insert_vertices(
+            ids.into_iter()
+                .map(|vid| self.vertices.get(vid).expect("id does not exist").clone()),
+            None,
+            false,
+        )
+    }
+
+    /// Check that the frontier contains EXACTLY the specified vertices, in any order
+    pub fn expect_frontier<I>(&self, ids: I)
+    where
+        I: IntoIterator<Item = &'a str>,
+    {
+        let frontier: HashSet<_> = self.dag.get_frontier_hashes().into_iter().collect();
+        assert_eq!(
+            frontier.len(),
+            ids.into_iter()
+                .inspect(|vid| assert!(frontier.contains(&self.vertices.get(vid).unwrap().hash())))
+                .count()
+        );
+    }
+}

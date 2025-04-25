@@ -256,7 +256,9 @@ impl Dag {
             // Any vertices from the previous loop that need to be retried, should be added to the
             // insertion list now.
             for retry in to_retry.drain(..) {
-                insert_list.insert(retry.hash(), retry);
+                if !successful.contains(&retry.hash()) {
+                    insert_list.insert(retry.hash(), retry);
+                }
             }
 
             // Attempt to insert each vertex in the insertion list. If successful, add its
@@ -310,6 +312,7 @@ impl Dag {
     }
 
     /// Look up a vertex from the DAG, and indicate if this vertex is strongly preferred.
+    // TODO: should return Result<Option<_>>
     pub fn get_vertex(&mut self, vhash: &VertexHash) -> Result<(Arc<Vertex>, bool)> {
         match self.undecided_vertices.cache_get(vhash) {
             Some(rw_vertex) => {
@@ -899,6 +902,15 @@ impl Dag {
             }
         }
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn write_vertex(&mut self, vertex: Arc<Vertex>) -> Result<()> {
+        Ok(self
+            .database
+            .write_vertex(None, 0, vertex)
+            .unwrap()
+            .commit()?)
     }
 }
 
