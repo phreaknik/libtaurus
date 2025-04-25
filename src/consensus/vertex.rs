@@ -56,7 +56,7 @@ pub struct Vertex {
     pub bhash: BlockHash,
 
     /// Adaptively reselected parents, if any
-    pub parents: Option<Vec<VertexHash>>,
+    pub parents: Vec<VertexHash>,
 
     /// Optional full block
     pub block: Option<Arc<Block>>,
@@ -70,7 +70,7 @@ impl Vertex {
         Vertex {
             version: VERSION,
             bhash: block.hash(),
-            parents: None,
+            parents: block.parents.clone(),
             block: Some(block),
         }
     }
@@ -80,7 +80,7 @@ impl Vertex {
         Vertex {
             version: VERSION,
             bhash,
-            parents: Some(parents),
+            parents,
             block: None,
         }
     }
@@ -89,46 +89,10 @@ impl Vertex {
     pub fn genesis(block: Block) -> Vertex {
         Vertex {
             version: 0,
-            parents: None,
+            parents: Vec::new(),
             bhash: block.hash(),
             block: Some(Arc::new(block)),
         }
-    }
-
-    /// Update a vertex to contain the given block
-    pub fn with_block(mut self, block: Arc<Block>) -> Vertex {
-        self.bhash = block.hash();
-        self.parents = None;
-        self.block = Some(block);
-        self
-    }
-
-    /// Set new parents for this vertex, clearing the block
-    pub fn with_new_parents(mut self, parents: Vec<VertexHash>) -> Vertex {
-        self.parents = Some(parents);
-        self.block = None;
-        self
-    }
-
-    /// Get the parents for the given vertex
-    pub fn parents(&self) -> &Vec<VertexHash> {
-        if let Some(b) = &self.block {
-            assert!(self.parents.is_none(), "full vertex must not have parents");
-            &b.parents
-        } else {
-            &self
-                .parents
-                .as_ref()
-                .expect("slim vertex must have parents!")
-        }
-    }
-
-    /// Slim this vertex by removing the block
-    pub fn slim(self) -> (Option<Arc<Block>>, Vertex) {
-        let block = self.block.clone();
-        let parents = self.parents().clone();
-        let slim = self.with_new_parents(parents);
-        (block, slim)
     }
 
     /// Make sure the vertex passes all basic sanity checks
@@ -138,14 +102,12 @@ impl Vertex {
         } else if let Some(block) = &self.block {
             if block.hash() != self.bhash {
                 Err(Error::BadBlockHash)
-            } else if self.parents.is_some() {
-                Err(Error::RedundantParents)
             } else {
                 Ok(block.sanity_checks()?)
             }
-        } else if self.parents.is_none() {
+        } else if self.parents.is_empty() {
             Err(Error::EmptyParents)
-        } else if !self.parents.as_ref().unwrap().iter().all_unique() {
+        } else if !self.parents.iter().all_unique() {
             Err(Error::RepeatedParents)
         } else {
             Ok(())
@@ -162,52 +124,76 @@ impl<'a> WireFormat<'a, proto::Vertex> for Vertex {
             self.sanity_checks()?;
         }
         // Only encode the blockhash if the full block is not present
-        let (block, block_hash) = if let Some(b) = &self.block {
-            (Some(b.to_protobuf(check)?), None)
+        let (block, block_hash, parents) = if let Some(b) = &self.block {
+            // Only encode vertex parents if they differ from the block parents
+            let parents = if self.parents.len() != b.parents.len()
+                || self.parents.iter().any(|p| !b.parents.contains(p))
+            {
+                self.parents.clone()
+            } else {
+                Vec::new()
+            };
+            (Some(b.to_protobuf(check)?), None, parents)
         } else {
-            (None, Some(self.bhash.to_protobuf(check)?))
+            (
+                None,
+                Some(self.bhash.to_protobuf(check)?),
+                self.parents.clone(),
+            )
         };
-        let parents = self
-            .parents
-            .as_ref()
-            .unwrap_or(&Vec::new())
-            .iter()
-            .map(|p| p.to_protobuf(check))
-            .try_collect()?;
         Ok(proto::Vertex {
             version: self.version,
-            parents,
+            parents: parents.iter().map(|p| p.to_protobuf(check)).try_collect()?,
             block_hash,
             block,
         })
     }
 
     fn from_protobuf(vertex: &proto::Vertex, check: bool) -> Result<Vertex> {
-        let pars: Vec<_> = vertex
-            .parents
-            .iter()
-            .map(|p| VertexHash::from_protobuf(&p, check))
-            .try_collect()?;
-        let (block, bhash) = if let Some(b) = &vertex.block {
+        let (bhash, block) = if let Some(b) = &vertex.block {
             if vertex.block_hash.is_some() {
                 Err(Error::RedundantBlockHash)
             } else {
                 let block = Block::from_protobuf(b, check)?;
-                let bhash = block.hash();
-                Ok((Some(Arc::new(block)), bhash))
+                Ok((block.hash(), Some(Arc::new(block))))
             }
         } else {
             Ok((
-                None,
                 BlockHash::from_protobuf(
                     &vertex.block_hash.as_ref().expect("missing block_hash"),
                     check,
                 )?,
+                None,
             ))
         }?;
+        // Get parents from block, if not explicitely provided in vertex
+        let parents = if !vertex.parents.is_empty() {
+            let parents: Vec<_> = vertex
+                .parents
+                .iter()
+                .map(|p| VertexHash::from_protobuf(&p, check))
+                .try_collect()?;
+            // Vertex parents may only be supplid if they differ from block parents
+            if let Some(b) = &block {
+                if parents.len() == b.parents.len()
+                    && parents.iter().all(|p| b.parents.iter().contains(p))
+                {
+                    return Err(Error::RedundantParents);
+                }
+            }
+            parents
+        } else if let Some(b) = &block {
+            b.parents.clone()
+        } else {
+            Vec::new()
+        };
+        // Parents must be provided
+        if parents.is_empty() {
+            return Err(Error::EmptyParents);
+        }
         let vertex = Vertex {
             version: vertex.version,
-            parents: if pars.is_empty() { None } else { Some(pars) },
+            parents,
             block,
             bhash,
         };
@@ -221,9 +207,9 @@ impl<'a> WireFormat<'a, proto::Vertex> for Vertex {
 
 impl PartialOrd for Vertex {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        if self.parents().contains(&other.hash()) {
+        if self.parents.contains(&other.hash()) {
             Some(std::cmp::Ordering::Greater)
-        } else if other.parents().contains(&self.hash()) {
+        } else if other.parents.contains(&self.hash()) {
             Some(std::cmp::Ordering::Less)
         } else {
             None
@@ -252,7 +238,7 @@ impl From<&Vertex> for PrettyVertex {
         PrettyVertex {
             version: vertex.version,
             bhash: vertex.bhash.to_hex(),
-            parents: vertex.parents().iter().map(|txo| txo.to_hex()).collect(),
+            parents: vertex.parents.iter().map(|p| p.to_hex()).collect(),
         }
     }
 }

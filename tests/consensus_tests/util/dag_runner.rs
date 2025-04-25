@@ -19,49 +19,31 @@ pub struct DagTestRunner<'a> {
     pub dag: Dag,
     pub randomx_vm: RandomXVMInstance,
     pub vertices: HashMap<&'a str, Vertex>,
+
+    // Should vertices be inserted as slim vertices?
+    slim_vertex_insertion_mode: bool,
 }
 
 impl<'a> DagTestRunner<'a> {
-    /// Initialize the test runner
-    pub fn new() -> DagTestRunner<'a> {
-        let db_path = TempDir::new()
-            .unwrap()
-            .path()
-            .join("test_outputs/consensus_db");
-        let config = avalanche::Config {
-            data_dir: db_path,
-            genesis: GenesisConfig {
-                difficulty: params::MIN_DIFFICULTY,
-                time: DateTime::parse_from_rfc2822("Wed, 18 Feb 2015 23:16:09 GMT")
-                    .unwrap()
-                    .into(),
-            }
-            .to_vertex(),
-            waitlist_cap: 10.try_into().unwrap(),
-        };
-        let randomx_vm =
-            RandomXVMInstance::new(b"test-key", RandomXFlag::get_recommended_flags()).unwrap();
-        let (action_sender, _action_receiver) = mpsc::unbounded_channel();
-        let (event_sender, _) = broadcast::channel(10);
-
-        // Construct a dag instance
-        let mut dag = Dag::new(config, randomx_vm.clone(), action_sender, event_sender);
-
-        // Initialize vertex list with the genesis vertex
-        let vertices = once((
-            "genesis",
-            dag.get_vertex(&dag.genesis_hash())
-                .unwrap()
-                .0
-                .deref()
-                .clone(),
-        ))
-        .collect();
-
+    /// Initialize the test runner for full-vertex insertion mode
+    pub fn new_full_vertex_runner() -> DagTestRunner<'a> {
+        let (dag, randomx_vm, vertices) = test_init();
         DagTestRunner {
             dag,
             randomx_vm,
             vertices,
+            slim_vertex_insertion_mode: false,
+        }
+    }
+
+    /// Initialize the test runner for slim-vertex insertion mode
+    pub fn new_slim_vertex_runner() -> DagTestRunner<'a> {
+        let (dag, randomx_vm, vertices) = test_init();
+        DagTestRunner {
+            dag,
+            randomx_vm,
+            vertices,
+            slim_vertex_insertion_mode: true,
         }
     }
 
@@ -139,25 +121,77 @@ impl<'a> DagTestRunner<'a> {
     where
         I: IntoIterator<Item = &'a str>,
     {
-        self.dag.try_insert_vertices(
-            ids.into_iter()
-                .map(|vid| Arc::new(self.vertices.get(vid).expect("id does not exist").clone())),
-            None,
-            false,
-        )
+        let mut to_insert = Vec::new();
+        for vertex in ids.into_iter().map(|vid| {
+            self.vertices
+                .get(vid)
+                .expect("id does not exist: {vid}")
+                .clone()
+        }) {
+            // If inserting slim vertices, need to register blocks first
+            if self.slim_vertex_insertion_mode {
+                let block = vertex.block.clone().unwrap();
+                let vertex = Vertex::new_slim(block.hash(), vertex.parents);
+                self.dag.register_block(block)?;
+                to_insert.push(Arc::new(vertex));
+            } else {
+                to_insert.push(Arc::new(vertex));
+            }
+        }
+        self.dag.try_insert_vertices(to_insert, None, false)
     }
 
     /// Check that the frontier contains EXACTLY the specified vertices, in any order
-    pub fn expect_frontier<I>(&self, ids: I)
+    pub fn frontier_matches<I>(&self, ids: I) -> bool
     where
         I: IntoIterator<Item = &'a str>,
     {
         let frontier: HashSet<_> = self.dag.get_frontier_hashes().into_iter().collect();
-        assert_eq!(
-            frontier.len(),
-            ids.into_iter()
-                .inspect(|vid| assert!(frontier.contains(&self.vertices.get(vid).unwrap().hash())))
-                .count()
-        );
+        let mut count = 0;
+        for vid in ids {
+            count += 1;
+            if !frontier.contains(&self.vertices.get(vid).unwrap().hash()) {
+                return false;
+            }
+        }
+        count == frontier.len()
     }
+}
+
+fn test_init<'a>() -> (Dag, RandomXVMInstance, HashMap<&'a str, Vertex>) {
+    let db_path = TempDir::new()
+        .unwrap()
+        .path()
+        .join("test_outputs/consensus_db");
+    let config = avalanche::Config {
+        data_dir: db_path,
+        genesis: GenesisConfig {
+            difficulty: params::MIN_DIFFICULTY,
+            time: DateTime::parse_from_rfc2822("Wed, 18 Feb 2015 23:16:09 GMT")
+                .unwrap()
+                .into(),
+        }
+        .to_vertex(),
+        waitlist_cap: 10.try_into().unwrap(),
+    };
+    let randomx_vm =
+        RandomXVMInstance::new(b"test-key", RandomXFlag::get_recommended_flags()).unwrap();
+    let (action_sender, _action_receiver) = mpsc::unbounded_channel();
+    let (event_sender, _) = broadcast::channel(10);
+
+    // Construct a dag instance
+    let mut dag = Dag::new(config, randomx_vm.clone(), action_sender, event_sender);
+
+    // Initialize vertex list with the genesis vertex
+    let vertices = once((
+        "genesis",
+        dag.get_vertex(&dag.genesis_hash())
+            .unwrap()
+            .0
+            .deref()
+            .clone(),
+    ))
+    .collect();
+
+    (dag, randomx_vm, vertices)
 }

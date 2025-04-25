@@ -173,11 +173,6 @@ impl Dag {
         let rw_vertex = Arc::new(TracingRwLock::new(UndecidedVertex::genesis(
             config.genesis.clone(),
         )));
-        dag.database
-            .write_vertex(None, 0, config.genesis)
-            .unwrap()
-            .commit()
-            .unwrap();
         dag.frontier.insert(genesis_hash, rw_vertex);
         // Return the dag
         dag
@@ -299,19 +294,24 @@ impl Dag {
             Some(block) => Ok(block.clone()),
             None => {
                 let vhash = self
-                    .database
                     .lookup_vertex_for_block(bhash)?
                     .ok_or(Error::NotFound)?;
-                Ok(self
-                    .database
-                    .read_vertex(&vhash)?
-                    .ok_or(Error::NotFound)?
-                    .block
-                    .as_ref()
-                    .unwrap()
-                    .clone())
+                Ok(self.get_vertex(&vhash)?.0.block.as_ref().unwrap().clone())
             }
         }
+    }
+
+    /// Look up the vertex corresponding to a decided block in the DAG. Note, if the block has
+    /// not been decided, this function will return None, even if there exist undecided vertices
+    /// for this block.
+    pub fn lookup_vertex_for_block(&mut self, bhash: &BlockHash) -> Result<Option<VertexHash>> {
+        Ok(self.database.lookup_vertex_for_block(bhash)?.or_else(|| {
+            if bhash == &self.config.genesis.bhash {
+                Some(self.genesis_hash())
+            } else {
+                None
+            }
+        }))
     }
 
     /// Look up a vertex from the DAG, and indicate if this vertex is strongly preferred.
@@ -323,7 +323,16 @@ impl Dag {
                 Ok((vertex.inner.clone(), vertex.strongly_preferred))
             }
             None => Ok((
-                self.database.read_vertex(vhash)?.ok_or(Error::NotFound)?,
+                self.database
+                    .read_vertex(vhash)?
+                    .or_else(|| {
+                        if vhash == &self.genesis_hash() {
+                            Some(self.config.genesis.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .ok_or(Error::NotFound)?,
                 true,
             )),
         }
@@ -380,11 +389,12 @@ impl Dag {
 
     /// Register a block as available to be inserted into the DAG. Returns true if this is a new
     /// registration; i.e. the block had not been seen before.
-    fn register_block(&mut self, block: Arc<Block>) -> Result<bool> {
+    // TODO: test this function
+    pub fn register_block(&mut self, block: Arc<Block>) -> Result<bool> {
         // Check the block has sufficient proof-of-work
         block.verify_pow(&self.randomx_vm)?;
         let bhash = block.hash();
-        if let Some(vhash) = self.database.lookup_vertex_for_block(&bhash)? {
+        if let Some(vhash) = self.lookup_vertex_for_block(&bhash)? {
             Err(Error::AlreadyDecidedBlock(vhash))
         } else {
             // Add the block to the list of undecided blocks
@@ -422,7 +432,7 @@ impl Dag {
 
             // Register the block as available for insertion.
             self.register_block(block.clone())?;
-        } else if let Some(vhash) = self.database.lookup_vertex_for_block(&vertex.bhash)? {
+        } else if let Some(vhash) = self.lookup_vertex_for_block(&vertex.bhash)? {
             // Check if block has already been decided by another vertex
             return Err(Error::AlreadyDecidedBlock(vhash));
         }
@@ -491,7 +501,7 @@ impl Dag {
 
         if undecided.strongly_preferred {
             // Remove its parents from the frontier, as they are no longer the youngest
-            for parent in undecided.inner.parents() {
+            for parent in &undecided.inner.parents {
                 self.frontier.remove(parent);
             }
 
@@ -523,7 +533,8 @@ impl Dag {
         let mut missing_parents = Vec::new();
         let mut undecided_parents = HashMap::new();
         let mut decided_parents = HashMap::new();
-        for &parent_hash in vertex.parents() {
+        let mut waiting = false;
+        for &parent_hash in &vertex.parents {
             if let Some(parent) = self.undecided_vertices.cache_get(&parent_hash) {
                 undecided_parents.insert(parent_hash, parent.clone());
                 height = cmp::max(
@@ -535,9 +546,11 @@ impl Dag {
                 .contains(&parent_hash)
                 .expect("waitlist read error")
             {
-                return Err(Error::Waiting);
+                waiting = true;
             } else if let Some(parent) = self.database.read_vertex(&parent_hash)? {
                 decided_parents.insert(parent_hash, parent);
+            } else if parent_hash == self.genesis_hash() {
+                decided_parents.insert(parent_hash, self.config.genesis.clone());
             } else {
                 missing_parents.push(parent_hash);
             }
@@ -557,6 +570,11 @@ impl Dag {
                     None => Some(vertex.bhash),
                 },
             ));
+        }
+
+        // If any parent was in the waitlist, this vertex is also waiting
+        if waiting {
+            return Err(Error::Waiting);
         }
 
         // Gather info from parent blocks to check transition rules

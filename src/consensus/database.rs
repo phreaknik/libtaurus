@@ -278,7 +278,10 @@ impl<'a> BytesDecode<'a> for DbRecord {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{wire::test_wire_format, Block};
+    use crate::{
+        wire::{test_wire_decode, test_wire_encode, test_wire_format},
+        Block,
+    };
     use std::assert_matches::assert_matches;
 
     #[test]
@@ -289,15 +292,29 @@ mod test {
                 Block::default().with_parents(vec![VertexHash::default()]),
             ))),
         ));
-        let encoded = &[
+        let correct_encoding = &[
             10, 85, 8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 1, 18, 72, 34, 70, 16, 232, 7,
             26, 2, 0, 0, 34, 34, 10, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 58, 25, 49, 57, 55, 48, 45, 48, 49, 45, 48, 49,
             84, 48, 48, 58, 48, 48, 58, 48, 48, 43, 48, 48, 58, 48, 48,
         ];
-        let (encode_err, decode_err) = test_wire_format(decoded, encoded);
+        let redundant_encoding = &[
+            10, 121, 8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 1, 18, 108, 18, 34, 10, 32, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 34, 70, 16, 232, 7, 26, 2, 0, 0, 34, 34, 10, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 58, 25, 49, 57, 55, 48,
+            45, 48, 49, 45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 43, 48, 48, 58, 48, 48,
+        ];
+        let encode_err = test_wire_encode(decoded.clone(), correct_encoding);
+        let decode_err = test_wire_decode(decoded, redundant_encoding);
+        // The in-memory object is expected to have vertex.parents, even if they are redundant with
+        // vertex.block.parents, but the redundant parents should get removed when encoding and
+        // throw an error if present when decoding.
         assert_matches!(encode_err, None);
-        assert_matches!(decode_err, None);
+        assert_matches!(
+            decode_err,
+            Some(Error::Vertex(vertex::Error::RedundantParents))
+        );
     }
 
     #[test]
