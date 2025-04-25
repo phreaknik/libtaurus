@@ -115,8 +115,8 @@ fn genesis_hash() {
     assert_eq!(
         dag.genesis_hash(),
         VertexHash::with_bytes([
-            16, 1, 166, 39, 114, 210, 177, 178, 9, 167, 220, 114, 151, 176, 143, 32, 45, 160, 117,
-            104, 217, 109, 72, 76, 160, 132, 76, 120, 253, 124, 68, 208
+            239, 178, 84, 85, 32, 3, 79, 221, 101, 27, 231, 33, 138, 85, 173, 77, 7, 38, 159, 76,
+            152, 14, 210, 162, 196, 242, 167, 110, 170, 31, 115, 144
         ])
     );
 }
@@ -130,11 +130,11 @@ fn try_insert_block() {
         dag.try_insert_block(Arc::new(block.clone()), false),
         Err(avalanche::Error::Block(block::Error::InvalidPoW))
     );
-    block.nonce = 981;
+    block.nonce = 570068822920606640;
     bad_nonce |= mine_test_block("b0", &mut block, &rxvm);
     assert_matches!(dag.try_insert_block(Arc::new(block.clone()), false), Ok(()));
     block.parents.push(VertexHash::default()); // Insert missing parent
-    block.nonce = 3368;
+    block.nonce = 8730637501828490078;
     bad_nonce |= mine_test_block("b1", &mut block, &rxvm);
     assert_matches!(
         dag.try_insert_block(Arc::new(block), false),
