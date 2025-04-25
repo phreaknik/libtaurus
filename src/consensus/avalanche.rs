@@ -365,6 +365,16 @@ impl Dag {
         self.frontier.keys().copied().collect()
     }
 
+    /// Override the consensus, and force a decision for the given vertex. Operation will fail if
+    /// the vertex is not in the undecided set.
+    pub fn force_decision(&mut self, vhash: VertexHash, preferred: bool) -> Result<()> {
+        // TODO: remember "bad vertices" so they don't reapper and retry decision.
+        match self.undecided_vertices.cache_get(&vhash) {
+            Some(_) => self.finalize_vertices(vec![vhash]),
+            None => Err(Error::NotFound),
+        }
+    }
+
     /// Register a block as available to be inserted into the DAG. Returns true if this is a new
     /// registration; i.e. the block had not been seen before.
     fn register_block(&mut self, block: Arc<Block>) -> Result<bool> {
@@ -403,6 +413,8 @@ impl Dag {
         // Check if we already have this vertex
         if self.get_vertex(&vhash).is_ok() {
             return Err(Error::DuplicateInsertion);
+        } else if let Some(decided_vertex) = self.database.lookup_vertex_for_block(&vertex.bhash)? {
+            return Err(Error::AlreadyDecidedBlock(decided_vertex));
         }
 
         // If available, check proof-of-work before doing anything
@@ -643,7 +655,7 @@ impl Dag {
     }
 
     /// Recompute the confidences of given vertex and all undecided ancestors. Returns the hashes of
-    /// ancestors which can now be accepted.
+    /// ancestors for which consensus has reached a decision.
     fn recompute_confidences(
         &mut self,
         rw_vertex: Arc<TracingRwLock<UndecidedVertex>>,
@@ -873,6 +885,8 @@ impl Dag {
 
     /// Finalize the specified blocks
     fn finalize_vertices(&mut self, hashes: Vec<VertexHash>) -> Result<()> {
+        // TODO: accept generic intoIter instead of vec
+        // TODO: need to finalize negative decisions as well as positive.
         for hash in hashes {
             if let Some(rw_vertex) = self.undecided_vertices.cache_get(&hash) {
                 let vertex = rw_vertex.read().map_err(|_| Error::VertexWriteLock)?;
@@ -902,15 +916,6 @@ impl Dag {
             }
         }
         Ok(())
-    }
-
-    #[cfg(test)]
-    pub fn write_vertex(&mut self, vertex: Arc<Vertex>) -> Result<()> {
-        Ok(self
-            .database
-            .write_vertex(None, 0, vertex)
-            .unwrap()
-            .commit()?)
     }
 }
 

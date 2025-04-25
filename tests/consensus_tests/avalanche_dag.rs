@@ -1,6 +1,6 @@
 use crate::consensus_tests::util::dag_runner::DagTestRunner;
 use chrono::Duration;
-use cordelia::{avalanche, consensus::block, params, Block, Vertex, VertexHash};
+use cordelia::{avalanche, consensus::block, params, Block, Vertex, VertexHash, WireFormat};
 use libp2p::{multihash::Multihash, PeerId};
 use std::{assert_matches::assert_matches, iter::once, sync::Arc};
 
@@ -156,13 +156,26 @@ fn try_insert_already_decided() {
     let mut runner = DagTestRunner::new();
     runner.build_test_vertices([("v1_0", 14337490726892089899, vec!["genesis"])]);
 
-    // Preemptively add the block to the decided database, in a different vertex
+    // Build two vertices for the same block
     let orig_vertex = runner.vertices.get("v1_0").unwrap().clone();
     let block = orig_vertex.block.clone().unwrap();
     let alt_vertex = Arc::new(Vertex::new_slim(block.hash(), vec![VertexHash::default()]));
-    runner.dag.write_vertex(orig_vertex).unwrap();
 
-    // Should insert the full list successfully
+    // Should succeed to insert the first time
+    assert_matches!(runner.try_insert_vertices(["v1_0"]), Ok(()));
+
+    // Force a decision for the given vertex, causing it to become decided
+    runner.dag.force_decision(orig_vertex.hash(), true).unwrap();
+
+    // Should return Error::DuplicateInsertion when reinserting the same vertex
+    assert_matches!(
+        runner
+            .dag
+            .try_insert_vertices(once(orig_vertex), None, false),
+        Err(avalanche::Error::DuplicateInsertion)
+    );
+
+    // Should return Error::AlreadyDecidedBlock() if inserting a new vertex for the same block
     assert_matches!(
         runner
             .dag
@@ -172,6 +185,7 @@ fn try_insert_already_decided() {
 }
 
 // TODO: test scenarios with future blocks
+// TODO: test scenarios with non-monotonic time
 // TODO: test conflicts & preference
 // TODO: test with too-deep parent
 // TODO: test block finalization
@@ -215,3 +229,9 @@ fn try_insert_already_decided() {
 // fn build_undecided_vertex() {
 //     todo!();
 // }
+//
+// #[test]
+// fn force_decision() {
+//     todo!();
+// }
+//
