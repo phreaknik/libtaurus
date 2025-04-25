@@ -9,7 +9,9 @@ use cordelia::{
 use libp2p::{multihash::Multihash, PeerId};
 use rand::{thread_rng, Rng};
 use randomx_rs::RandomXFlag;
-use std::{assert_matches::assert_matches, collections::HashMap, fs, path::PathBuf, sync::Arc};
+use std::{
+    assert_matches::assert_matches, collections::HashMap, fs, iter::once, path::PathBuf, sync::Arc,
+};
 use tokio::sync::{broadcast, mpsc};
 
 /// Creates a new empty DAG with a fresh database in a temporary directory
@@ -76,15 +78,15 @@ fn build_test_block(parents: Vec<Arc<Vertex>>, nonce: u64) -> Block {
 /// 1) unique ID
 /// 2) start nonce to optimize mining
 /// 3) list of parent vertex IDs
-fn build_test_scenario(
+fn build_test_scenario<'a>(
     rxvm: &RandomXVMInstance,
-    frontier: Vec<(&str, Arc<Vertex>)>,
-    descriptors: Vec<(&str, u64, Vec<&str>)>,
-) -> Vec<Arc<Vertex>> {
+    frontier: Vec<(&'a str, Arc<Vertex>)>,
+    descriptors: Vec<(&'a str, u64, Vec<&str>)>,
+) -> HashMap<&'a str, Arc<Vertex>> {
     let mut bad_nonce = false;
 
     // Initialize a list of vertices with the frontier vertices
-    let mut vertices: HashMap<&str, Arc<Vertex>> = frontier.clone().into_iter().collect();
+    let mut vertices: HashMap<&'a str, Arc<Vertex>> = frontier.clone().into_iter().collect();
     for desc in descriptors {
         let mut block = build_test_block(
             desc.2
@@ -106,7 +108,7 @@ fn build_test_scenario(
     for (vid, _) in &frontier {
         vertices.remove(vid);
     }
-    vertices.into_values().collect()
+    vertices
 }
 
 #[test]
@@ -132,6 +134,9 @@ fn try_insert_block() {
     );
     block.nonce = 570068822920606640;
     bad_nonce |= mine_test_block("b0", &mut block, &rxvm);
+    // Append should succeed
+    assert_matches!(dag.try_insert_block(Arc::new(block.clone()), false), Ok(()));
+    // Appending again should still succeed, although the operation has no effect on the DAG
     assert_matches!(dag.try_insert_block(Arc::new(block.clone()), false), Ok(()));
     block.parents.push(VertexHash::default()); // Insert missing parent
     block.nonce = 8730637501828490078;
@@ -145,22 +150,78 @@ fn try_insert_block() {
 }
 
 #[test]
-fn try_insert_vertices() {
+fn try_insert_basic() {
+    // Set up a new DAG
     let (mut dag, rxvm) = setup_test_dag();
+
+    // Build the test vertices
     let named_frontier = vec![("genesis", dag.get_frontier().unwrap()[0].clone())];
     let descriptors = vec![
         ("v1_0", 14337490726892089899, vec!["genesis"]),
         ("v1_1", 16012302412638312007, vec!["genesis"]),
         ("v2_0", 06720339079374117241, vec!["v1_0"]),
-        ("v3_0", 09660934870233600764, vec!["v2_0", "v1_1"]),
+        ("v3_0", 12563117955961592819, vec!["v2_0"]),
+        ("v3_1", 09660934870233600764, vec!["v2_0", "v1_1"]),
+        ("v3_2", 14749812702066963736, vec!["v1_0", "v1_1"]),
+        ("v4_0", 14143367919018540815, vec!["v3_0", "v3_1", "v3_2"]),
     ];
-    let vertices = build_test_scenario(&rxvm, named_frontier, descriptors);
-    // TODO: test scenarios with waiting blocks
-    // TODO: test scenarios with invalid blocks
-    // TODO: test scenarios with repeated blocks
-    assert_matches!(dag.try_insert_vertices(vertices, None, false), Ok(()));
-    // TODO: test sender and broadcast decision if dag still does P2P stuff
+    let mut vertices = build_test_scenario(&rxvm, named_frontier, descriptors);
+
+    // Should insert up to the removed vertex, but return Err(Waiting) for the remaining vertices
+    assert_matches!(
+        dag.try_insert_vertices(vertices.values().cloned(), None, false),
+        Ok(())
+    );
+
+    // The frontier should now be "v4_0"
+    assert_eq!(
+        dag.get_frontier_hashes(),
+        vec![vertices.get("v4_0").unwrap().hash()]
+    );
 }
+
+#[test]
+fn try_insert_with_retries() {
+    // Set up a new DAG
+    let (mut dag, rxvm) = setup_test_dag();
+
+    // Build the test vertices
+    let named_frontier = vec![("genesis", dag.get_frontier().unwrap()[0].clone())];
+    let descriptors = vec![
+        ("v1_0", 14337490726892089899, vec!["genesis"]),
+        ("v1_1", 16012302412638312007, vec!["genesis"]),
+        ("v2_0", 06720339079374117241, vec!["v1_0"]),
+        ("v3_0", 12563117955961592819, vec!["v2_0"]),
+        ("v3_1", 09660934870233600764, vec!["v2_0", "v1_1"]),
+        ("v3_2", 14749812702066963736, vec!["v1_0", "v1_1"]),
+        ("v4_0", 14143367919018540815, vec!["v3_0", "v3_1", "v3_2"]),
+    ];
+    let mut vertices = build_test_scenario(&rxvm, named_frontier, descriptors);
+
+    // Remove a vertex from the middle
+    let removed = vertices.remove("v3_0").unwrap();
+
+    // Should insert up to the removed vertex, but return Err(Waiting) for the remaining vertices
+    assert_matches!(
+        dag.try_insert_vertices(vertices.values().cloned(), None, false),
+        Err(avalanche::Error::Waiting)
+    );
+
+    // Insert the removed vertex
+    assert_matches!(dag.try_insert_vertices(once(removed), None, false), Ok(()));
+
+    // The frontier should now be "v4_0"
+    assert_eq!(
+        dag.get_frontier_hashes(),
+        vec![vertices.get("v4_0").unwrap().hash()]
+    );
+}
+
+// TODO: test scenarios with waiting blocks
+// TODO: test scenarios with invalid blocks
+// TODO: test scenarios with repeated blocks
+// TODO: test scenarios with future blocks
+// TODO: test conflicts & preference
 
 // #[test]
 // fn clear_pending_query() {

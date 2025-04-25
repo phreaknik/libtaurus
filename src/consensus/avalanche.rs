@@ -223,34 +223,45 @@ impl Dag {
                             .get_by_block(&vertex.bhash)?
                             .unwrap_or(Vec::new()),
                     );
-                    Ok(waiting)
+                    Ok(Some(waiting))
                 }
                 Err(Error::MissingData(missing_parents, missing_block)) => {
                     self.waitlist
                         .insert(vertex, missing_parents, missing_block)?;
-                    Ok(Vec::new())
+                    Ok(None)
                 }
                 Err(e) => Err(e),
             };
 
         // Sanity check (in debug builds) each vertex before proceding. This is not necessary in
         // release, because each vertex should have been sanity checked when it came off the wire.
-        let mut insert_list: HashMap<_, _> = vertices.into_iter().map(|v| (v.hash(), v)).collect();
-        for (_, v) in &insert_list {
-            debug_assert_matches!(v.sanity_checks(), Ok(()));
-        }
+        let mut insert_list: HashMap<_, _> = vertices
+            .into_iter()
+            .inspect(|v| debug_assert_matches!(v.sanity_checks(), Ok(())))
+            .map(|v| (v.hash(), v))
+            .collect();
+        let original_list: HashSet<_> = insert_list.keys().copied().collect();
 
         // Loop until each vertex has been inserted to the dag or waitlist
+        let mut successful = HashSet::new();
         while !insert_list.is_empty() {
             let mut retries = Vec::new();
-            for (_hash, v) in insert_list.drain() {
-                retries.append(&mut insert(v)?);
+            for (vhash, v) in insert_list.drain() {
+                if let Some(mut new_retries) = insert(v)? {
+                    successful.insert(vhash);
+                    retries.append(&mut new_retries);
+                }
             }
             for retry in retries {
                 insert_list.insert(retry.hash(), retry);
             }
         }
-        Ok(())
+        if !successful.is_superset(&original_list) {
+            // Some of the original items weren't successful, and are thus waiting in the waitlist
+            Err(Error::Waiting)
+        } else {
+            Ok(())
+        }
     }
 
     /// Remove completed query from pending queries
