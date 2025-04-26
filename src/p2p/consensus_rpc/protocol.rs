@@ -5,7 +5,7 @@ use futures::prelude::*;
 use libp2p::request_response;
 use std::io;
 
-pub const PROTOCOL_NAME: &str = "/cordelia/consensus_rpc/0.1.0";
+pub const PROTOCOL_NAME: &str = "/taurus/consensus_rpc/0.1.0";
 
 #[derive(Clone, Debug, Default)]
 pub struct ConsensusRpcProtocol {

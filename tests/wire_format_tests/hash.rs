@@ -1,4 +1,4 @@
-use cordelia::hash::Hash;
+use taurus::hash::Hash;
 
 #[test]
 fn corner_cases() {

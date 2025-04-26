@@ -1,4 +1,4 @@
-use cordelia::params::*;
+use taurus::params::*;
 
 #[test]
 fn valid_quorum_size() {

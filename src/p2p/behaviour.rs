@@ -23,12 +23,12 @@ use std::{
 use strum::IntoEnumIterator;
 use tracing::{debug, error, trace, warn};
 
-pub const PROTOCOL_NAME: &[u8; 15] = b"/cordelia/0.1.0";
+pub const PROTOCOL_NAME: &[u8; 13] = b"/taurus/0.1.0";
 
 /// Kademlia query timeout in seconds
 const DEFAULT_KAD_QUERY_TIMOUT: Duration = Duration::from_secs(60);
 
-/// Aggregate behaviour for all subprotocols used by the cordelia behaviour
+/// Aggregate behaviour for all subprotocols used by the taurus behaviour
 #[derive(NetworkBehaviour)]
 pub(super) struct InnerBehaviour {
     identify: identify::Behaviour,
@@ -67,16 +67,16 @@ impl<'a> InnerBehaviour {
     }
 }
 
-/// Network behavior that implements the cordelia p2p protocol
+/// Network behavior that implements the taurus p2p protocol
 pub(super) struct Behaviour {
-    /// Sub protocols of cordelia-p2p
+    /// Sub protocols of taurus-p2p
     inner: InnerBehaviour,
     /// Peer database
     peer_db: PeerDatabase,
 }
 
 impl<'a> Behaviour {
-    /// Create a new instance of the cordelia-p2p [`Behaviour`].
+    /// Create a new instance of the taurus-p2p [`Behaviour`].
     pub fn new(config: Config, peer_db: PeerDatabase) -> crate::p2p::Result<Self> {
         let mut b = Behaviour {
             peer_db,
@@ -305,7 +305,7 @@ impl<'a> NetworkBehaviour for Behaviour {
 type SwarmAction<'a> =
     ToSwarm<<Behaviour as NetworkBehaviour>::ToSwarm, THandlerInEvent<Behaviour>>;
 
-/// Configuration for the [`cordelia::Behaviour`](Behaviour).
+/// Configuration for the [`taurus::Behaviour`](Behaviour).
 #[derive(Clone)]
 pub(super) struct Config {
     /// Keypair used for signing messages

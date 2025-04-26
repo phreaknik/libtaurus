@@ -1,5 +1,5 @@
 // TODO: implement HTTP tests
-//use cordelia::http;
+//use taurus::http;
 //use tokio::sync::mpsc;
 //
 //#[tokio::test]

@@ -1,15 +1,15 @@
 [package]
-name = "cordelia"
+name = "libtaurus"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "cordelia"
+name = "libtaurus"
 path = "src/lib.rs"
 
 [[bin]]
-name = "cordeliad"
-path = "src/app/cordeliad.rs"
+name = "taurusd"
+path = "src/app/taurusd.rs"
 
 [dependencies]
 async-std = { version = "1.12", features = ["attributes"] }

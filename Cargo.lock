@@ -683,43 +683,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f7144d30dcf0fafbce74250a3963025d8d52177934239851c917d29f1df280c2"
 
 [[package]]
-name = "cordelia"
-version = "0.1.0"
-dependencies = [
- "async-std",
- "async-trait",
- "blake3",
- "cached",
- "chrono",
- "clap",
- "etcetera",
- "futures",
- "heed",
- "hex",
- "hyper",
- "itertools",
- "libp2p",
- "lru 0.11.1",
- "num",
- "prost",
- "prost-build",
- "rand",
- "serde",
- "serde_derive",
- "serde_json",
- "strum",
- "strum_macros",
- "tempfile",
- "thiserror",
- "time",
- "tokio",
- "tracing",
- "tracing-log 0.1.4",
- "tracing-mutex",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2124,6 +2087,43 @@ dependencies = [
  "tokio",
  "tracing",
  "void",
+]
+
+[[package]]
+name = "libtaurus"
+version = "0.1.0"
+dependencies = [
+ "async-std",
+ "async-trait",
+ "blake3",
+ "cached",
+ "chrono",
+ "clap",
+ "etcetera",
+ "futures",
+ "heed",
+ "hex",
+ "hyper",
+ "itertools",
+ "libp2p",
+ "lru 0.11.1",
+ "num",
+ "prost",
+ "prost-build",
+ "rand",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "strum",
+ "strum_macros",
+ "tempfile",
+ "thiserror",
+ "time",
+ "tokio",
+ "tracing",
+ "tracing-log 0.1.4",
+ "tracing-mutex",
+ "tracing-subscriber",
 ]
 
 [[package]]

@@ -30,7 +30,7 @@ const P2P_EVENT_CHAN_CAPACITY: usize = 32;
 /// Path to the peer database, from within the peer data directory
 const DATABASE_DIR: &str = "peer_db/";
 
-/// Error type for cordelia-p2p errors
+/// Error type for taurus-p2p errors
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error(transparent)]
@@ -63,7 +63,7 @@ pub enum Error {
     Wire(#[from] crate::wire::Error),
 }
 
-/// Result type for cordelia-p2p
+/// Result type for taurus-p2p
 type Result<T> = result::Result<T, Error>;
 
 /// Event produced by [`Behaviour`].
@@ -83,7 +83,7 @@ pub enum Action {
     AvalancheResponse(InboundRequestId, consensus_rpc::Response),
 }
 
-/// Configuration details for [`cordelia-p2p`].
+/// Configuration details for [`taurus-p2p`].
 #[derive(Clone)]
 pub struct Config {
     /// Path to the p2p data directory

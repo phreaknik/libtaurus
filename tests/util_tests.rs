@@ -1,4 +1,4 @@
-use cordelia::util::human_readable;
+use taurus::util::human_readable;
 
 /// Test the human_readable() utility function
 #[test]

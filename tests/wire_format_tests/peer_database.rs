@@ -1,4 +1,4 @@
-use cordelia::{p2p::PeerInfo, wire::test_wire_format};
+use taurus::{p2p::PeerInfo, wire::test_wire_format};
 use libp2p::multiaddr::Multiaddr;
 use std::assert_matches::assert_matches;
 

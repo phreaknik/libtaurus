@@ -1,12 +1,12 @@
 use chrono::DateTime;
 use clap::{arg, command, ArgMatches, Command};
-pub use cordelia::{
+use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
+use libp2p::identity::Keypair;
+pub use libtaurus::{
     consensus::{self, GenesisConfig, Vertex, VertexHash},
     hash::Hash,
     http, p2p, params,
 };
-use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
-use libp2p::identity::Keypair;
 use std::{fs, path::PathBuf};
 use time::macros::format_description;
 use tokio::select;
@@ -26,7 +26,7 @@ struct Config {
     pub http: http::Config,
 }
 
-/// Main cordelia CLI application
+/// Main taurus CLI application
 #[tokio::main]
 async fn main() {
     // Parse CLI arguments
@@ -36,7 +36,7 @@ async fn main() {
     }
 }
 
-/// Error type for cordelia-p2p errors
+/// Error type for taurus-p2p errors
 #[derive(thiserror::Error, Debug)]
 enum Error {
     #[error(transparent)]
@@ -110,9 +110,9 @@ fn setup_logger<'a>(args: &'a ArgMatches) {
     let logger = tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env().add_directive(
             match args.get_count("verbosity") {
-                1 => "cordelia=debug".parse().unwrap(),
-                2 => "cordelia=trace".parse().unwrap(),
-                _ => "cordelia=info".parse().unwrap(),
+                1 => "taurus=debug".parse().unwrap(),
+                2 => "taurus=trace".parse().unwrap(),
+                _ => "taurus=info".parse().unwrap(),
             },
         ))
         .with_target(debug_verbosity);
@@ -135,7 +135,7 @@ fn parse_data_dir(args: &ArgMatches) -> PathBuf {
     let app_dirs = choose_native_strategy().expect("failed to build application directories");
     args.get_one::<String>("data_dir")
         .map(|s| PathBuf::from(s))
-        .unwrap_or(app_dirs.data_dir().join("cordelia/"))
+        .unwrap_or(app_dirs.data_dir().join("taurus/"))
 }
 
 /// Build application config from parsed CLI args
