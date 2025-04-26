@@ -4,32 +4,18 @@
 // TODO: ALTERNATE: Consider ledger using MiRitH signature algorithm: iacr 2023/1666
 // TODO: ALTERNATE: Consider ledger using MQ on My Mind signature algorithm: iacr 2023/1719
 
-pub mod avalanche;
-pub mod block;
-pub mod database;
-pub mod transaction;
 pub mod vertex;
-mod voter_pool;
-mod waitlist;
 
-use crate::params::MIN_DIFFICULTY;
-use crate::{p2p, randomx, randomx::RandomXVMInstance};
-pub use avalanche::Dag;
-pub use block::{Block, BlockHash};
+use crate::p2p;
 use chrono::{DateTime, Utc};
-use libp2p::multihash::Multihash;
 use libp2p::PeerId;
-use randomx_rs::RandomXFlag;
-use std::iter::once;
 use std::path::PathBuf;
 use std::result;
 use std::sync::Arc;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 use tokio::{select, sync::broadcast};
-use tracing::{error, info, trace, warn};
-use tracing_mutex::stdsync::TracingRwLock;
-pub use transaction::{Transaction, Txo, TxoHash};
+use tracing::{error, info, warn};
 pub use vertex::{Vertex, VertexHash};
 
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
@@ -41,41 +27,25 @@ pub const CONSENSUS_EVENT_CHAN_CAPACITY: usize = 32;
 pub enum Event {
     /// The DAG frontier has updated
     NewFrontier(Vec<VertexHash>),
-    /// If a block's vertex has parents which become non-virtuous, it will be impossible for this
-    /// block's vertex to be accepted. According to Avalanche consensus, we should dynamically
-    /// select parents to retry submitting the block.
-    StalledBlock(Arc<Block>),
+    /// If a vertex has parents which become non-virtuous, it will be impossible for this
+    /// vertex to be accepted. According to Avalanche consensus, we should dynamically
+    /// select parents to retry submitting
+    StalledVertex(Arc<Vertex>),
     /// Indicates the specified vertex has been queried, and the query is complete.
     QueryCompleted(VertexHash),
 }
 
 /// Actions that can be performed by the consensus process
 #[derive(Clone, Debug)]
-pub enum Action {
-    SubmitBlock(Block),
-}
+pub enum Action {}
 
 /// Error type for consensus errors
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[error(transparent)]
-    Avalanche(#[from] avalanche::Error),
-    #[error("illegal difficulty value")]
-    BadDifficulty(u64),
-    #[error(transparent)]
-    Block(#[from] block::Error),
-    #[error("error acquiring write lock on Avalanche DAG")]
-    DagWriteLock,
     #[error("consensus event channel error")]
     EventsOutCh(#[from] tokio::sync::broadcast::error::SendError<Event>),
-    #[error(transparent)]
-    Heed(#[from] heed::Error),
-    #[error("new block channel error")]
-    NewBlockCh(#[from] tokio::sync::mpsc::error::SendError<Block>),
     #[error("p2p action channel error")]
     P2pActionCh(#[from] tokio::sync::mpsc::error::SendError<p2p::Action>),
-    #[error(transparent)]
-    RandomX(#[from] randomx::Error),
     #[error(transparent)]
     Vertex(#[from] vertex::Error),
 }
@@ -90,8 +60,6 @@ pub struct Config {
     pub genesis: GenesisConfig,
     /// Path to the consensus data directory
     pub data_dir: PathBuf,
-    /// Avalanche configuration
-    pub avalanche: avalanche::Config,
 }
 
 /// Genesis configuration
@@ -104,27 +72,12 @@ pub struct GenesisConfig {
 impl GenesisConfig {
     /// Make sure the vertex passes all basic sanity checks
     pub fn sanity_checks(&self) -> Result<()> {
-        if self.difficulty < MIN_DIFFICULTY {
-            Err(Error::BadDifficulty(self.difficulty))
-        } else {
-            Ok(())
-        }
+        todo!()
     }
 
     /// Create a genesis block
     pub fn to_vertex(&self) -> Arc<Vertex> {
-        self.sanity_checks().expect("illegal genesis config");
-        let block = Block {
-            version: 0,
-            difficulty: self.difficulty,
-            miner: PeerId::from_multihash(Multihash::default()).unwrap(),
-            parents: Vec::new(),
-            inputs: Vec::new(),
-            outputs: Vec::new(),
-            time: self.time,
-            nonce: 0,
-        };
-        Arc::new(Vertex::genesis(block))
+        todo!()
     }
 }
 
@@ -156,7 +109,6 @@ pub fn start(
 pub struct Runtime {
     _config: Config,
     peer_id: Option<PeerId>,
-    dag: TracingRwLock<avalanche::Dag>,
     actions_in: UnboundedReceiver<Action>,
     events_out: broadcast::Sender<Event>,
     p2p_action_ch: UnboundedSender<p2p::Action>,
@@ -173,19 +125,9 @@ impl Runtime {
     ) -> Result<Runtime> {
         info!("Starting consensus...");
 
-        // Create a randomx VM instance for verifying proofs of work
-        let randomx_vm =
-            RandomXVMInstance::new(b"cordelia-randomx", RandomXFlag::get_recommended_flags())?;
-
         // Instantiate the runtime
         Ok(Runtime {
             _config: config.clone(),
-            dag: TracingRwLock::new(Dag::new(
-                config.avalanche,
-                randomx_vm,
-                p2p_action_ch.clone(),
-                events_out.clone(),
-            )),
             peer_id: None,
             actions_in,
             events_out,
@@ -206,21 +148,6 @@ impl Runtime {
         // Wait until the events channel has listeners, before initializing the DAG
         while self.events_out.receiver_count() == 0 {}
 
-        info!(
-            "Starting Avalanche consensus with genesis: {}",
-            self.dag.read().unwrap().genesis_hash().to_hex()
-        );
-
-        // Send initial NewFrontier event to initiate the miner
-        self.events_out
-            .send(Event::NewFrontier(
-                self.dag
-                    .read()
-                    .expect("Failed to read DAG")
-                    .get_frontier_hashes(),
-            ))
-            .expect("Failed to send initial frontier!");
-
         // Handle consensus events
         let mut internal_events = self.events_out.subscribe();
         loop {
@@ -239,57 +166,19 @@ impl Runtime {
                                 return error!("Stopping due to p2p_action channel error: {e}");
                             }
                         },
-                        Ok(p2p::Event::Avalanche(message)) => {
-                            match self.dag.write().map_err(|_| Error::DagWriteLock).unwrap().handle_avalanche_message(message) {
-                                Ok(()) => trace!("Handled avalanche message"),
-                                Err(avalanche::Error::P2pActionCh(e)) => return error!("Stopping due to p2p_action channel error: {e}"),
-                                Err(e) => error!("Error while handling Avalanche message: {e}"),
-                            }
-                        }
                         Err(e) => return error!("Stopping due to p2p_event channel error: {e}"),
                     }
                 },
                 // Handle requested actions
-                Some(action) = self.actions_in.recv() => {
-                    match action {
-                        Action::SubmitBlock(block) => {
-                            let hash = block.hash();
-                            // Insert the vertex into the DAG
-                            match self
-                                .dag
-                                .write()
-                                .map_err(|_| Error::DagWriteLock)
-                                .and_then(|mut dag| dag.try_insert_block(Arc::new(block), true).map_err(Error::from))
-                            {
-                                Ok(_) => {},
-                                Err(Error::P2pActionCh(e)) => return error!("Stopping due to p2p_action channel error: {e}"),
-                                Err(e) => error!("Failed to submit mined block {hash}: {e}"),
-                            }
-                        }
-                    }
+                Some(_action) = self.actions_in.recv() => {
+                    todo!();
                 },
                 // Handle internally generated events
                 event = internal_events.recv() => {
                     match event {
-                        Ok(Event::NewFrontier(_)) => {},
-                        Ok(Event::StalledBlock(block)) => {
-                            let bhash = block.hash();
-                            if let Err(e) = self
-                                .dag
-                                .write()
-                                .map_err(|_| Error::DagWriteLock)
-                                .and_then(|mut dag| dag.try_insert_block(block, true).map_err(Error::from)) {
-                                    warn!("Error resubmitting stalled block {bhash}: {e}");
-                                }
-                        },
-                        Ok(Event::QueryCompleted(vhash)) => {
-                             if let Ok(mut dag) = self
-                                .dag
-                                .write()
-                                .map_err(|_| Error::DagWriteLock) {
-                                    dag.clear_pending_query(&vhash);
-                                }
-                        },
+                        Ok(Event::NewFrontier(_)) => {todo!()},
+                        Ok(Event::StalledVertex(_)) => {todo!()},
+                        Ok(Event::QueryCompleted(_)) => {todo!()},
                         Err(e) => return error!("Stopping due to consensus_event channel error: {e}"),
                     }
                 }
@@ -303,17 +192,12 @@ impl Runtime {
         &mut self,
         bcast: p2p::Broadcast,
     ) -> Result<p2p::BroadcastValidationReport> {
-        let accept = bcast.accept();
-        let ignore = bcast.ignore();
-        let reject = bcast.reject();
+        let _accept = bcast.accept();
+        let _ignore = bcast.ignore();
+        let _reject = bcast.reject();
         match bcast.data {
-            p2p::BroadcastData::Vertex(vertex) => {
-                let mut dag = self.dag.write().map_err(|_| Error::DagWriteLock)?;
-                match dag.try_insert_vertices(once(Arc::new(vertex)), Some(bcast.src), false) {
-                    Err(avalanche::Error::MissingData(_, _)) => Ok(ignore),
-                    Err(_) => Ok(reject),
-                    Ok(_) => Ok(accept),
-                }
+            p2p::BroadcastData::Vertex(_) => {
+                todo!()
             }
         }
     }

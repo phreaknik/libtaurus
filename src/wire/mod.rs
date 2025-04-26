@@ -4,9 +4,8 @@ pub mod generated {
     }
 }
 
-use crate::{consensus::block, hash::Hash};
+use crate::hash::Hash;
 pub use generated::proto;
-use prost;
 use std::{
     fmt::{Debug, Display},
     result,
@@ -15,20 +14,12 @@ use std::{
 /// Error type for vertex errors
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[error("block hash does not match self.bhash")]
-    BadBlockHash,
-    #[error(transparent)]
-    Block(#[from] block::Error),
     #[error(transparent)]
     ProstDecode(#[from] prost::DecodeError),
-    #[error("vertex does not specify any parents")]
-    EmptyParents,
     #[error(transparent)]
     ProstEncode(#[from] prost::EncodeError),
     #[error(transparent)]
     Hash(#[from] crate::hash::Error),
-    #[error("error acquiring read lock on a vertex")]
-    VertexReadLock,
 }
 
 pub trait WireFormat<'a, P>: Sized

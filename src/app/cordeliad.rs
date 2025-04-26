@@ -1,15 +1,15 @@
 use chrono::DateTime;
 use clap::{arg, command, ArgMatches, Command};
 pub use cordelia::{
-    consensus::{self, avalanche, Block, BlockHash, GenesisConfig, Vertex, VertexHash},
+    consensus::{self, GenesisConfig, Vertex, VertexHash},
     hash::Hash,
-    http, miner, p2p, params,
+    http, p2p, params,
 };
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
 use libp2p::identity::Keypair;
 use std::{fs, path::PathBuf};
 use time::macros::format_description;
-use tokio::{self, select};
+use tokio::select;
 use tracing::{error, trace};
 use tracing_subscriber::{fmt::time::UtcTime, EnvFilter};
 
@@ -24,8 +24,6 @@ struct Config {
     pub consensus: consensus::Config,
     /// Http server configuration
     pub http: http::Config,
-    /// Miner configuration
-    pub miner: miner::Config,
 }
 
 /// Main cordelia CLI application
@@ -67,11 +65,6 @@ async fn cmd_run(args: &ArgMatches) {
     if !args.get_flag("nohttp") {
         http::start(cfg.http, p2p_action_ch, consensus_action_ch.clone());
     }
-    miner::start(
-        cfg.miner,
-        consensus_action_ch,
-        consensus_event_sender.subscribe(),
-    );
     let mut p2p_event_ch = p2p_event_sender.subscribe();
     let mut consensus_event_ch = consensus_event_sender.subscribe();
     loop {
@@ -151,7 +144,6 @@ fn build_cfg(args: &ArgMatches) -> Config {
         p2p: build_p2p_cfg(args),
         consensus: build_consensus_cfg(args),
         http: http::Config {},
-        miner: build_miner_cfg(args),
     }
 }
 
@@ -182,34 +174,7 @@ fn build_consensus_cfg(args: &ArgMatches) -> consensus::Config {
     };
     consensus::Config {
         data_dir: data_dir.clone(),
-        avalanche: avalanche::Config {
-            data_dir,
-            genesis: genesis.to_vertex(),
-            waitlist_cap: args
-                .get_one::<String>("waitlist_cap")
-                .map(|v| {
-                    v.parse()
-                        .expect("waitlist_cap must be non-zero positive integer")
-                })
-                .unwrap(),
-        },
         genesis,
-    }
-}
-
-/// Build miner [`miner::Config`] from parsed CLI args
-fn build_miner_cfg(args: &ArgMatches) -> miner::Config {
-    let data_dir = parse_data_dir(args);
-    let identity_key = get_peer_identity_key(&data_dir);
-    miner::Config {
-        num_threads: args
-            .get_one::<String>("mining_threads")
-            .map(|v| {
-                v.parse()
-                    .expect("waitlist_cap must be non-zero positive integer")
-            })
-            .unwrap(),
-        identity_key,
     }
 }
 

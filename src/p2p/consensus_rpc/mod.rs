@@ -2,7 +2,7 @@ mod message;
 mod protocol;
 
 use self::protocol::{ConsensusRpcCodec, ConsensusRpcProtocol};
-use crate::consensus::{block, vertex};
+use crate::consensus::vertex;
 use crate::wire;
 use cached::{Cached, TimedCache};
 use libp2p::core::Endpoint;
@@ -15,7 +15,6 @@ use libp2p::{request_response, Multiaddr, PeerId};
 pub use message::{Request, Response};
 use std::iter;
 use std::task::{Context, Poll};
-use thiserror;
 use tracing::{error, trace, warn};
 
 /// How long before a pending request times out
@@ -31,8 +30,6 @@ pub enum Event {
 /// Error type for peer RPC errors
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[error(transparent)]
-    Block(#[from] block::Error),
     #[error(transparent)]
     ProstDecode(#[from] prost::DecodeError),
     #[error(transparent)]

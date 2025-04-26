@@ -42,7 +42,6 @@ lru = "0.11"
 num = "0.4"
 prost = "0.12"
 rand = "0.8"
-randomx-rs = { path = "../randomx-rs" }
 serde = "1.0"
 serde_derive = "1.0"
 serde_json = "1.0"

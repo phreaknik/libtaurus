@@ -13,7 +13,6 @@ use libp2p::{
     swarm::SwarmEvent, Multiaddr, PeerId,
 };
 use std::{io, net::Ipv4Addr, path::PathBuf};
-use thiserror;
 use tokio::{
     select,
     sync::{
@@ -71,7 +70,6 @@ type Result<T> = result::Result<T, Error>;
 #[derive(Debug, Clone)]
 pub enum Event {
     Pubsub(Broadcast),
-    Avalanche(consensus_rpc::Event),
 }
 
 /// Actions that can be performed by the p2p client

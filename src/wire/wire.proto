@@ -9,33 +9,17 @@ message Broadcast {
 // Request message type
 message Request {
 	oneof RequestData {
-		Hash get_block = 1;
-		Hash get_vertex = 2;
-		Hash get_preference = 3;
+		Hash get_vertex = 1;
+		Hash get_preference = 2;
 	}
 }
 
 // Response message type
 message Response {
 	oneof ResponseData {
-		Block block = 1;
-		Vertex vertex = 2;
-		Preference preference = 3;
+		Vertex vertex = 1;
+		Preference preference = 2;
 	}
-}
-
-// Database records
-message DbRecord {
-	oneof RequestData {
-		VertexRec vertex = 1;
-		Hash block_link = 2;
-		Hashes height_link = 3;
-	}
-}
-
-message VertexRec {
-	uint64 height = 1;
-	Vertex vertex = 2;
 }
 
 message PeerInfo {
@@ -60,28 +44,7 @@ message Preference {
   bool preferred = 2;
 }
 
-message Block {
-  uint32 version = 1;
-	uint64 difficulty = 2;
-	bytes miner = 3;
-	repeated Hash parents = 4;
-  repeated Hash inputs = 5;
-  repeated Txo outputs = 6;
-	bytes time = 7;
-	uint64 nonce = 8;
-}
-
 message Vertex {
   uint32 version = 1;
 	repeated Hash parents = 2;
-  optional Hash block_hash = 3;
-  optional Block block = 4;
-}
-
-message Transaction {
-  repeated Txo inputs = 1;
-}
-
-message Txo {
-  uint64 value = 1;
 }

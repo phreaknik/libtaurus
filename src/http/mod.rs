@@ -1,6 +1,5 @@
 use crate::{consensus, p2p};
 use hyper::{
-    self,
     service::{make_service_fn, service_fn},
     Body, Method, Request, Response, Server, StatusCode,
 };

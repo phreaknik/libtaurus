@@ -226,10 +226,6 @@ impl<'a> NetworkBehaviour for Behaviour {
             ))) => Poll::Ready(ToSwarm::GenerateEvent(Event::Pubsub(
                 message.try_into().unwrap(),
             ))),
-            // Forward avalanche messages out
-            Poll::Ready(ToSwarm::GenerateEvent(InnerBehaviourEvent::ConsensusRpc(message))) => {
-                Poll::Ready(ToSwarm::GenerateEvent(Event::Avalanche(message)))
-            }
             // Trap all other generated events
             Poll::Ready(ToSwarm::GenerateEvent(event)) => {
                 trace!("internal event: {event:?}");

@@ -109,6 +109,3 @@ impl request_response::Codec for ConsensusRpcCodec {
         io.close().await
     }
 }
-
-#[derive(Debug)]
-pub enum UpgradeError {}
