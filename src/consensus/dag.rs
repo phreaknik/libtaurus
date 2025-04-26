@@ -49,9 +49,6 @@ pub struct DAG {
     /// Map of known children for each vertex in the DAG
     children: HashMap<VertexHash, HashMap<VertexHash, Arc<Vertex>>>,
 
-    /// Collection of conflict sets for each vertex in the DAG
-    conflict_sets: HashMap<VertexHash, ConflictSet>,
-
     /// Vertices which define the frontier of the [`DAG`]
     /// The frontier is ordered according to latest ordering preference
     frontier: Vec<VertexHash>,
@@ -63,7 +60,6 @@ impl DAG {
         Ok(DAG {
             config,
             children: HashMap::new(),
-            conflict_sets: HashMap::new(),
             frontier: Vec::new(),
         })
     }
@@ -75,8 +71,8 @@ impl DAG {
         // it to the DAG. For performance reasons, we assert this only in debug builds.
         debug_assert!(vx.sanity_checks().is_ok());
 
-        // Make sure a conflict set for this vertex doesn't already exist
-        if self.conflict_sets.contains_key(&vx.hash()) {
+        // Check the child map to make sure this vertex doesn't already exist
+        if self.children.contains_key(&vx.hash()) {
             return Err(Error::AlreadyExists);
         }
 
@@ -85,7 +81,7 @@ impl DAG {
             .parents
             .iter()
             .map(|p| p.hash())
-            .filter(|h| !self.conflict_sets.contains_key(h))
+            .filter(|h| !self.children.contains_key(h))
             .collect();
         if missing.is_empty() {
             Ok(())
@@ -121,35 +117,6 @@ impl DAG {
         nearby
     }
 
-    /// Finds any [`Vertex`] which conflicts with the given, and registers each with each other's
-    /// [`ConflictSet`]. Returns true if the given is preferred amongst all its conflicts.
-    fn map_conflicts(&mut self, vx: &Arc<Vertex>) -> bool {
-        // Find all conflicts, and register the given [`Vertex`] in their conflict sets. Collect
-        // each conflict and its preference.
-        let conflicts: Vec<_> = self
-            .find_nearby(&vx)
-            .iter()
-            .filter_map(|v| {
-                let cs = self.conflict_sets.get_mut(v).expect("missing conflict set");
-                if cs.add_if_conflict(&vx) {
-                    Some((cs.owner.clone(), cs.preferred))
-                } else {
-                    None
-                }
-            })
-            .collect();
-        // Add every discovered conflict to the given [`Vertex`]'s [`ConflictSet],
-        // and return true if the given vertex is preferred amongst all its conflicts
-        let self_conflicts = self
-            .conflict_sets
-            .get_mut(&vx.hash())
-            .expect("missing conflict set");
-        conflicts.into_iter().all(|(vx, pref)| {
-            self_conflicts.add(&vx);
-            pref
-        })
-    }
-
     /// Insert a vertex into the [`DAG`]. Returns boolean indicating
     /// if the vertex is preferred or not, as well as a list of known children waiting to be
     /// inserted.
@@ -164,24 +131,12 @@ impl DAG {
             res @ _ => res,
         }?;
 
-        // Create [`ConflictSet`] for this new vertex
-        if self
-            .conflict_sets
-            .insert(vx.hash(), ConflictSet::new(&vx))
-            .is_some()
-        {
-            panic!("conflict set already exists");
-        }
+        // TODO: do a real preference calc
+        let preferred = true;
 
-        // Add vertex to every conflict set and count how many conflicts were found
-        let preferred = self.map_conflicts(&vx);
-
-        // If there were no conflicts, add this vertex to the frontier
-        if preferred {
-            self.frontier.push(vx.hash());
-            self.frontier.extract_if(|v| vx.parents.contains(v)).count();
-            self.mark_preferred(&vx.hash())?;
-        }
+        // Add this vertex to the frontier
+        self.frontier.push(vx.hash());
+        self.frontier.extract_if(|v| vx.parents.contains(v)).count();
 
         error!("these prints should move to taurusd");
         debug!("Vertex {} = {}", vx.hash(), vx);
@@ -194,11 +149,9 @@ impl DAG {
         ))
     }
 
-    /// Mark the given [`Vertex`] as preferred
-    pub fn mark_preferred(&mut self, vhash: &VertexHash) -> Result<()> {
-        let cs = self.conflict_sets.get_mut(vhash).ok_or(Error::NotFound)?;
-        cs.preferred = true;
-        Ok(())
+    /// Award a chit to the specified vertex, according to the Avalanche protocol
+    pub fn award_chit(&mut self, _vhash: &VertexHash) {
+        todo!()
     }
 }
 
@@ -231,6 +184,11 @@ mod test {
 
     #[test]
     fn insert() {
+        todo!()
+    }
+
+    #[test]
+    fn award_chit() {
         todo!()
     }
 }
