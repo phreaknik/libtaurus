@@ -32,6 +32,9 @@ pub struct Vertex {
     /// Revision number of the vertex structure
     pub version: u32,
 
+    /// Height of this vertex in the DAG
+    pub height: u64,
+
     /// Vertex parents in ascending order of sequence (SESAME parent ordering)
     pub parents: Vec<VertexHash>,
 
@@ -43,10 +46,11 @@ pub struct Vertex {
 }
 
 impl Vertex {
-    /// Start building a new vertex
-    pub fn build() -> Vertex {
+    /// Create an empty [`Vertex`]
+    pub fn empty() -> Vertex {
         Vertex {
             version: VERSION,
+            height: 0,
             parents: Vec::new(),
             namespace_id: NamespaceId::default(),
             event_root: EventRoot::default(),
@@ -54,11 +58,17 @@ impl Vertex {
     }
 
     /// Assign new parents to the given vertex
-    pub fn with_parents(mut self, parents: Vec<VertexHash>) -> Result<Vertex> {
-        if parents.is_empty() {
+    pub fn with_parents<P>(mut self, parents: P) -> Result<Vertex>
+    where
+        P: IntoIterator<Item = Vertex>,
+    {
+        let (heights, hashes): (Vec<_>, Vec<_>) =
+            parents.into_iter().map(|p| (p.height, p.hash())).unzip();
+        if heights.is_empty() {
             Err(Error::NoParents)
         } else {
-            self.parents = parents;
+            self.height = 1 + heights.into_iter().max().unwrap();
+            self.parents = hashes;
             Ok(self)
         }
     }
@@ -124,5 +134,58 @@ impl std::fmt::Display for Vertex {
             "{}",
             serde_json::to_string_pretty(&PrettyVertex::from(self)).unwrap()
         )
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{
+        consensus::{
+            event::EventRoot,
+            namespace::{self, Namespace, NamespaceId},
+        },
+        vertex, Vertex,
+    };
+
+    #[test]
+    fn empty() {
+        assert_eq!(
+            Vertex::empty().version,
+            vertex::VERSION,
+            "unexpected version number"
+        );
+        assert!(Vertex::empty().parents.is_empty(), "unexpected parents");
+        assert_eq!(
+            Vertex::empty().namespace_id,
+            NamespaceId::default(),
+            "unexpected namespace_id"
+        );
+        assert_eq!(
+            Vertex::empty().event_root,
+            EventRoot::default(),
+            "unexpected event_root"
+        );
+    }
+
+    #[test]
+    fn with_parents() {
+        todo!()
+    }
+
+    #[test]
+    fn in_namespace() {
+        assert_eq!(
+            Vertex::empty()
+                .in_namespace(Namespace::default())
+                .unwrap()
+                .namespace_id,
+            namespace::NULLSPACE_ID,
+            "unexpected namespace_id"
+        );
+    }
+
+    #[test]
+    fn sanity_checks() {
+        todo!()
     }
 }

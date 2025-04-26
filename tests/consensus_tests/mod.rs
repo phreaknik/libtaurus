@@ -1,4 +1,5 @@
-mod dag;
-mod event;
-mod namespace;
-mod vertex;
+#[test]
+fn dag_stuff() {
+    // Check isnerting and frontier result etc
+    todo!()
+}

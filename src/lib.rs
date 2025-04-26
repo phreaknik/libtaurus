@@ -1,6 +1,7 @@
+#![feature(assert_matches)]
+#![feature(extract_if)]
 #![feature(iterator_try_collect)]
 #![feature(result_flattening)]
-#![feature(assert_matches)]
 
 pub mod consensus;
 pub mod hash;
