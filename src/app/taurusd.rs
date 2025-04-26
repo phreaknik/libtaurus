@@ -1,4 +1,3 @@
-use chrono::DateTime;
 use clap::{arg, command, ArgMatches, Command};
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
 use libp2p::identity::Keypair;
@@ -36,7 +35,6 @@ async fn main() {
     }
 }
 
-/// Error type for taurus-p2p errors
 #[derive(thiserror::Error, Debug)]
 enum Error {
     #[error(transparent)]
@@ -166,12 +164,7 @@ fn build_p2p_cfg(args: &ArgMatches) -> p2p::Config {
 /// Build P2P [`p2p::Config`] from parsed CLI args
 fn build_consensus_cfg(args: &ArgMatches) -> consensus::Config {
     let data_dir = parse_data_dir(args).join("consensus/");
-    let genesis = GenesisConfig {
-        difficulty: params::MIN_DIFFICULTY,
-        time: DateTime::parse_from_rfc2822("Wed, 18 Feb 2015 23:16:09 GMT")
-            .unwrap()
-            .into(),
-    };
+    let genesis = GenesisConfig {};
     consensus::Config {
         data_dir: data_dir.clone(),
         genesis,

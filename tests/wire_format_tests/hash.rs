@@ -1,4 +1,4 @@
-use taurus::hash::Hash;
+use libtaurus::hash::Hash;
 
 #[test]
 fn corner_cases() {

@@ -1,5 +1,5 @@
-use taurus::{p2p::PeerInfo, wire::test_wire_format};
 use libp2p::multiaddr::Multiaddr;
+use libtaurus::{p2p::PeerInfo, wire::test_wire_format};
 use std::assert_matches::assert_matches;
 
 #[test]

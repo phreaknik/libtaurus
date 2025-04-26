@@ -10,5 +10,5 @@ pub mod params;
 pub mod util;
 pub mod wire;
 
-pub use consensus::{GenesisConfig, Vertex, VertexHash};
+pub use consensus::{vertex, GenesisConfig, Vertex, VertexHash};
 pub use wire::WireFormat;

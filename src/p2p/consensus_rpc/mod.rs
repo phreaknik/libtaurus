@@ -27,7 +27,6 @@ pub enum Event {
     Responded(PeerId, Response),
 }
 
-/// Error type for peer RPC errors
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error(transparent)]

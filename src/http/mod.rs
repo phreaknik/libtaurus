@@ -7,7 +7,6 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{error, info};
 
-/// Error type for taurus-p2p errors
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error(transparent)]

@@ -30,7 +30,6 @@ const P2P_EVENT_CHAN_CAPACITY: usize = 32;
 /// Path to the peer database, from within the peer data directory
 const DATABASE_DIR: &str = "peer_db/";
 
-/// Error type for taurus-p2p errors
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error(transparent)]
@@ -62,8 +61,6 @@ pub enum Error {
     #[error(transparent)]
     Wire(#[from] crate::wire::Error),
 }
-
-/// Result type for taurus-p2p
 type Result<T> = result::Result<T, Error>;
 
 /// Event produced by [`Behaviour`].

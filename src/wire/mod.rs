@@ -11,7 +11,6 @@ use std::{
     result,
 };
 
-/// Error type for vertex errors
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error(transparent)]

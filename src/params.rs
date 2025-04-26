@@ -1,9 +1,3 @@
-/// Minimum block difficulty
-pub const MIN_DIFFICULTY: u64 = 1_000;
-
-/// Max time into the future we will tolerate a block's timestamp
-pub const FUTURE_BLOCK_LIMIT_SECS: i64 = 5;
-
 /// Number of peers to query for block preference, according to Avalanche consensus.
 pub const AVALANCHE_QUERY_COUNT: usize = 16;
 
@@ -14,11 +8,5 @@ pub const AVALANCHE_QUORUM: usize = 9;
 /// Confidence level a vertex must achieve to become accepted
 pub const AVALANCHE_ACCEPTANCE_THRESHOLD: usize = 9;
 
-/// Time we look back for mined blocks to consider a miner for Avalanche voting
-pub const VOTER_REGISTRATION_WINDOW_HRS: i64 = 48;
-
-/// Time after which we remove an inactive miner from the voter pool
-pub const VOTER_EXPERATION_HRS: i64 = 72;
-
 /// Time we allow for each peer in a query to respond
-pub const QUERY_TIMEOUT_SEC: u64 = 10;
+pub const AVALANCHE_TIMEOUT_SEC: u64 = 10;

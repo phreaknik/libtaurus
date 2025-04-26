@@ -4,10 +4,12 @@
 // TODO: ALTERNATE: Consider ledger using MiRitH signature algorithm: iacr 2023/1666
 // TODO: ALTERNATE: Consider ledger using MQ on My Mind signature algorithm: iacr 2023/1719
 
+pub mod dag;
+pub mod event;
+pub mod namespace;
 pub mod vertex;
 
 use crate::p2p;
-use chrono::{DateTime, Utc};
 use libp2p::PeerId;
 use std::path::PathBuf;
 use std::result;
@@ -39,7 +41,6 @@ pub enum Event {
 #[derive(Clone, Debug)]
 pub enum Action {}
 
-/// Error type for consensus errors
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("consensus event channel error")]
@@ -49,8 +50,6 @@ pub enum Error {
     #[error(transparent)]
     Vertex(#[from] vertex::Error),
 }
-
-/// Result type for consensus errors
 type Result<T> = result::Result<T, Error>;
 
 /// Configuration details for the consensus process.
@@ -64,10 +63,7 @@ pub struct Config {
 
 /// Genesis configuration
 #[derive(Debug, Clone)]
-pub struct GenesisConfig {
-    pub difficulty: u64,
-    pub time: DateTime<Utc>,
-}
+pub struct GenesisConfig {}
 
 impl GenesisConfig {
     /// Make sure the vertex passes all basic sanity checks

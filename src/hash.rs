@@ -8,7 +8,6 @@ use serde_derive::{Deserialize, Serialize};
 use std::fmt;
 use std::result;
 
-/// Error type for vertex errors
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("bad hash")]
@@ -22,8 +21,6 @@ pub enum Error {
     #[error("error acquiring read lock on a vertex")]
     VertexReadLock,
 }
-
-/// Result type for hash errors
 type Result<T> = result::Result<T, Error>;
 
 pub const HASH_LEN: usize = blake3::OUT_LEN;
