@@ -1,94 +1,99 @@
-use crate::{wire::WireFormat, Vertex, VertexHash};
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use crate::{vertex::VertexPair, wire::WireFormat, Vertex, VertexHash};
+use std::{collections::HashMap, sync::Arc};
 
+/// A [`ConflictGraph`] maps every [`Vertex`] to the an ordering [`Constraint`] and the set of
+/// vertices which agree or disagree on that constraint.
 #[derive(Clone, Default, Debug, PartialEq, Eq)]
-pub struct ConflictSet {
-    pub owner: Arc<Vertex>,
-    pub preferred: bool,
-    parents: HashSet<VertexHash>,
-    conflicts: HashMap<VertexHash, Arc<Vertex>>,
+pub struct ConflictGraph {
+    graph: HashMap<VertexPair, Constraint>,
 }
 
-impl ConflictSet {
-    /// Create a new instance of a [`ConflictSet`]
-    pub fn new(vx: &Arc<Vertex>) -> ConflictSet {
-        let parents: HashSet<_> = vx.parents.iter().copied().collect();
-        debug_assert_eq!(vx.parents.len(), parents.len(), "parents must not repeat");
-        ConflictSet {
-            owner: vx.clone(),
-            preferred: false,
-            parents,
-            conflicts: HashMap::new(),
+impl ConflictGraph {
+    /// Construct a new [`ConflictGraph`].
+    pub fn new() -> ConflictGraph {
+        ConflictGraph {
+            graph: HashMap::new(),
         }
     }
 
-    /// Returns true if the given [`Vertex`] conflicts with the [`ConflictSet`] owner
-    fn conflicts_with(&self, vx: &Vertex) -> bool {
-        let rh_set: HashSet<_> = vx.parents.iter().copied().collect();
-        let intersection: HashSet<_> = self.parents.intersection(&rh_set).collect();
-        let lh_ordered: Vec<_> = self
-            .owner
-            .parents
-            .iter()
-            .filter(|p| intersection.contains(p))
-            .collect();
-        let rh_ordered: Vec<_> = vx
-            .parents
-            .iter()
-            .filter(|p| intersection.contains(p))
-            .collect();
-        lh_ordered != rh_ordered
+    /// Insert a [`Vertex`] into the [`ConflictGraph`], mapping its parents to their ordering
+    /// [`Constraint`]s, and registering this [`Vertex`]'s preference on each [`Constraint`].
+    pub fn insert(&mut self, vx: &Arc<Vertex>) {
+        for pair in vx.parent_pairs() {
+            if let Some(constraint) = self.graph.get_mut(&pair) {
+                constraint.track(vx);
+            } else {
+                let mut constraint = Constraint::new(pair.clone());
+                constraint.track(vx);
+                self.graph.insert(pair, constraint);
+            }
+        }
+    }
+}
+
+/// A [`Constraint`] contains a [`Vertex`] pair, and the set of vertices which agree or disagree
+/// with a particular ordering constraing for that vertex pair.
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
+struct Constraint {
+    pair: VertexPair,
+    left_first: HashMap<VertexHash, Arc<Vertex>>,
+    right_first: HashMap<VertexHash, Arc<Vertex>>,
+}
+
+impl Constraint {
+    /// Construct a new [`Constraint`] from a [`VertexPair`].
+    fn new(pair: VertexPair) -> Constraint {
+        Constraint {
+            pair,
+            left_first: HashMap::new(),
+            right_first: HashMap::new(),
+        }
     }
 
-    /// Check if the given vertex conflicts with this vertex, and if so, adds it to the set.
-    /// Returns true if conflict.
-    pub fn add_if_conflict(&mut self, vx: &Arc<Vertex>) -> bool {
-        if self.conflicts_with(vx) {
-            self.add(vx);
-            true
+    /// Track a [`Vertex`] if it has a preference on the constraint
+    fn track(&mut self, vx: &Arc<Vertex>) {
+        let pos_left = vx
+            .parents
+            .iter()
+            .position(|h| h == &self.pair.0)
+            .expect("left not found in parents");
+        let pos_right = vx
+            .parents
+            .iter()
+            .position(|h| h == &self.pair.1)
+            .expect("right not found in parents");
+        if pos_left < pos_right {
+            self.left_first.insert(vx.hash(), vx.clone());
         } else {
-            false
+            self.right_first.insert(vx.hash(), vx.clone());
         }
-    }
-
-    /// Add the given [`Vertex`] as a conflict to track, without confirming they conflict. This
-    /// should really only be used if a conflict is certain, and you don't want to perform the
-    /// expensive conflict checks again.
-    pub fn add(&mut self, vx: &Arc<Vertex>) {
-        self.conflicts.insert(vx.hash(), vx.clone());
     }
 }
 
 #[cfg(test)]
 mod test {
-    use super::ConflictSet;
-    use crate::Vertex;
-    use std::sync::Arc;
-
     #[test]
-    fn new() {
-        let vx = Arc::new(Vertex::default());
-        let cs = ConflictSet::new(&vx);
-        assert_eq!(cs.owner, vx);
-        assert_eq!(cs.preferred, false);
-        assert!(cs.conflicts.is_empty());
+    fn new_graph() {
+        todo!()
     }
 
     #[test]
-    fn conflicts_with() {
-        todo!();
+    fn graph_insert() {
+        todo!()
     }
 
     #[test]
-    fn add_if_conflict() {
-        todo!();
+    fn new_constraint() {
+        todo!()
     }
 
     #[test]
-    fn add() {
-        todo!();
+    fn constraint_track() {
+        todo!()
+    }
+
+    #[test]
+    fn new_pair() {
+        todo!()
     }
 }

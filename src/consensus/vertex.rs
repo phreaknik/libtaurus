@@ -89,6 +89,11 @@ impl Vertex {
             Ok(())
         }
     }
+
+    /// Return a list of [`VertexPair`]s for every permutation of pairs of this vertex's parents
+    pub fn parent_pairs<'a>(&'a self) -> VertexPairs<'a> {
+        VertexPairs::new(&self.parents)
+    }
 }
 
 impl<'a> WireFormat<'a, proto::Vertex> for Vertex {
@@ -134,6 +139,56 @@ impl std::fmt::Display for Vertex {
             "{}",
             serde_json::to_string_pretty(&PrettyVertex::from(self)).unwrap()
         )
+    }
+}
+
+/// A pair of [`Vertex`]s used to build parent ordering constraints
+#[derive(Clone, Default, Debug, PartialEq, Eq, Hash)]
+pub struct VertexPair(pub VertexHash, pub VertexHash);
+
+impl VertexPair {
+    /// Construct a new [`VertexPair`] from two [`VertexHash`]s.
+    pub fn new(vx1: VertexHash, vx2: VertexHash) -> VertexPair {
+        if vx1 < vx2 {
+            VertexPair(vx1, vx2)
+        } else {
+            VertexPair(vx2, vx1)
+        }
+    }
+}
+
+/// An [`Iterator`] which iterates over every permutation of pairs of parents of a [`Vertex`].
+pub struct VertexPairs<'a> {
+    vertices: &'a Vec<VertexHash>,
+    idx1: usize,
+    idx2: usize,
+}
+
+impl<'a> VertexPairs<'a> {
+    fn new(vertices: &'a Vec<VertexHash>) -> VertexPairs<'a> {
+        VertexPairs {
+            vertices,
+            idx1: 0,
+            idx2: 1,
+        }
+    }
+}
+
+impl<'a> Iterator for VertexPairs<'a> {
+    type Item = VertexPair;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let pair = VertexPair::new(self.vertices[self.idx1], self.vertices[self.idx2]);
+        self.idx2 += 1;
+        if self.idx2 == self.vertices.len() {
+            self.idx1 += 1;
+            self.idx2 = self.idx1 + 1;
+        }
+        if self.idx1 == self.vertices.len() {
+            None
+        } else {
+            Some(pair)
+        }
     }
 }
 
@@ -186,6 +241,21 @@ mod test {
 
     #[test]
     fn sanity_checks() {
+        todo!()
+    }
+
+    #[test]
+    fn parent_pairs() {
+        todo!()
+    }
+
+    #[test]
+    fn new_pair() {
+        todo!()
+    }
+
+    #[test]
+    fn new_pair_iter() {
         todo!()
     }
 }

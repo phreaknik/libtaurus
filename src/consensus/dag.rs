@@ -1,13 +1,8 @@
-use super::conflict_set::ConflictSet;
 use crate::{Vertex, VertexHash, WireFormat};
-use core::panic;
-use std::{
-    collections::{HashMap, HashSet},
-    iter::once,
-    result,
-    sync::Arc,
-};
+use std::{collections::HashMap, iter::once, result, sync::Arc};
 use tracing::{debug, error, info};
+
+use super::conflict_set::ConflictGraph;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -49,6 +44,9 @@ pub struct DAG {
     /// Map of known children for each vertex in the DAG
     children: HashMap<VertexHash, HashMap<VertexHash, Arc<Vertex>>>,
 
+    /// Graph of [`Vertex`] conflicts
+    conflicts: ConflictGraph,
+
     /// Vertices which define the frontier of the [`DAG`]
     /// The frontier is ordered according to latest ordering preference
     frontier: Vec<VertexHash>,
@@ -60,6 +58,7 @@ impl DAG {
         Ok(DAG {
             config,
             children: HashMap::new(),
+            conflicts: ConflictGraph::new(),
             frontier: Vec::new(),
         })
     }
@@ -102,21 +101,6 @@ impl DAG {
         }
     }
 
-    /// Find any nearby vertex in the [`DAG`]. Useful for searching for conflicts.
-    // TODO: should return an Iter type
-    fn find_nearby(&self, vx: &Vertex) -> HashSet<VertexHash> {
-        let mut nearby = HashSet::new();
-        for p in &vx.parents {
-            nearby.extend(
-                self.children
-                    .get(p)
-                    .expect("missing parent-child map")
-                    .keys(),
-            )
-        }
-        nearby
-    }
-
     /// Insert a vertex into the [`DAG`]. Returns boolean indicating
     /// if the vertex is preferred or not, as well as a list of known children waiting to be
     /// inserted.
@@ -126,6 +110,8 @@ impl DAG {
             res @ Ok(()) | res @ Err(Error::MissingParents(_)) => {
                 // Add vertex as known child, even if we are missing some of its parents
                 self.map_child(&vx);
+                // Add vertex to conflict graph
+                self.conflicts.insert(&vx);
                 res
             }
             res @ _ => res,
@@ -174,11 +160,6 @@ mod test {
 
     #[test]
     fn map_child() {
-        todo!();
-    }
-
-    #[test]
-    fn find_nearby() {
         todo!();
     }
 
