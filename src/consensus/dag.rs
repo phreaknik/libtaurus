@@ -194,56 +194,10 @@ impl DAG {
         ))
     }
 
-    /// Recompute preference and confidences for the given vertex and all its ancestors. Returns
-    /// true if any descendent triggered a recomputation.
-    fn recompute_at(&mut self, vhash: &VertexHash) -> Result<bool> {
-        // Update preference. If parents are preferred and none of [`Vertex`] conflicts are
-        // preferred, then it becomes preferred.
-        let cs = &self.conflict_sets[vhash];
-        let old_preference = cs.preferred;
-        let parents_preferred = cs
-            .owner
-            .parents
-            .iter()
-            .all(|p| self.conflict_sets[p].preferred);
-        let no_conflicts = false;
-        let new_preference = parents_preferred && no_conflicts;
-        self.conflict_sets
-            .get_mut(vhash)
-            .ok_or(Error::NotFound)?
-            .preferred = new_preference;
-
-        // If preference changed, recurse into children, if any
-        let recomputed = if old_preference != new_preference {
-            let children: Vec<_> = self.children[vhash].keys().copied().collect();
-            // True if any children successfully triggered a recomputation
-            children
-                .iter()
-                .any(|child| self.recompute_at(child).unwrap())
-        } else {
-            false
-        };
-
-        // If preferred, but a confidence recomputation has not been triggered by a descendent,
-        // perform it here.
-        if !new_preference {
-            Ok(false)
-        } else {
-            if !recomputed {
-                // TODO: Recursively compute ancestor confidences
-            }
-            Ok(true)
-        }
-    }
-
-    /// Mark the given [`Vertex`] as preferred, updating confidences and the frontier if necessary.
+    /// Mark the given [`Vertex`] as preferred
     pub fn mark_preferred(&mut self, vhash: &VertexHash) -> Result<()> {
         let cs = self.conflict_sets.get_mut(vhash).ok_or(Error::NotFound)?;
-        if !cs.preferred {
-            cs.preferred = true;
-            cs.confidence = 1; // Award initial Avalanche chit
-        }
-        self.recompute_at(vhash)?;
+        cs.preferred = true;
         Ok(())
     }
 }
@@ -276,22 +230,7 @@ mod test {
     }
 
     #[test]
-    fn map_conflicts() {
-        todo!();
-    }
-
-    #[test]
     fn insert() {
-        todo!()
-    }
-
-    #[test]
-    fn recompute_at() {
-        todo!()
-    }
-
-    #[test]
-    fn mark_preferred() {
         todo!()
     }
 }
