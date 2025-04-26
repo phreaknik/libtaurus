@@ -8,6 +8,7 @@ use std::{
 pub struct ConflictSet {
     pub owner: Arc<Vertex>,
     pub preferred: bool,
+    pub confidence: usize,
     parents: HashSet<VertexHash>,
     conflicts: HashMap<VertexHash, Arc<Vertex>>,
 }
@@ -20,6 +21,7 @@ impl ConflictSet {
         ConflictSet {
             owner: vx.clone(),
             preferred: false,
+            confidence: 0,
             parents,
             conflicts: HashMap::new(),
         }
@@ -74,6 +76,7 @@ mod test {
         let cs = ConflictSet::new(&vx);
         assert_eq!(cs.owner, vx);
         assert_eq!(cs.preferred, false);
+        assert_eq!(cs.confidence, 0);
         assert!(cs.conflicts.is_empty());
     }
 
