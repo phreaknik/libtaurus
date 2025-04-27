@@ -1,4 +1,5 @@
 use crate::{params, Vertex, VertexHash, WireFormat};
+use itertools::Itertools;
 use std::{
     collections::{HashMap, HashSet},
     iter::once,
@@ -297,6 +298,18 @@ impl DAG {
         self.recompute_at(vhash)?;
         Ok(())
     }
+
+    /// Get the latest vertices which have no children, in the order we've observed them
+    pub fn get_frontier(&mut self) -> Vec<VertexHash> {
+        self.frontier
+            .iter()
+            .map(|vhash| (vhash, self.vertices[vhash].timestamp))
+            .sorted_by(|(_, t1), (_, t2)| Ord::cmp(t1, t2))
+            .map(|(vhash, _time)| vhash)
+            .copied()
+            .collect()
+        // TODO: double check this isn't reverse ordering
+    }
 }
 
 #[cfg(test)]
@@ -348,6 +361,11 @@ mod test {
 
     #[test]
     fn award_chit() {
+        todo!()
+    }
+
+    #[test]
+    fn get_frontier() {
         todo!()
     }
 }

@@ -3,6 +3,7 @@ use super::{
     namespace::{Namespace, NamespaceId},
 };
 use crate::wire::{generated::proto, WireFormat};
+use chrono::{DateTime, Utc};
 use serde_derive::{Deserialize, Serialize};
 use std::result;
 
@@ -43,6 +44,9 @@ pub struct Vertex {
 
     /// Root hash of the events contained in this vertex
     pub event_root: EventRoot,
+
+    /// The time which we first observed this vertex
+    pub timestamp: DateTime<Utc>,
 }
 
 impl Vertex {
@@ -54,6 +58,7 @@ impl Vertex {
             parents: Vec::new(),
             namespace_id: NamespaceId::default(),
             event_root: EventRoot::default(),
+            timestamp: Utc::now(),
         }
     }
 
