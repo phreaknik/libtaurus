@@ -1,5 +1,10 @@
 use crate::{params, Vertex, VertexHash, WireFormat};
-use std::{collections::HashMap, iter::once, result, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    iter::once,
+    result,
+    sync::Arc,
+};
 use tracing::{debug, error, info};
 
 use super::conflict_set::ConflictGraph;
@@ -60,7 +65,7 @@ pub struct DAG {
 
     /// Vertices which define the frontier of the [`DAG`]
     /// The frontier is ordered according to latest ordering preference
-    frontier: Vec<VertexHash>,
+    frontier: HashSet<VertexHash>,
 }
 
 impl DAG {
@@ -73,7 +78,7 @@ impl DAG {
             preferences: HashMap::new(),
             children: HashMap::new(),
             conflicts: ConflictGraph::new(),
-            frontier: Vec::new(),
+            frontier: HashSet::new(),
         })
     }
 
@@ -136,12 +141,39 @@ impl DAG {
 
     /// Recursively recompute the state of the given [`Vertex`], and each of its undecided ancestors
     fn recompute_at(&mut self, vhash: &VertexHash) -> Result<()> {
+        // TODO: what if an error causes partial state changes? e.g. some states changed, but not
+        // others?
         if let Some(changes) = self.recompute_confidences(vhash)? {
-            for changed in &changes {
-                // TODO: what if an error causes partial state changes? e.g. some states changed,
-                // but not others?
-                self.recompute_preference(changed)?;
+            // Recompute preferences, and collect the changes
+            let mut pref = HashSet::with_capacity(changes.len());
+            let mut nonpref = HashSet::with_capacity(changes.len());
+            for changed in changes {
+                let (updated, preferred) = self.recompute_preference(&changed)?;
+                if updated && preferred {
+                    pref.insert(changed);
+                } else if updated && !preferred {
+                    nonpref.insert(changed);
+                }
             }
+
+            // Remove any non-preferred vertices from the frontier
+            self.frontier.extract_if(|vhash| !self.preferences[vhash]);
+
+            // Gather any vertices which may now be at the frontier, and add them if so
+            nonpref
+                .into_iter()
+                .map(|vhash| self.vertices[&vhash].parents.iter())
+                .flatten()
+                .chain(pref.iter())
+                .for_each(|candidate| {
+                    // If no children are preferred, add it to the frontier
+                    if !self.children[candidate]
+                        .keys()
+                        .any(|child| self.preferences[child])
+                    {
+                        self.frontier.insert(*candidate);
+                    }
+                })
         }
         Ok(())
     }
@@ -182,8 +214,9 @@ impl DAG {
         }
     }
 
-    /// Recursively recompute the preference of the given [`Vertex`], and each of its children
-    fn recompute_preference(&mut self, vhash: &VertexHash) -> Result<()> {
+    /// Recompute the preference of the given [`Vertex`], and return a tuple indicating if the
+    /// preference has changed and the latest preference
+    fn recompute_preference(&mut self, vhash: &VertexHash) -> Result<(bool, bool)> {
         let vx = &self.vertices[vhash];
         let conflicts = self.conflicts.conflicts_of(vx);
 
@@ -209,7 +242,8 @@ impl DAG {
         };
 
         // If the preference has changed, update it
-        if old_preference != new_preference {
+        let updated = old_preference != new_preference;
+        if updated {
             self.preferences.insert(*vhash, new_preference);
 
             // If this vertex just became preferred, reset all conflicts
@@ -219,10 +253,8 @@ impl DAG {
                     self.chitconf.insert(vhash, (0, 0));
                 }
             }
-            // TODO: what if flip from preferred?
         }
-
-        Ok(())
+        Ok((updated, new_preference))
     }
 
     /// Insert a vertex into the [`DAG`]. Returns boolean indicating
@@ -248,19 +280,11 @@ impl DAG {
         // Recompute states
         self.recompute_at(&vx.hash())?;
 
-        let preferred = self.is_preferred(vx)?;
-        if preferred {
-            // Add this vertex to the frontier
-            self.frontier.extract_if(|v| vx.parents.contains(v)).count();
-            self.frontier.push(vx.hash());
-            // TODO: this should happen as part of recompute
-        }
-
         error!("these prints should move to taurusd");
         debug!("Vertex {} = {}", vx.hash(), vx);
         info!("Vertex {} inserted", vx.hash());
         Ok((
-            preferred,
+            self.is_preferred(vx)?,
             self.children
                 .get(&vx.hash())
                 .and_then(|c| Some(c.values().cloned().collect())),

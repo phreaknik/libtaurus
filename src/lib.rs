@@ -1,5 +1,5 @@
 #![feature(assert_matches)]
-#![feature(extract_if)]
+#![feature(hash_extract_if)]
 #![feature(iterator_try_collect)]
 #![feature(result_flattening)]
 
