@@ -2,6 +2,8 @@
 #![feature(hash_extract_if)]
 #![feature(iterator_try_collect)]
 #![feature(result_flattening)]
+#![feature(map_try_insert)]
+// TODO: reasses these unstable features
 
 pub mod consensus;
 pub mod hash;

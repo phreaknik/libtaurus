@@ -95,37 +95,14 @@ impl Constraint {
 
 #[cfg(test)]
 mod test {
+    use super::Constraint;
     use crate::{
-        consensus::{conflict_set::ConflictGraph, namespace::Namespace},
-        vertex::VertexPair,
+        consensus::conflict_set::ConflictGraph,
+        vertex::{test_vertex, VertexPair},
         Vertex, WireFormat,
     };
     use itertools::Itertools;
-    use rand::{distributions::Alphanumeric, Rng};
     use std::{collections::HashMap, sync::Arc};
-
-    use super::Constraint;
-
-    // Helper to build test vertices with unique hashes
-    pub fn test_vertex<'a, P>(parents: P) -> Arc<Vertex>
-    where
-        P: IntoIterator<Item = &'a Arc<Vertex>>,
-    {
-        let rand_namespace = Namespace::new(
-            &rand::thread_rng()
-                .sample_iter(&Alphanumeric)
-                .take(30)
-                .map(char::from)
-                .collect::<String>(),
-        );
-        Arc::new(
-            Vertex::empty()
-                .with_parents(parents)
-                .unwrap()
-                .in_namespace(rand_namespace)
-                .unwrap(),
-        )
-    }
 
     #[test]
     fn new_graph() {

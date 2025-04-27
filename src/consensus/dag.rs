@@ -1,5 +1,5 @@
 use super::conflict_set::ConflictGraph;
-use crate::{params, Vertex, VertexHash, WireFormat};
+use crate::{params, vertex, Vertex, VertexHash, WireFormat};
 use itertools::Itertools;
 use std::{
     collections::{HashMap, HashSet},
@@ -7,7 +7,7 @@ use std::{
     result,
     sync::Arc,
 };
-use tracing::{debug, error, info};
+use tracing::error;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -29,23 +29,29 @@ pub enum Error {
     ProstDecode(#[from] prost::DecodeError),
     #[error(transparent)]
     ProstEncode(#[from] prost::EncodeError),
+    #[error(transparent)]
+    Vertex(#[from] vertex::Error),
     #[error("waiting on parents to process")]
     WaitingOnParents(Vec<VertexHash>),
 }
 type Result<T> = result::Result<T, Error>;
 
 /// Configuraion parameters for a [`DAG`] instance
-#[derive(Clone, Default, Debug, PartialEq, Eq)]
-pub struct Config {}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Config {
+    acceptance_threshold: usize,
+}
 
-impl Config {
-    pub fn new() -> Config {
-        Config {}
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            acceptance_threshold: params::AVALANCHE_ACCEPTANCE_THRESHOLD,
+        }
     }
 }
 
 /// Implementation of SESAME DAG
-#[derive(Clone, Default, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DAG {
     /// Configuration parameters
     config: Config,
@@ -72,8 +78,8 @@ pub struct DAG {
 
 impl DAG {
     /// Create a new [`DAG`] with the given [`Config`]
-    pub fn new(config: Config) -> Result<DAG> {
-        Ok(DAG {
+    pub fn new(config: Config) -> DAG {
+        DAG {
             config,
             vertices: HashMap::new(),
             chitconf: HashMap::new(),
@@ -81,18 +87,16 @@ impl DAG {
             children: HashMap::new(),
             conflicts: ConflictGraph::new(),
             frontier: HashSet::new(),
-        })
+        }
     }
 
     /// Before inserting a vertex into the [`DAG`] it must pass these checks
     fn check_vertex(&self, vx: &Vertex) -> Result<()> {
-        // Sanity checks are run in the encoders & decoders to ensure an "insane" vertex never
-        // makes it past the wire. Therefore it _should_ be impossible for an insane vertex to make
-        // it to the DAG. For performance reasons, we assert this only in debug builds.
-        debug_assert!(vx.sanity_checks().is_ok());
+        // Rule out any obviously insane vertices
+        vx.sanity_checks()?;
 
         // Check the child map to make sure this vertex doesn't already exist
-        if self.children.contains_key(&vx.hash()) {
+        if self.vertices.contains_key(&vx.hash()) {
             return Err(Error::AlreadyExists);
         }
 
@@ -100,8 +104,8 @@ impl DAG {
         let missing: Vec<_> = vx
             .parents
             .iter()
-            .map(|p| p.hash())
-            .filter(|h| !self.children.contains_key(h))
+            .copied()
+            .filter(|h| !self.vertices.contains_key(h))
             .collect();
         if !missing.is_empty() {
             return Err(Error::MissingParents(missing));
@@ -210,7 +214,7 @@ impl DAG {
         let chitconf = self.chitconf.get_mut(vhash).unwrap();
         let new_confidence = usize::min(
             chitconf.0 + progeny_confidence, // confidence(v) = v.chit + confidence(v.progeny)
-            params::AVALANCHE_ACCEPTANCE_THRESHOLD,
+            self.config.acceptance_threshold,
         );
         let changed = chitconf.1 != new_confidence;
         chitconf.1 = new_confidence;
@@ -275,13 +279,36 @@ impl DAG {
         (updated, new_preference)
     }
 
+    /// Insert a [`Vertex`] without checking. This should only be used to init the [`DAG`] on
+    /// restart
+    pub fn force_insert(&mut self, vx: &Arc<Vertex>) -> (bool, Option<Vec<Arc<Vertex>>>) {
+        // Initialize state variables for this vertex
+        self.map_child(vx);
+        self.children.try_insert(vx.hash(), HashMap::new()).unwrap();
+        self.conflicts.insert(vx);
+        self.vertices.try_insert(vx.hash(), vx.clone()).unwrap();
+        self.chitconf.try_insert(vx.hash(), (0, 0)).unwrap();
+        self.preferences.try_insert(vx.hash(), false).unwrap();
+
+        // Recompute states
+        self.recompute_at(&vx.hash()).unwrap();
+
+        (
+            self.is_preferred(vx).unwrap(),
+            self.children
+                .get(&vx.hash())
+                .and_then(|c| Some(c.values().cloned().collect())),
+        )
+    }
+
     /// Insert a vertex into the [`DAG`]. Returns boolean indicating
     /// if the vertex is preferred or not, as well as a list of known children waiting to be
     /// inserted.
-    pub fn insert(&mut self, vx: &Arc<Vertex>) -> Result<(bool, Option<Vec<Arc<Vertex>>>)> {
+    pub fn try_insert(&mut self, vx: &Arc<Vertex>) -> Result<(bool, Option<Vec<Arc<Vertex>>>)> {
+        // TODO: this should be thread safe...need mutex on DAG?
         // Check if the vertex may be inserted
         match self.check_vertex(vx) {
-            res @ Ok(()) | res @ Err(Error::MissingParents(_)) => {
+            res @ Err(Error::MissingParents(_)) => {
                 // Add vertex as known child, even if we are missing some of its parents
                 self.map_child(vx);
                 res
@@ -289,24 +316,7 @@ impl DAG {
             res @ _ => res,
         }?;
 
-        // Initialize vertex state variables
-        self.conflicts.insert(vx);
-        self.vertices.insert(vx.hash(), vx.clone());
-        self.chitconf.insert(vx.hash(), (0, 0));
-        self.preferences.insert(vx.hash(), false);
-
-        // Recompute states
-        self.recompute_at(&vx.hash())?;
-
-        error!("these prints should move to taurusd");
-        debug!("Vertex {} = {}", vx.hash(), vx);
-        info!("Vertex {} inserted", vx.hash());
-        Ok((
-            self.is_preferred(vx)?,
-            self.children
-                .get(&vx.hash())
-                .and_then(|c| Some(c.values().cloned().collect())),
-        ))
+        Ok(self.force_insert(vx))
     }
 
     /// Award a chit to the specified vertex, according to the Avalanche protocol
@@ -330,19 +340,56 @@ impl DAG {
 
 #[cfg(test)]
 mod test {
+    use super::{Config, DAG};
+    use crate::{
+        consensus::{conflict_set::ConflictGraph, dag},
+        params,
+        vertex::{self, test_vertex},
+        Vertex, WireFormat,
+    };
+    use std::{
+        assert_matches::assert_matches,
+        collections::{HashMap, HashSet},
+        sync::Arc,
+    };
+
     #[test]
     fn new_config() {
-        todo!()
+        let dflt = Config::default();
+        assert_eq!(
+            dflt.acceptance_threshold,
+            params::AVALANCHE_ACCEPTANCE_THRESHOLD
+        );
     }
 
     #[test]
     fn new_dag() {
-        todo!()
+        let dag = DAG::new(Config::default());
+        assert_eq!(dag.config, Config::default());
+        assert_eq!(dag.vertices, HashMap::new());
+        assert_eq!(dag.chitconf, HashMap::new());
+        assert_eq!(dag.preferences, HashMap::new());
+        assert_eq!(dag.children, HashMap::new());
+        assert_eq!(dag.conflicts, ConflictGraph::new());
+        assert_eq!(dag.frontier, HashSet::new());
     }
 
     #[test]
     fn check_vertex() {
-        todo!();
+        let gen = Arc::new(Vertex::empty());
+        let c1 = test_vertex([&gen]);
+        let mut dag = DAG::new(Config::default());
+        match dag.check_vertex(&c1) {
+            Err(dag::Error::MissingParents(missing)) => assert_eq!(missing, vec![gen.hash()]),
+            _ => panic!("Expected Error::MissingParents"),
+        }
+        assert_matches!(
+            dag.check_vertex(&gen),
+            Err(dag::Error::Vertex(vertex::Error::NoParents))
+        );
+        dag.force_insert(&gen); // Force insert a genesis vertex
+
+        // Test already exists
     }
 
     #[test]
@@ -371,7 +418,7 @@ mod test {
     }
 
     #[test]
-    fn insert() {
+    fn try_insert() {
         todo!()
     }
 

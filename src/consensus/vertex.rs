@@ -240,6 +240,30 @@ impl<'a> Iterator for VertexPairs<'a> {
     }
 }
 
+// Helper to build test vertices with unique hashes
+#[cfg(test)]
+pub fn test_vertex<'a, P>(parents: P) -> Arc<Vertex>
+where
+    P: IntoIterator<Item = &'a Arc<Vertex>>,
+{
+    use rand::{distributions::Alphanumeric, Rng};
+
+    let rand_namespace = Namespace::new(
+        &rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(30)
+            .map(char::from)
+            .collect::<String>(),
+    );
+    Arc::new(
+        Vertex::empty()
+            .with_parents(parents)
+            .unwrap()
+            .in_namespace(rand_namespace)
+            .unwrap(),
+    )
+}
+
 #[cfg(test)]
 mod test {
     use crate::{
@@ -302,47 +326,44 @@ mod test {
         let p2 = Arc::new(p2);
         let p3 = Arc::new(p3);
         assert_matches!(
-            Vertex::empty().with_parents(Vec::new()),
+            Vertex::empty().with_parents([]),
             Err(vertex::Error::NoParents),
             "should error if no parents provided"
         );
         assert_matches!(
-            Vertex::empty().with_parents(vec![&p1, &p2, &p2]),
+            Vertex::empty().with_parents([&p1, &p2, &p2]),
             Err(vertex::Error::DuplicateParents),
             "should error if duplicate parents provided"
         );
-        assert_eq!(
-            Vertex::empty().with_parents(vec![&p1, &p2]).unwrap().height,
-            2,
-        );
+        assert_eq!(Vertex::empty().with_parents([&p1, &p2]).unwrap().height, 2,);
         assert_eq!(
             Vertex::empty()
-                .with_parents(vec![&p1, &p2, &p3])
+                .with_parents([&p1, &p2, &p3])
                 .unwrap()
                 .height,
             101,
         );
-        assert_eq!(Vertex::empty().with_parents(vec![&p3]).unwrap().height, 101);
+        assert_eq!(Vertex::empty().with_parents([&p3]).unwrap().height, 101);
         assert_eq!(
             Vertex::empty()
-                .with_parents(vec![&p1, &p2, &p3])
+                .with_parents([&p1, &p2, &p3])
                 .unwrap()
                 .height,
             101,
         );
         assert_eq!(
             Vertex::empty()
-                .with_parents(vec![&p1, &p2, &p3])
+                .with_parents([&p1, &p2, &p3])
                 .unwrap()
                 .parents,
-            vec![p1.hash(), p2.hash(), p3.hash()]
+            [p1.hash(), p2.hash(), p3.hash()]
         );
         assert_eq!(
             Vertex::empty()
-                .with_parents(vec![&p3, &p1, &p2])
+                .with_parents([&p3, &p1, &p2])
                 .unwrap()
                 .parents,
-            vec![p3.hash(), p1.hash(), p2.hash()]
+            [p3.hash(), p1.hash(), p2.hash()]
         );
     }
 
