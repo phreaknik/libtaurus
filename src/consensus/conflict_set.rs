@@ -29,6 +29,14 @@ impl ConflictGraph {
             }
         }
     }
+
+    /// Return an iterator which yields each [`Vertex`] which conflicts with the specified
+    pub fn conflicts_of(&self, vx: &Arc<Vertex>) -> HashMap<&VertexHash, &Arc<Vertex>> {
+        vx.parent_pairs()
+            .map(|pair| self.graph[&pair].conflicts_of(vx).iter())
+            .flatten()
+            .collect()
+    }
 }
 
 /// A [`Constraint`] contains a [`Vertex`] pair, and the set of vertices which agree or disagree
@@ -50,8 +58,9 @@ impl Constraint {
         }
     }
 
-    /// Track a [`Vertex`] if it has a preference on the constraint
-    fn track(&mut self, vx: &Arc<Vertex>) {
+    /// Returns true if the given [`Vertex`] observed the left [`Vertex`] in the constraint pair
+    /// first, before the right [`Vertex`].
+    fn chooses_left_first(&self, vx: &Arc<Vertex>) -> bool {
         let pos_left = vx
             .parents
             .iter()
@@ -62,10 +71,24 @@ impl Constraint {
             .iter()
             .position(|h| h == &self.pair.1)
             .expect("right not found in parents");
-        if pos_left < pos_right {
+        pos_left < pos_right
+    }
+
+    /// Track a [`Vertex`] if it has a preference on the constraint
+    fn track(&mut self, vx: &Arc<Vertex>) {
+        if self.chooses_left_first(vx) {
             self.left_first.insert(vx.hash(), vx.clone());
         } else {
             self.right_first.insert(vx.hash(), vx.clone());
+        }
+    }
+
+    /// Return an iterator which yields each [`Vertex`] which conflicts with the specified
+    fn conflicts_of(&self, vx: &Arc<Vertex>) -> &HashMap<VertexHash, Arc<Vertex>> {
+        if self.chooses_left_first(vx) {
+            &self.right_first
+        } else {
+            &self.left_first
         }
     }
 }
@@ -83,7 +106,17 @@ mod test {
     }
 
     #[test]
+    fn graph_conflicts_of() {
+        todo!()
+    }
+
+    #[test]
     fn new_constraint() {
+        todo!()
+    }
+
+    #[test]
+    fn constraint_chooses_left_first() {
         todo!()
     }
 
@@ -93,7 +126,7 @@ mod test {
     }
 
     #[test]
-    fn new_pair() {
+    fn constraint_conflicts_of() {
         todo!()
     }
 }
