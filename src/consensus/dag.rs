@@ -234,7 +234,8 @@ impl DAG {
                             .parents
                             .iter()
                             .filter_map(|parent| self.recompute_confidences(&parent))
-                            .flatten(),
+                            .flatten()
+                            .unique(),
                     )
                     .collect(),
             )
@@ -507,80 +508,78 @@ mod test {
 
     #[test]
     fn recompute_confidences() {
+        // Set up test vertices and dag
         let gen = Arc::new(Vertex::empty());
         let c0 = test_vertex([&gen]);
         let c1 = test_vertex([&gen]);
         let c2 = test_vertex([&c0, &c1]);
         let c3 = test_vertex([&c0, &c1]);
         let mut dag = DAG::new(Config::default());
-        dag.vertices.insert(gen.hash(), gen.clone());
-        dag.vertices.insert(c0.hash(), c0.clone());
-        dag.vertices.insert(c1.hash(), c1.clone());
-        dag.vertices.insert(c2.hash(), c2.clone());
-        dag.vertices.insert(c3.hash(), c3.clone());
-        dag.children.insert(gen.hash(), HashMap::new());
-        dag.children.insert(c0.hash(), HashMap::new());
-        dag.children.insert(c1.hash(), HashMap::new());
-        dag.children.insert(c2.hash(), HashMap::new());
-        dag.children.insert(c3.hash(), HashMap::new());
-        dag.map_child(&gen);
-        dag.map_child(&c0);
-        dag.map_child(&c1);
-        dag.map_child(&c2);
-        dag.map_child(&c3);
-        dag.chitconf.insert(gen.hash(), (0, 0));
-        dag.chitconf.insert(c0.hash(), (0, 0));
-        dag.chitconf.insert(c1.hash(), (0, 0));
-        dag.chitconf.insert(c2.hash(), (0, 0));
-        dag.chitconf.insert(c3.hash(), (0, 0));
-        // everything should have 0 confidence
-        assert_matches!(dag.recompute_confidences(&c3.hash()), None);
-        assert_eq!(dag.chitconf[&gen.hash()].1, 0);
-        assert_eq!(dag.chitconf[&c0.hash()].1, 0);
-        assert_eq!(dag.chitconf[&c1.hash()].1, 0);
-        assert_eq!(dag.chitconf[&c2.hash()].1, 0);
-        assert_eq!(dag.chitconf[&c3.hash()].1, 0);
+
+        // Helper to advance the DAG with new vertices
+        let add_to_dag = |dag: &mut DAG, vx: &Arc<Vertex>| {
+            dag.vertices.insert(vx.hash(), vx.clone());
+            dag.children.insert(vx.hash(), HashMap::new());
+            dag.map_child(&vx);
+            dag.chitconf.insert(vx.hash(), (0, 0));
+        };
+
+        // Helper to assert that the expected vertices are updated in a recomputation
+        let test_recompute =
+            |dag: &mut DAG, start: &Arc<Vertex>, expected_updates: &[&Arc<Vertex>]| {
+                if let Some(modified) = dag.recompute_confidences(&start.hash()) {
+                    assert!(modified
+                        .into_iter()
+                        .sorted()
+                        .eq(expected_updates.into_iter().map(|vx| vx.hash()).sorted()));
+                } else {
+                    if !expected_updates.is_empty() {
+                        panic!("expected modifications")
+                    }
+                }
+            };
+
+        // Helper to assert that all confidences match expected
+        let assert_confidences = |dag: &DAG, expected: &[(&Arc<Vertex>, usize)]| {
+            for (vhash, conf) in expected.iter().map(|(vx, conf)| (vx.hash(), conf)) {
+                assert_eq!(dag.chitconf[&vhash].1, *conf);
+            }
+        };
+
+        // Add everything to the dag with 0 chit & confidence
+        add_to_dag(&mut dag, &gen);
+        add_to_dag(&mut dag, &c0);
+        add_to_dag(&mut dag, &c1);
+        add_to_dag(&mut dag, &c2);
+        add_to_dag(&mut dag, &c3);
+
+        // Everything should have zero confidence, and no changes
+        test_recompute(&mut dag, &c3, &[]);
+        assert_confidences(&dag, &[(&gen, 0), (&c0, 0), (&c1, 0), (&c2, 0), (&c3, 0)]);
+
+        // Assign a chit to c3 and recompute
         dag.chitconf.insert(c3.hash(), (1, 0)); // Assign chit to c3
-        if let Some(modified) = dag.recompute_confidences(&c3.hash()) {
-            assert!(modified.into_iter().sorted().eq([
-                c3.hash(),
-                c2.hash(),
-                c1.hash(),
-                c0.hash(),
-                gen.hash()
-            ]
-            .into_iter()
-            .sorted()));
-        } else {
-            panic!("expected modifications")
-        }
-        still working here
-        assert_eq!(dag.chitconf[&gen.hash()].1, 2);
-        assert_eq!(dag.chitconf[&c0.hash()].1, 1);
-        assert_eq!(dag.chitconf[&c1.hash()].1, 1);
-        assert_eq!(dag.chitconf[&c2.hash()].1, 0);
-        assert_eq!(dag.chitconf[&c3.hash()].1, 1);
-        dag.chitconf.insert(c2.hash(), (1, 0)); // Assign chit to c2
-        dag.recompute_confidences(&c3.hash());
-        assert_eq!(dag.chitconf[&gen.hash()].1, 4);
-        assert_eq!(dag.chitconf[&c0.hash()].1, 2);
-        assert_eq!(dag.chitconf[&c1.hash()].1, 2);
-        assert_eq!(dag.chitconf[&c2.hash()].1, 1);
-        assert_eq!(dag.chitconf[&c3.hash()].1, 1);
-        dag.chitconf.insert(c1.hash(), (1, 0)); // Assign chit to c1
-        dag.recompute_confidences(&c3.hash());
-        assert_eq!(dag.chitconf[&gen.hash()].1, 5);
-        assert_eq!(dag.chitconf[&c0.hash()].1, 2);
-        assert_eq!(dag.chitconf[&c1.hash()].1, 3);
-        assert_eq!(dag.chitconf[&c2.hash()].1, 1);
-        assert_eq!(dag.chitconf[&c3.hash()].1, 1);
-        dag.chitconf.insert(c0.hash(), (1, 0)); // Assign chit to c0
-        dag.recompute_confidences(&c3.hash());
-        assert_eq!(dag.chitconf[&gen.hash()].1, 6);
-        assert_eq!(dag.chitconf[&c0.hash()].1, 3);
-        assert_eq!(dag.chitconf[&c1.hash()].1, 3);
-        assert_eq!(dag.chitconf[&c2.hash()].1, 1);
-        assert_eq!(dag.chitconf[&c3.hash()].1, 1);
+        test_recompute(&mut dag, &c3, &[&c3, &c1, &c0, &gen]);
+        assert_confidences(&dag, &[(&gen, 2), (&c0, 1), (&c1, 1), (&c2, 0), (&c3, 1)]);
+
+        // Recompute again should result in no updates
+        test_recompute(&mut dag, &c3, &[]);
+        assert_confidences(&dag, &[(&gen, 2), (&c0, 1), (&c1, 1), (&c2, 0), (&c3, 1)]);
+
+        // Assign a chit to c2 and recompute
+        dag.chitconf.insert(c2.hash(), (1, 0)); // Assign chit to c3
+        test_recompute(&mut dag, &c2, &[&c2, &c1, &c0, &gen]);
+        assert_confidences(&dag, &[(&gen, 4), (&c0, 2), (&c1, 2), (&c2, 1), (&c3, 1)]);
+
+        // Assign a chit to c1 and recompute
+        dag.chitconf.insert(c1.hash(), (1, 0)); // Assign chit to c3
+        test_recompute(&mut dag, &c1, &[&c1, &gen]);
+        assert_confidences(&dag, &[(&gen, 5), (&c0, 2), (&c1, 3), (&c2, 1), (&c3, 1)]);
+
+        // Assign a chit to c0 and recompute
+        dag.chitconf.insert(c0.hash(), (1, 0)); // Assign chit to c3
+        test_recompute(&mut dag, &c0, &[&c0, &gen]);
+        assert_confidences(&dag, &[(&gen, 6), (&c0, 3), (&c1, 3), (&c2, 1), (&c3, 1)]);
     }
 
     #[test]
