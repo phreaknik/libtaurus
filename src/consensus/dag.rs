@@ -58,7 +58,7 @@ pub struct DAG {
 
     /// Map of every [`Vertex`] in the [`DAG`]
     vertices: HashMap<VertexHash, Arc<Vertex>>,
-
+    // TODO: these HashMaps should be HashSets with hasher = WireFormat::hash
     /// Map of state variables for each [`Vertex`] in the [`DAG`]` (chit and confidence)
     chitconf: HashMap<VertexHash, (usize, usize)>,
 
@@ -117,14 +117,18 @@ impl DAG {
         let waiting: Vec<_> = vx
             .parents
             .iter()
-            .map(|p| p.hash())
-            .filter(|h| !self.chitconf.contains_key(h))
+            .copied()
+            .filter(|h| {
+                !self.chitconf.contains_key(h)
+                    || !self.children.contains_key(h)
+                    || !self.preferences.contains_key(h)
+            })
             .collect();
-        if !missing.is_empty() {
+        if !waiting.is_empty() {
             return Err(Error::WaitingOnParents(waiting));
         }
 
-        let parent_height = self.vertices[vx.parents.first().ok_or(Error::NoParents)?].height;
+        let parent_height = self.vertices[vx.parents.first().unwrap()].height;
         if !vx
             .parents
             .iter()
@@ -284,7 +288,7 @@ impl DAG {
     pub fn force_insert(&mut self, vx: &Arc<Vertex>) -> (bool, Option<Vec<Arc<Vertex>>>) {
         // Initialize state variables for this vertex
         self.map_child(vx);
-        self.children.try_insert(vx.hash(), HashMap::new()).unwrap();
+        let _ = self.children.try_insert(vx.hash(), HashMap::new());
         self.conflicts.insert(vx);
         self.vertices.try_insert(vx.hash(), vx.clone()).unwrap();
         self.chitconf.try_insert(vx.hash(), (0, 0)).unwrap();
@@ -344,7 +348,7 @@ mod test {
     use crate::{
         consensus::{conflict_set::ConflictGraph, dag},
         params,
-        vertex::{self, test_vertex},
+        vertex::test_vertex,
         Vertex, WireFormat,
     };
     use std::{
@@ -377,19 +381,73 @@ mod test {
     #[test]
     fn check_vertex() {
         let gen = Arc::new(Vertex::empty());
+        let c0 = test_vertex([&gen]);
         let c1 = test_vertex([&gen]);
+        let c2 = test_vertex([&gen]);
+        let c3 = test_vertex([&c1, &c2]);
         let mut dag = DAG::new(Config::default());
-        match dag.check_vertex(&c1) {
-            Err(dag::Error::MissingParents(missing)) => assert_eq!(missing, vec![gen.hash()]),
+
+        dag.vertices.insert(gen.hash(), gen.clone());
+        dag.chitconf.insert(gen.hash(), (0, 0));
+        dag.preferences.insert(gen.hash(), false);
+        dag.children.insert(gen.hash(), HashMap::new()); // Genesis is "processed"
+        dag.vertices.insert(c0.hash(), c0.clone());
+        dag.chitconf.insert(c0.hash(), (0, 0));
+        dag.preferences.insert(c0.hash(), false);
+        dag.children.insert(c0.hash(), HashMap::new()); // c0 is "processed"
+        assert_matches!(dag.check_vertex(&c0), Err(dag::Error::AlreadyExists));
+        match dag.check_vertex(&c3) {
+            Err(dag::Error::MissingParents(missing)) => {
+                assert_eq!(missing, [c1.hash(), c2.hash()])
+            }
             _ => panic!("Expected Error::MissingParents"),
         }
-        assert_matches!(
-            dag.check_vertex(&gen),
-            Err(dag::Error::Vertex(vertex::Error::NoParents))
-        );
-        dag.force_insert(&gen); // Force insert a genesis vertex
+        dag.vertices.insert(c1.hash(), c1.clone()); // c1 is known but not processed
+        match dag.check_vertex(&c3) {
+            Err(dag::Error::MissingParents(missing)) => {
+                assert_eq!(missing, [c2.hash()])
+            }
+            _ => panic!("Expected Error::MissingParents"),
+        }
+        dag.vertices.insert(c2.hash(), c2.clone()); // c2 is known but not processed
+        match dag.check_vertex(&c3) {
+            Err(dag::Error::WaitingOnParents(waiting)) => {
+                assert_eq!(waiting, [c1.hash(), c2.hash()])
+            }
+            _ => panic!("Expected Error::WaitingOnParents"),
+        }
+        dag.vertices.insert(c1.hash(), c1.clone());
+        dag.chitconf.insert(c1.hash(), (0, 0));
+        dag.preferences.insert(c1.hash(), false);
+        dag.children.insert(c1.hash(), HashMap::new()); // c1 is "processed"
+        match dag.check_vertex(&c3) {
+            Err(dag::Error::WaitingOnParents(waiting)) => {
+                assert_eq!(waiting, [c2.hash()])
+            }
+            _ => panic!("Expected Error::WaitingOnParents"),
+        }
+        dag.vertices.insert(c2.hash(), c2.clone());
+        dag.chitconf.insert(c2.hash(), (0, 0));
+        dag.preferences.insert(c2.hash(), false);
+        dag.children.insert(c2.hash(), HashMap::new()); // c2 is "processed"
+        assert_matches!(dag.check_vertex(&c3), Ok(()));
 
-        // Test already exists
+        let c4 = test_vertex([&gen, &c1]); // Parents have mismatched height
+        assert_matches!(dag.check_vertex(&c4), Err(dag::Error::BadParentHeight));
+
+        dag.vertices.insert(c3.hash(), c3.clone());
+        dag.chitconf.insert(c3.hash(), (0, 0));
+        dag.preferences.insert(c3.hash(), false);
+        dag.children.insert(c3.hash(), HashMap::new()); // c3 is "processed"
+        let mut c5 = Vertex::empty().with_parents([&c3]).unwrap();
+        c5.height = 2; // Should have height 3
+        match dag.check_vertex(&Arc::new(c5)) {
+            Err(dag::Error::BadHeight(actual, expected)) => {
+                assert_eq!(actual, 2);
+                assert_eq!(expected, 3);
+            }
+            _ => panic!("Expected Error::BadHeight"),
+        }
     }
 
     #[test]
