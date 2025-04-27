@@ -6,7 +6,7 @@ use crate::wire::{generated::proto, WireFormat};
 use chrono::{DateTime, Utc};
 use itertools::Itertools;
 use serde_derive::{Deserialize, Serialize};
-use std::result;
+use std::{result, sync::Arc};
 
 /// Current revision of the vertex structure
 pub const VERSION: u32 = 1;
@@ -14,7 +14,7 @@ pub const VERSION: u32 = 1;
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("bad version")]
-    BadVersion(u32),
+    BadVersion(u32, u32),
     #[error("duplicate parents")]
     DuplicateParents,
     #[error("no namespace")]
@@ -72,7 +72,7 @@ impl Vertex {
     /// Assign new parents to the given vertex
     pub fn with_parents<'a, P>(mut self, parents: P) -> Result<Vertex>
     where
-        P: IntoIterator<Item = &'a Vertex>,
+        P: IntoIterator<Item = &'a Arc<Vertex>>,
     {
         let (heights, hashes): (Vec<_>, Vec<_>) =
             parents.into_iter().map(|p| (p.height, p.hash())).unzip();
@@ -96,7 +96,7 @@ impl Vertex {
     /// Make sure the vertex passes all basic sanity checks
     pub fn sanity_checks(&self) -> Result<()> {
         if self.version != VERSION {
-            Err(Error::BadVersion(self.version))
+            Err(Error::BadVersion(self.version, VERSION))
         } else if self.parents.is_empty() {
             Err(Error::NoParents)
         } else if self.parents.len() != self.parents.iter().unique().count() {
@@ -247,10 +247,28 @@ mod test {
             event::EventRoot,
             namespace::{self, Namespace, NamespaceId},
         },
-        vertex::{self, VertexPair, VertexPairs},
+        vertex::{self, VertexPair, VertexPairs, VERSION},
         Vertex, VertexHash, WireFormat,
     };
-    use std::assert_matches::assert_matches;
+    use std::{assert_matches::assert_matches, sync::Arc};
+
+    // Some reusable dummy hashes
+    const H1: VertexHash = VertexHash::with_bytes([
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+        25, 26, 27, 28, 29, 30, 31,
+    ]);
+    const H2: VertexHash = VertexHash::with_bytes([
+        10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119,
+        120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131,
+    ]);
+    const H3: VertexHash = VertexHash::with_bytes([
+        11, 11, 12, 13, 14, 15, 16, 17, 18, 19, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119,
+        120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131,
+    ]);
+    const H4: VertexHash = VertexHash::with_bytes([
+        12, 11, 12, 13, 14, 15, 16, 17, 18, 19, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119,
+        120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131,
+    ]);
 
     #[test]
     fn empty() {
@@ -280,6 +298,9 @@ mod test {
         p1.height = 0;
         p2.height = 1;
         p3.height = 100;
+        let p1 = Arc::new(p1);
+        let p2 = Arc::new(p2);
+        let p3 = Arc::new(p3);
         assert_matches!(
             Vertex::empty().with_parents(Vec::new()),
             Err(vertex::Error::NoParents),
@@ -348,13 +369,16 @@ mod test {
     #[test]
     fn sanity_checks() {
         let mut vx = Vertex::default();
-        assert_matches!(&vx.sanity_checks(), Err(vertex::Error::BadVersion(0)));
+        assert_matches!(
+            &vx.sanity_checks(),
+            Err(vertex::Error::BadVersion(0, VERSION))
+        );
         vx.version = vertex::VERSION;
         assert_matches!(&vx.sanity_checks(), Err(vertex::Error::NoParents));
         vx.parents = vec![VertexHash::default(), VertexHash::default()];
         assert_matches!(&vx.sanity_checks(), Err(vertex::Error::DuplicateParents));
         vx.parents = vec![VertexHash::default()];
-        let vx = vx.with_parents(vec![&Vertex::default()]).unwrap();
+        let vx = vx.with_parents(vec![&Arc::new(Vertex::default())]).unwrap();
         assert_matches!(&vx.sanity_checks(), Ok(()));
     }
 
@@ -367,6 +391,9 @@ mod test {
         p1.height = 1;
         p2.height = 2;
         p3.height = 3;
+        let p1 = Arc::new(p1);
+        let p2 = Arc::new(p2);
+        let p3 = Arc::new(p3);
         assert!(Vertex::empty()
             .with_parents(vec![&p1])
             .unwrap()
@@ -390,51 +417,29 @@ mod test {
 
     #[test]
     fn new_pair() {
-        let h1 = VertexHash::with_bytes([
-            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
-            24, 25, 26, 27, 28, 29, 30, 31,
-        ]);
-        let h2 = VertexHash::with_bytes([
-            10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 110, 111, 112, 113, 114, 115, 116, 117, 118,
-            119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131,
-        ]);
-        assert_eq!(VertexPair::new(h1, h2), VertexPair::new(h2, h1));
-        assert_eq!(VertexPair::new(h1, h2), VertexPair(h1, h2));
+        assert_eq!(VertexPair::new(H1, H2), VertexPair::new(H2, H1));
+        assert_eq!(VertexPair::new(H1, H2), VertexPair(H1, H2));
+        assert_eq!(VertexPair::new(H1, H2).0, H1);
+        assert_eq!(VertexPair::new(H1, H2).1, H2);
     }
 
     #[test]
     fn new_pair_iter() {
-        let h1 = VertexHash::with_bytes([
-            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
-            24, 25, 26, 27, 28, 29, 30, 31,
-        ]);
-        let h2 = VertexHash::with_bytes([
-            10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 110, 111, 112, 113, 114, 115, 116, 117, 118,
-            119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131,
-        ]);
-        let h3 = VertexHash::with_bytes([
-            11, 11, 12, 13, 14, 15, 16, 17, 18, 19, 110, 111, 112, 113, 114, 115, 116, 117, 118,
-            119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131,
-        ]);
-        let h4 = VertexHash::with_bytes([
-            12, 11, 12, 13, 14, 15, 16, 17, 18, 19, 110, 111, 112, 113, 114, 115, 116, 117, 118,
-            119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131,
-        ]);
-        assert!(VertexPairs::new(&vec![h1]).eq(vec![]));
-        assert!(VertexPairs::new(&vec![h1, h2]).eq(vec![VertexPair::new(h1, h2)]));
-        assert!(VertexPairs::new(&vec![h3, h2]).eq(vec![VertexPair::new(h2, h3)]));
-        assert!(VertexPairs::new(&vec![h1, h2, h3]).eq(vec![
-            VertexPair::new(h1, h2),
-            VertexPair::new(h1, h3),
-            VertexPair::new(h2, h3),
+        assert!(VertexPairs::new(&vec![H1]).eq(vec![]));
+        assert!(VertexPairs::new(&vec![H1, H2]).eq(vec![VertexPair::new(H1, H2)]));
+        assert!(VertexPairs::new(&vec![H3, H2]).eq(vec![VertexPair::new(H2, H3)]));
+        assert!(VertexPairs::new(&vec![H1, H2, H3]).eq(vec![
+            VertexPair::new(H1, H2),
+            VertexPair::new(H1, H3),
+            VertexPair::new(H2, H3),
         ]));
-        assert!(VertexPairs::new(&vec![h1, h2, h3, h4]).eq(vec![
-            VertexPair::new(h1, h2),
-            VertexPair::new(h1, h3),
-            VertexPair::new(h1, h4),
-            VertexPair::new(h2, h3),
-            VertexPair::new(h2, h4),
-            VertexPair::new(h3, h4),
+        assert!(VertexPairs::new(&vec![H1, H2, H3, H4]).eq(vec![
+            VertexPair::new(H1, H2),
+            VertexPair::new(H1, H3),
+            VertexPair::new(H1, H4),
+            VertexPair::new(H2, H3),
+            VertexPair::new(H2, H4),
+            VertexPair::new(H3, H4),
         ]));
     }
 }

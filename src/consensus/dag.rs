@@ -1,3 +1,4 @@
+use super::conflict_set::ConflictGraph;
 use crate::{params, Vertex, VertexHash, WireFormat};
 use itertools::Itertools;
 use std::{
@@ -8,14 +9,14 @@ use std::{
 };
 use tracing::{debug, error, info};
 
-use super::conflict_set::ConflictGraph;
-
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("already exists")]
     AlreadyExists,
-    #[error("bad version")]
-    BadVersion(u32),
+    #[error("bad height")]
+    BadHeight(u64, u64),
+    #[error("bad parent height")]
+    BadParentHeight,
     #[error(transparent)]
     Hash(#[from] crate::hash::Error),
     #[error("missing parents")]
@@ -105,6 +106,7 @@ impl DAG {
         if !missing.is_empty() {
             return Err(Error::MissingParents(missing));
         }
+
         // Make sure parents have been successfully inserted and not just waiting in the child map.
         // Chits and confidence are only rewarded once a vertex has been inserted, so we check for
         // existence of each parent's chitconf as an indication that each has been inserted.
@@ -116,6 +118,20 @@ impl DAG {
             .collect();
         if !missing.is_empty() {
             return Err(Error::WaitingOnParents(waiting));
+        }
+
+        let parent_height = self.vertices[vx.parents.first().ok_or(Error::NoParents)?].height;
+        if !vx
+            .parents
+            .iter()
+            .all(|p| self.vertices[p].height == parent_height)
+        {
+            return Err(Error::BadParentHeight);
+        }
+
+        let expected_height = parent_height + 1;
+        if expected_height != vx.height {
+            return Err(Error::BadHeight(vx.height, expected_height));
         }
         Ok(())
     }
