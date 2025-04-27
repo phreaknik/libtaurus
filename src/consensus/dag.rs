@@ -142,14 +142,15 @@ impl DAG {
 
     /// Recursively recompute the state of the given [`Vertex`], and each of its undecided ancestors
     fn recompute_at(&mut self, vhash: &VertexHash) -> Result<()> {
-        // TODO: what if an error causes partial state changes? e.g. some states changed, but not
-        // others?
-        if let Some(changes) = self.recompute_confidences(vhash)? {
+        if !self.vertices.contains_key(vhash) {
+            return Err(Error::NotFound);
+        }
+        if let Some(changes) = self.recompute_confidences(vhash) {
             // Recompute preferences, and collect the changes
             let mut pref = HashSet::with_capacity(changes.len());
             let mut nonpref = HashSet::with_capacity(changes.len());
             for changed in changes {
-                let (updated, preferred) = self.recompute_preference(&changed)?;
+                let (updated, preferred) = self.recompute_preference(&changed);
                 if updated && preferred {
                     pref.insert(changed);
                 } else if updated && !preferred {
@@ -182,7 +183,7 @@ impl DAG {
     /// Recursively recompute the confidences of the given [`Vertex`], and each of its undecided
     /// ancestors, returning the hashes of every vertex which changed, ordered from oldest to
     /// youngest
-    fn recompute_confidences(&mut self, vhash: &VertexHash) -> Result<Option<Vec<VertexHash>>> {
+    fn recompute_confidences(&mut self, vhash: &VertexHash) -> Option<Vec<VertexHash>> {
         // Compute the new confidence value
         let progeny_confidence: usize = self.children[vhash]
             .keys()
@@ -190,7 +191,7 @@ impl DAG {
             .sum();
 
         // Update the confidence
-        let chitconf = self.chitconf.get_mut(vhash).ok_or(Error::NotFound)?;
+        let chitconf = self.chitconf.get_mut(vhash).unwrap();
         let new_confidence = usize::min(
             chitconf.0 + progeny_confidence, // confidence(v) = v.chit + confidence(v.progeny)
             params::AVALANCHE_ACCEPTANCE_THRESHOLD,
@@ -201,23 +202,23 @@ impl DAG {
         // If the state changed, recurse into children
         // TODO: do this in parallel
         if changed {
-            Ok(Some(
+            Some(
                 self.vertices[vhash]
                     .clone()
                     .parents
                     .iter()
-                    .filter_map(|parent| self.recompute_confidences(&parent).unwrap())
+                    .filter_map(|parent| self.recompute_confidences(&parent))
                     .flatten()
                     .collect(),
-            ))
+            )
         } else {
-            Ok(None)
+            None
         }
     }
 
     /// Recompute the preference of the given [`Vertex`], and return a tuple indicating if the
     /// preference has changed and the latest preference
-    fn recompute_preference(&mut self, vhash: &VertexHash) -> Result<(bool, bool)> {
+    fn recompute_preference(&mut self, vhash: &VertexHash) -> (bool, bool) {
         let vx = &self.vertices[vhash];
         let conflicts = self.conflicts.conflicts_of(vx);
 
@@ -255,7 +256,7 @@ impl DAG {
                 }
             }
         }
-        Ok((updated, new_preference))
+        (updated, new_preference)
     }
 
     /// Insert a vertex into the [`DAG`]. Returns boolean indicating
@@ -304,11 +305,10 @@ impl DAG {
         self.frontier
             .iter()
             .map(|vhash| (vhash, self.vertices[vhash].timestamp))
-            .sorted_by(|(_, t1), (_, t2)| Ord::cmp(t1, t2))
+            .sorted_by_key(|(_vhash, time)| *time)
             .map(|(vhash, _time)| vhash)
             .copied()
             .collect()
-        // TODO: double check this isn't reverse ordering
     }
 }
 

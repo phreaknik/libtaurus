@@ -46,7 +46,8 @@ message Preference {
 
 message Vertex {
   uint32 version = 1;
-	repeated Hash parents = 2;
-	Hash namespace = 3;
-	Hash root = 4;
+  uint64 height = 2;
+	repeated Hash parents = 3;
+	Hash namespace_id = 4;
+	Hash root = 5;
 }
