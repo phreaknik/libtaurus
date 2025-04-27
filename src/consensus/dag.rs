@@ -227,12 +227,15 @@ impl DAG {
         // TODO: do this in parallel
         if changed {
             Some(
-                self.vertices[vhash]
-                    .clone()
-                    .parents
-                    .iter()
-                    .filter_map(|parent| self.recompute_confidences(&parent))
-                    .flatten()
+                once(*vhash)
+                    .chain(
+                        self.vertices[vhash]
+                            .clone()
+                            .parents
+                            .iter()
+                            .filter_map(|parent| self.recompute_confidences(&parent))
+                            .flatten(),
+                    )
                     .collect(),
             )
         } else {
@@ -344,6 +347,8 @@ impl DAG {
 
 #[cfg(test)]
 mod test {
+    use itertools::Itertools;
+
     use super::{Config, DAG};
     use crate::{
         consensus::{conflict_set::ConflictGraph, dag},
@@ -452,12 +457,47 @@ mod test {
 
     #[test]
     fn map_child() {
-        todo!();
+        let gen = Arc::new(Vertex::empty());
+        let c0 = test_vertex([&gen]);
+        let c1 = test_vertex([&gen]);
+        let c2 = test_vertex([&c0, &c1]);
+        let mut dag = DAG::new(Config::default());
+        dag.children.insert(gen.hash(), HashMap::new());
+        dag.children.insert(c0.hash(), HashMap::new());
+        dag.children.insert(c1.hash(), HashMap::new());
+        dag.children.insert(c2.hash(), HashMap::new());
+        assert_eq!(dag.children[&gen.hash()].len(), 0);
+        assert_eq!(dag.children[&c0.hash()].len(), 0);
+        assert_eq!(dag.children[&c1.hash()].len(), 0);
+        assert_eq!(dag.children[&c2.hash()].len(), 0);
+        dag.map_child(&c0);
+        assert_eq!(dag.children[&gen.hash()].len(), 1);
+        assert_eq!(dag.children[&c0.hash()].len(), 0);
+        assert_eq!(dag.children[&c1.hash()].len(), 0);
+        assert_eq!(dag.children[&c2.hash()].len(), 0);
+        dag.map_child(&c1);
+        assert_eq!(dag.children[&gen.hash()].len(), 2);
+        assert_eq!(dag.children[&c0.hash()].len(), 0);
+        assert_eq!(dag.children[&c1.hash()].len(), 0);
+        assert_eq!(dag.children[&c2.hash()].len(), 0);
+        dag.map_child(&c2);
+        assert_eq!(dag.children[&gen.hash()].len(), 2);
+        assert_eq!(dag.children[&c0.hash()].len(), 1);
+        assert_eq!(dag.children[&c1.hash()].len(), 1);
+        assert_eq!(dag.children[&c2.hash()].len(), 0);
     }
 
     #[test]
     fn is_preferred() {
-        todo!();
+        let gen = Arc::new(Vertex::empty());
+        let c0 = test_vertex([&gen]);
+        let c1 = test_vertex([&gen]);
+        let mut dag = DAG::new(Config::default());
+        dag.preferences.insert(gen.hash(), true);
+        dag.preferences.insert(c0.hash(), false);
+        assert_eq!(dag.is_preferred(&gen).unwrap(), true);
+        assert_eq!(dag.is_preferred(&c0).unwrap(), false);
+        assert_matches!(dag.is_preferred(&c1), Err(dag::Error::NotFound));
     }
 
     #[test]
@@ -467,7 +507,80 @@ mod test {
 
     #[test]
     fn recompute_confidences() {
-        todo!();
+        let gen = Arc::new(Vertex::empty());
+        let c0 = test_vertex([&gen]);
+        let c1 = test_vertex([&gen]);
+        let c2 = test_vertex([&c0, &c1]);
+        let c3 = test_vertex([&c0, &c1]);
+        let mut dag = DAG::new(Config::default());
+        dag.vertices.insert(gen.hash(), gen.clone());
+        dag.vertices.insert(c0.hash(), c0.clone());
+        dag.vertices.insert(c1.hash(), c1.clone());
+        dag.vertices.insert(c2.hash(), c2.clone());
+        dag.vertices.insert(c3.hash(), c3.clone());
+        dag.children.insert(gen.hash(), HashMap::new());
+        dag.children.insert(c0.hash(), HashMap::new());
+        dag.children.insert(c1.hash(), HashMap::new());
+        dag.children.insert(c2.hash(), HashMap::new());
+        dag.children.insert(c3.hash(), HashMap::new());
+        dag.map_child(&gen);
+        dag.map_child(&c0);
+        dag.map_child(&c1);
+        dag.map_child(&c2);
+        dag.map_child(&c3);
+        dag.chitconf.insert(gen.hash(), (0, 0));
+        dag.chitconf.insert(c0.hash(), (0, 0));
+        dag.chitconf.insert(c1.hash(), (0, 0));
+        dag.chitconf.insert(c2.hash(), (0, 0));
+        dag.chitconf.insert(c3.hash(), (0, 0));
+        // everything should have 0 confidence
+        assert_matches!(dag.recompute_confidences(&c3.hash()), None);
+        assert_eq!(dag.chitconf[&gen.hash()].1, 0);
+        assert_eq!(dag.chitconf[&c0.hash()].1, 0);
+        assert_eq!(dag.chitconf[&c1.hash()].1, 0);
+        assert_eq!(dag.chitconf[&c2.hash()].1, 0);
+        assert_eq!(dag.chitconf[&c3.hash()].1, 0);
+        dag.chitconf.insert(c3.hash(), (1, 0)); // Assign chit to c3
+        if let Some(modified) = dag.recompute_confidences(&c3.hash()) {
+            assert!(modified.into_iter().sorted().eq([
+                c3.hash(),
+                c2.hash(),
+                c1.hash(),
+                c0.hash(),
+                gen.hash()
+            ]
+            .into_iter()
+            .sorted()));
+        } else {
+            panic!("expected modifications")
+        }
+        still working here
+        assert_eq!(dag.chitconf[&gen.hash()].1, 2);
+        assert_eq!(dag.chitconf[&c0.hash()].1, 1);
+        assert_eq!(dag.chitconf[&c1.hash()].1, 1);
+        assert_eq!(dag.chitconf[&c2.hash()].1, 0);
+        assert_eq!(dag.chitconf[&c3.hash()].1, 1);
+        dag.chitconf.insert(c2.hash(), (1, 0)); // Assign chit to c2
+        dag.recompute_confidences(&c3.hash());
+        assert_eq!(dag.chitconf[&gen.hash()].1, 4);
+        assert_eq!(dag.chitconf[&c0.hash()].1, 2);
+        assert_eq!(dag.chitconf[&c1.hash()].1, 2);
+        assert_eq!(dag.chitconf[&c2.hash()].1, 1);
+        assert_eq!(dag.chitconf[&c3.hash()].1, 1);
+        dag.chitconf.insert(c1.hash(), (1, 0)); // Assign chit to c1
+        dag.recompute_confidences(&c3.hash());
+        assert_eq!(dag.chitconf[&gen.hash()].1, 5);
+        assert_eq!(dag.chitconf[&c0.hash()].1, 2);
+        assert_eq!(dag.chitconf[&c1.hash()].1, 3);
+        assert_eq!(dag.chitconf[&c2.hash()].1, 1);
+        assert_eq!(dag.chitconf[&c3.hash()].1, 1);
+        dag.chitconf.insert(c0.hash(), (1, 0)); // Assign chit to c0
+        dag.recompute_confidences(&c3.hash());
+        assert_eq!(dag.chitconf[&gen.hash()].1, 6);
+        assert_eq!(dag.chitconf[&c0.hash()].1, 3);
+        assert_eq!(dag.chitconf[&c1.hash()].1, 3);
+        assert_eq!(dag.chitconf[&c2.hash()].1, 1);
+        assert_eq!(dag.chitconf[&c3.hash()].1, 1);
     }
 
     #[test]
