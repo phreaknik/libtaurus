@@ -1,5 +1,8 @@
 use crate::{vertex::VertexPair, wire::WireFormat, Vertex, VertexHash};
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 /// A [`ConflictGraph`] maps every [`Vertex`] to the an ordering [`Constraint`] and the set of
 /// vertices which agree or disagree on that constraint.
@@ -31,10 +34,11 @@ impl ConflictGraph {
     }
 
     /// Return an iterator which yields each [`Vertex`] which conflicts with the specified
-    pub fn conflicts_of(&self, vx: &Arc<Vertex>) -> HashMap<&VertexHash, &Arc<Vertex>> {
+    pub fn conflicts_of(&self, vx: &Arc<Vertex>) -> HashSet<VertexHash> {
         vx.parent_pairs()
-            .map(|pair| self.graph[&pair].conflicts_of(vx).iter())
+            .map(|pair| self.graph[&pair].conflicts_of(vx).keys())
             .flatten()
+            .copied()
             .collect()
     }
 }
@@ -145,13 +149,9 @@ mod test {
         let should_conflict = |dut, expected: &[&Arc<Vertex>]| {
             expected
                 .iter()
-                .map(|&vx| (vx.hash(), vx))
-                .sorted_by_key(|e| e.0)
-                .eq(cflcts
-                    .conflicts_of(dut)
-                    .into_iter()
-                    .map(|(hash, vx)| (hash.clone(), vx))
-                    .sorted_by_key(|e| e.0))
+                .map(|&vx| vx.hash())
+                .sorted()
+                .eq(cflcts.conflicts_of(dut).into_iter().sorted())
         };
         assert!(should_conflict(&v11, &[]));
         assert!(should_conflict(&v21, &[]));
