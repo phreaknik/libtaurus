@@ -209,8 +209,93 @@ impl DAG {
     }
 
     /// Award a chit to the specified vertex, according to the Avalanche protocol
-    pub fn award_chit(&mut self, _vhash: &VertexHash) -> Result<()> {
-        todo!()
+    pub fn award_chit(&mut self, vhash: &VertexHash) -> Result<()> {
+        // Helper to recursively reset confidences. Returns true if the confidence of the specified
+        // constraint has changed.
+        fn reset(dag: &mut DAG, c: &Constraint) -> bool {
+            // Reset self chit & confidence for this vertex
+            let (conf_changed, children_to_reset) = dag
+                .state
+                .get_mut(&c)
+                .and_then(|state| {
+                    let orig_conf = state.confidence;
+                    state.chit = false;
+                    state.confidence = 0;
+                    state.preferred = false;
+                    Some((orig_conf != state.confidence, state.children.clone()))
+                })
+                .unwrap();
+
+            // Recursively reset each child
+            for child in &children_to_reset {
+                reset(dag, child);
+            }
+
+            conf_changed
+        }
+
+        // Helper to recursively recompute confidences
+        fn recompute_at(dag: &mut DAG, c: &Constraint) {
+            // Sum up child confidences
+            let orig_state = dag.state[c].clone();
+            let child_conf = orig_state
+                .children
+                .iter()
+                .map(|child| dag.state[child].confidence)
+                .sum::<usize>();
+
+            // Assign new confidence as chit + child_conf
+            let new_conf = dag
+                .state
+                .get_mut(c)
+                .and_then(|state| {
+                    state.confidence = state.chit as usize + child_conf;
+                    Some(state.confidence)
+                })
+                .unwrap();
+
+            if orig_state.confidence != new_conf {
+                //  Check to see if it has overtaken the confidence of the conflicting/opposite
+                // constraint.
+                let mut need_recompute = orig_state.parents.clone();
+                if dag.state[&c.opposite()].confidence < new_conf && reset(dag, &c.opposite()) {
+                    need_recompute.extend(&dag.state[&c.opposite()].parents);
+                }
+
+                // Recursively recompute confidences for each constraint which depends on modified
+                // the newl constraints.
+                for c in &need_recompute {
+                    recompute_at(dag, c);
+                }
+            }
+        }
+
+        // Award each constraint a chit
+        let modified = self
+            .vertex
+            .get(vhash)
+            .ok_or(Error::NotFound)?
+            .parent_constraints()
+            .filter_map(|c| {
+                let state = self.state.get_mut(&c).unwrap();
+                let orig_chit = state.chit;
+                let orig_pref = state.preferred;
+                state.chit = true;
+                state.preferred = true;
+                if !orig_chit || !orig_pref {
+                    Some(c)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        // Recompute state for each constraint with a new chit
+        for c in modified {
+            recompute_at(self, &c);
+        }
+
+        Ok(())
     }
 
     /// Get the latest vertices which have no children, in the order we've observed them
@@ -234,16 +319,16 @@ struct AvalancheState {
     /// Confidence counter represents the number of successive chits awarded in the progeny
     confidence: usize,
 
+    /// Is this constraint preferred over its conflict constraint? Since a constraint only commits
+    /// to the relative order of two vertices, a constraint may only conflict with its
+    /// opposite.
+    preferred: bool,
+
     /// Ordering constraints does this constraint depend on
     parents: HashSet<Constraint>,
 
     /// Known ordering constraints which depend on this
     children: HashSet<Constraint>,
-
-    /// Is this constraint preferred over its conflict constraint? Since a constraint only commits
-    /// to the relative order of two vertices, a constraint may only conflict with its
-    /// opposite.
-    preferred: bool,
 }
 
 #[cfg(test)]
