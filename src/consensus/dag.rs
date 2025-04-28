@@ -165,14 +165,17 @@ impl DAG {
             .ok_or(Error::NotFound)
     }
 
-    /// Recursively collect the full progeny of the specified vertex
-    fn collect_progeny(&self, vhash: &VertexHash) -> HashSet<VertexHash> {
+    /// Recursively collect the full progeny of the specified vertex, only including vertices which
+    /// are preferred
+    fn collect_preferred_progeny(&self, vhash: &VertexHash) -> HashSet<VertexHash> {
         self.children[vhash]
             .keys()
-            .map(|child| {
-                let mut tmp = self.collect_progeny(child);
-                tmp.insert(*child);
-                tmp.into_iter()
+            .filter_map(|child| {
+                self.preferences[child].then(|| {
+                    let mut tmp = self.collect_preferred_progeny(child);
+                    tmp.insert(*child);
+                    tmp.into_iter()
+                })
             })
             .flatten()
             .collect()
@@ -221,37 +224,31 @@ impl DAG {
         // TODO: this method in dire need of performance optimization
         // Count the number of chits in the progeny
         let progeny_chits: usize = self
-            .collect_progeny(vhash)
+            .collect_preferred_progeny(vhash)
             .iter()
-            .map(|vhash| self.chitconf[vhash].0)
-            .sum();
+            .filter(|vhash| self.chitconf[vhash].0 != 0)
+            .count();
 
         // Update the confidence
-        let chitconf = self.chitconf.get_mut(vhash).unwrap();
-        let new_confidence =
-            usize::min(chitconf.0 + progeny_chits, self.config.acceptance_threshold);
-        let changed = chitconf.1 != new_confidence;
-        chitconf.1 = new_confidence;
+        let chitconf = self.chitconf[vhash];
+        let new_conf = usize::min(chitconf.0 + progeny_chits, self.config.acceptance_threshold);
 
         // If the state changed, recurse into children
         // TODO: do this in parallel
-        if changed {
-            Some(
-                once(*vhash)
-                    .chain(
-                        self.vertices[vhash]
-                            .clone()
-                            .parents
-                            .iter()
-                            .filter_map(|parent| self.recompute_confidences(&parent))
-                            .flatten()
-                            .unique(),
-                    )
-                    .collect(),
-            )
-        } else {
-            None
-        }
+        (chitconf.1 != new_conf).then(|| {
+            self.chitconf.get_mut(vhash).unwrap().1 = new_conf;
+            once(*vhash)
+                .chain(
+                    self.vertices[vhash]
+                        .parents
+                        .clone()
+                        .iter()
+                        .filter_map(|parent| self.recompute_confidences(&parent))
+                        .flatten(),
+                )
+                .unique()
+                .collect()
+        })
     }
 
     /// Recompute the preference of the given [`Vertex`], and return a tuple indicating if the
@@ -513,7 +510,60 @@ mod test {
 
     #[test]
     fn collect_progeny() {
-        todo!();
+        // Set up test vertices and dag
+        let gen = Arc::new(Vertex::empty());
+        let c0 = test_vertex([&gen]);
+        let c1 = test_vertex([&gen]);
+        let c2 = test_vertex([&c0]);
+        let c3 = test_vertex([&c0, &c1]);
+        let c4 = test_vertex([&c2, &c3]);
+        let c5 = test_vertex([&c4]);
+        let mut dag = DAG::new(Config::default());
+
+        // Helper to advance the DAG with new vertices
+        let add_to_dag = |dag: &mut DAG, vx: &Arc<Vertex>| {
+            dag.vertices.insert(vx.hash(), vx.clone());
+            dag.children.insert(vx.hash(), HashMap::new());
+            dag.map_child(&vx);
+            dag.preferences.insert(vx.hash(), true);
+        };
+
+        // Helper to assert that the expected vertices are updated in a recomputation
+        let test_progeny = |dag: &mut DAG, start: &Arc<Vertex>, expected: &[&Arc<Vertex>]| {
+            assert!(dag
+                .collect_preferred_progeny(&start.hash())
+                .into_iter()
+                .sorted()
+                .eq(expected.into_iter().map(|vx| vx.hash()).sorted()));
+        };
+
+        // Add everything to the dag with 0 chit & confidence
+        add_to_dag(&mut dag, &gen);
+        add_to_dag(&mut dag, &c0);
+        add_to_dag(&mut dag, &c1);
+        add_to_dag(&mut dag, &c2);
+        add_to_dag(&mut dag, &c3);
+        add_to_dag(&mut dag, &c4);
+        add_to_dag(&mut dag, &c5);
+
+        // Check progenies with every vertex preferred and chitted
+        test_progeny(&mut dag, &gen, &[&c0, &c1, &c2, &c3, &c4, &c5]);
+        test_progeny(&mut dag, &c0, &[&c2, &c3, &c4, &c5]);
+        test_progeny(&mut dag, &c1, &[&c3, &c4, &c5]);
+        test_progeny(&mut dag, &c2, &[&c4, &c5]);
+        test_progeny(&mut dag, &c3, &[&c4, &c5]);
+        test_progeny(&mut dag, &c4, &[&c5]);
+        test_progeny(&mut dag, &c5, &[]);
+
+        // Clear some preferences and check
+        *dag.preferences.get_mut(&c4.hash()).unwrap() = false;
+        test_progeny(&mut dag, &gen, &[&c0, &c1, &c2, &c3]);
+        test_progeny(&mut dag, &c0, &[&c2, &c3]);
+        test_progeny(&mut dag, &c1, &[&c3]);
+        test_progeny(&mut dag, &c2, &[]);
+        test_progeny(&mut dag, &c3, &[]);
+        test_progeny(&mut dag, &c4, &[&c5]);
+        test_progeny(&mut dag, &c5, &[]);
     }
 
     #[test]
@@ -709,16 +759,15 @@ mod test {
             dag.children.insert(vx.hash(), HashMap::new());
             dag.map_child(&vx);
             dag.chitconf.insert(vx.hash(), (0, 0));
+            dag.preferences.insert(vx.hash(), true);
         };
 
         // Helper to assert that the expected vertices are updated in a recomputation
         let test_recompute =
             |dag: &mut DAG, start: &Arc<Vertex>, expected_updates: &[&Arc<Vertex>]| {
                 if let Some(modified) = dag.recompute_confidences(&start.hash()) {
-                    println!("---- recompute ----");
                     assert!(modified
                         .into_iter()
-                        .inspect(|vhash| println!(":::: {vhash}"))
                         .sorted()
                         .eq(expected_updates.into_iter().map(|vx| vx.hash()).sorted()));
                 } else {
@@ -776,35 +825,35 @@ mod test {
         assert_confidences(&dag, &[(&gen, 5), (&c0, 3), (&c1, 2), (&c2, 1), (&c3, 1)]);
 
         // Append enough vertices to saturate genesis at the acceptance threshold
-        let c4 = test_vertex([&c3]);
-        let c5 = test_vertex([&c4]);
+        let c4 = test_vertex([&c3]); // leaves c2 dangling on purpose
         add_to_dag(&mut dag, &c4);
-        add_to_dag(&mut dag, &c5);
         dag.chitconf.insert(c4.hash(), (1, 0));
-        dag.chitconf.insert(c5.hash(), (1, 0));
-        test_recompute(&mut dag, &c4, &[&gen, &c0, &c1, &c2, &c3, &c4]);
+        test_recompute(&mut dag, &c4, &[&gen, &c0, &c1, &c3, &c4]); // skips c2
         assert_confidences(
             &dag,
             &[
                 (&gen, MAX_CONF),
                 (&c0, 4),
                 (&c1, 3),
-                (&c2, 2),
+                (&c2, 1),
                 (&c3, 2),
                 (&c4, 1),
             ],
         );
-        test_recompute(&mut dag, &c5, &[&gen, &c0, &c1, &c2, &c3, &c4, &c5]);
+        let c5 = test_vertex([&c4]);
+        add_to_dag(&mut dag, &c5);
+        dag.chitconf.insert(c5.hash(), (1, 0));
+        test_recompute(&mut dag, &c5, &[&c0, &c1, &c3, &c4, &c5]); // skips c2 & no change to gen
         assert_confidences(
             &dag,
             &[
                 (&gen, MAX_CONF), // should not exceed max
                 (&c0, 5),
-                (&c1, 5),
-                (&c2, 5),
-                (&c3, 6),
-                (&c4, 6),
-                (&c5, 7),
+                (&c1, 4),
+                (&c2, 1),
+                (&c3, 3),
+                (&c4, 2),
+                (&c5, 1),
             ],
         );
     }
