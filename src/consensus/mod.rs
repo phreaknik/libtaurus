@@ -1,4 +1,3 @@
-mod conflict_set;
 pub mod dag;
 pub mod event;
 pub mod namespace;

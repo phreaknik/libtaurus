@@ -106,9 +106,9 @@ impl Vertex {
         }
     }
 
-    /// Return a list of [`VertexPair`]s for every permutation of pairs of this vertex's parents
-    pub fn parent_pairs<'a>(&'a self) -> VertexPairs<'a> {
-        VertexPairs::new(&self.parents)
+    /// Return a list of parent ordering [`Constraint`]s this [`Vertex`] commits to
+    pub fn parent_constraints<'a>(&'a self) -> Constraints<'a> {
+        Constraints::new(&self.parents)
     }
 }
 
@@ -186,31 +186,30 @@ impl std::fmt::Display for Vertex {
     }
 }
 
-/// A pair of [`Vertex`]s used to build parent ordering constraints
-#[derive(Clone, Default, Debug, PartialEq, Eq, Hash)]
-pub struct VertexPair(pub VertexHash, pub VertexHash);
+/// A [`Constraint`] describes an ordred [`Vertex`] pair, and is used to reach consensus on the
+/// total ordering of vertices in the graph. The left [`Vertex`] is constraint to come in sequence
+/// before the right.
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
+pub struct Constraint(pub VertexHash, pub VertexHash);
 
-impl VertexPair {
-    /// Construct a new [`VertexPair`] from two [`VertexHash`]s.
-    pub fn new(vx1: VertexHash, vx2: VertexHash) -> VertexPair {
-        if vx1 < vx2 {
-            VertexPair(vx1, vx2)
-        } else {
-            VertexPair(vx2, vx1)
-        }
+impl Constraint {
+    /// Return a [`Constraint`] for the opposite [`Vertex`] ordering
+    pub fn opposite(&self) -> Constraint {
+        Constraint(self.1, self.0)
     }
 }
 
-/// An [`Iterator`] which iterates over every permutation of pairs of parents of a [`Vertex`].
-pub struct VertexPairs<'a> {
+/// An [`Iterator`] which iterates over every permutation of parents [`Constraint`]s a [`Vertex`]
+/// commits to.
+pub struct Constraints<'a> {
     vertices: &'a Vec<VertexHash>,
     idx1: usize,
     idx2: usize,
 }
 
-impl<'a> VertexPairs<'a> {
-    fn new(vertices: &'a Vec<VertexHash>) -> VertexPairs<'a> {
-        VertexPairs {
+impl<'a> Constraints<'a> {
+    fn new(vertices: &'a Vec<VertexHash>) -> Constraints<'a> {
+        Constraints {
             vertices,
             idx1: 0,
             idx2: 1,
@@ -218,8 +217,8 @@ impl<'a> VertexPairs<'a> {
     }
 }
 
-impl<'a> Iterator for VertexPairs<'a> {
-    type Item = VertexPair;
+impl<'a> Iterator for Constraints<'a> {
+    type Item = Constraint;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.vertices.len() < 2 {
@@ -228,13 +227,13 @@ impl<'a> Iterator for VertexPairs<'a> {
             if self.idx1 == self.vertices.len() - 1 {
                 None
             } else {
-                let pair = VertexPair::new(self.vertices[self.idx1], self.vertices[self.idx2]);
+                let constraint = Constraint(self.vertices[self.idx1], self.vertices[self.idx2]);
                 self.idx2 += 1;
                 if self.idx2 == self.vertices.len() {
                     self.idx1 += 1;
                     self.idx2 = self.idx1 + 1;
                 }
-                Some(pair)
+                Some(constraint)
             }
         }
     }
@@ -271,7 +270,7 @@ mod test {
             event::EventRoot,
             namespace::{self, Namespace, NamespaceId},
         },
-        vertex::{self, VertexPair, VertexPairs, VERSION},
+        vertex::{self, Constraint, Constraints, VERSION},
         Vertex, VertexHash, WireFormat,
     };
     use std::{assert_matches::assert_matches, sync::Arc};
@@ -404,7 +403,7 @@ mod test {
     }
 
     #[test]
-    fn parent_pairs() {
+    fn parent_constraints() {
         let mut p1 = Vertex::empty();
         let mut p2 = Vertex::empty();
         let mut p3 = Vertex::empty();
@@ -418,49 +417,49 @@ mod test {
         assert!(Vertex::empty()
             .with_parents(vec![&p1])
             .unwrap()
-            .parent_pairs()
+            .parent_constraints()
             .eq(vec![]));
         assert!(Vertex::empty()
             .with_parents(vec![&p1, &p2])
             .unwrap()
-            .parent_pairs()
-            .eq(vec![VertexPair::new(p1.hash(), p2.hash())]));
+            .parent_constraints()
+            .eq(vec![Constraint(p1.hash(), p2.hash())]));
         assert!(Vertex::empty()
             .with_parents(vec![&p1, &p2, &p3])
             .unwrap()
-            .parent_pairs()
+            .parent_constraints()
             .eq(vec![
-                VertexPair::new(p1.hash(), p2.hash()),
-                VertexPair::new(p1.hash(), p3.hash()),
-                VertexPair::new(p2.hash(), p3.hash()),
+                Constraint(p1.hash(), p2.hash()),
+                Constraint(p1.hash(), p3.hash()),
+                Constraint(p2.hash(), p3.hash()),
             ]));
     }
 
     #[test]
-    fn new_pair() {
-        assert_eq!(VertexPair::new(H1, H2), VertexPair::new(H2, H1));
-        assert_eq!(VertexPair::new(H1, H2), VertexPair(H1, H2));
-        assert_eq!(VertexPair::new(H1, H2).0, H1);
-        assert_eq!(VertexPair::new(H1, H2).1, H2);
+    fn opposite_constraint() {
+        assert_ne!(Constraint(H1, H2), Constraint(H2, H1));
+        assert_ne!(Constraint(H3, H4), Constraint(H4, H3));
+        assert_eq!(Constraint(H1, H2).opposite(), Constraint(H2, H1));
+        assert_eq!(Constraint(H3, H4).opposite(), Constraint(H4, H3));
     }
 
     #[test]
-    fn new_pair_iter() {
-        assert!(VertexPairs::new(&vec![H1]).eq(vec![]));
-        assert!(VertexPairs::new(&vec![H1, H2]).eq(vec![VertexPair::new(H1, H2)]));
-        assert!(VertexPairs::new(&vec![H3, H2]).eq(vec![VertexPair::new(H2, H3)]));
-        assert!(VertexPairs::new(&vec![H1, H2, H3]).eq(vec![
-            VertexPair::new(H1, H2),
-            VertexPair::new(H1, H3),
-            VertexPair::new(H2, H3),
+    fn new_constraint_iter() {
+        assert!(Constraints::new(&vec![H1]).eq(vec![]));
+        assert!(Constraints::new(&vec![H1, H2]).eq(vec![Constraint(H1, H2)]));
+        assert!(Constraints::new(&vec![H3, H2]).eq(vec![Constraint(H3, H2)]));
+        assert!(Constraints::new(&vec![H1, H2, H3]).eq(vec![
+            Constraint(H1, H2),
+            Constraint(H1, H3),
+            Constraint(H2, H3),
         ]));
-        assert!(VertexPairs::new(&vec![H1, H2, H3, H4]).eq(vec![
-            VertexPair::new(H1, H2),
-            VertexPair::new(H1, H3),
-            VertexPair::new(H1, H4),
-            VertexPair::new(H2, H3),
-            VertexPair::new(H2, H4),
-            VertexPair::new(H3, H4),
+        assert!(Constraints::new(&vec![H1, H2, H3, H4]).eq(vec![
+            Constraint(H1, H2),
+            Constraint(H1, H3),
+            Constraint(H1, H4),
+            Constraint(H2, H3),
+            Constraint(H2, H4),
+            Constraint(H3, H4),
         ]));
     }
 }
