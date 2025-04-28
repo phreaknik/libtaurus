@@ -171,13 +171,19 @@ impl DAG {
         // Confidence is sum of chits in progeny
         let child_chits = self.progeny[&vx.hash()]
             .iter()
-            .map(|prog| self.chitconf[prog].0)
-            .sum::<usize>();
-        let confidence = {
+            .filter(|vhash| self.chitconf[vhash].0 != 0)
+            .count();
+        let new_conf = {
             let chitconf = self.chitconf.get_mut(&vx.hash()).unwrap();
             chitconf.1 = chitconf.0 + child_chits;
             chitconf.1
         };
+
+        // Recurse into parents
+        for parent in &self.vertices[&vx.hash()].parents.clone() {
+            // TODO: do this in parallel
+            self.recompute_at(&self.vertices[parent].clone());
+        }
 
         // Recompute preference
         let conflicts = self.conflicts.conflicts_of(vx);
@@ -187,40 +193,46 @@ impl DAG {
             .max()
             .unwrap_or(0);
         let parents_preferred = vx.parents.iter().all(|p| self.preferences[p]);
-        let pref = self.preferences.get_mut(&vx.hash()).unwrap();
-        let old_pref = *pref;
-        *pref = match confidence.cmp(&max_conflict_confidence) {
-            Ordering::Greater => parents_preferred,
-            Ordering::Equal => old_pref && parents_preferred,
-            Ordering::Less => false,
+        let (old_pref, new_pref) = {
+            let pref = self.preferences.get_mut(&vx.hash()).unwrap();
+            let old_pref = *pref;
+            *pref = match new_conf.cmp(&max_conflict_confidence) {
+                Ordering::Greater => parents_preferred,
+                Ordering::Equal => old_pref && parents_preferred,
+                Ordering::Less => false,
+            };
+            (old_pref, *pref)
         };
 
         // Helper to recursively reset state for vertex and its progeny
         fn reset(dag: &mut DAG, vhash: VertexHash) {
-            let chitconf = dag.chitconf.get_mut(&vhash).unwrap();
-            if *chitconf != (0, 0) {
-                *chitconf = (0, 0);
-                for child in dag.children[&vhash].clone() {
-                    reset(dag, child)
-                }
+            // TODO: performance opt: this method should not recurse into children which have
+            // already been reset
+            *dag.chitconf.get_mut(&vhash).unwrap() = (0, 0);
+            *dag.preferences.get_mut(&vhash).unwrap() = false;
+            dag.frontier.remove(&vhash); // Remove non-preferred from frontier
+            for child in dag.children[&vhash].clone() {
+                reset(dag, child)
             }
         }
 
         // If newly preferred, reset state of each conflict
-        if old_pref != *pref && !old_pref {
+        if old_pref != new_pref && !old_pref {
+            // Reset the state of each conflicting vertex
             for conflict in conflicts {
                 reset(self, conflict);
             }
-        }
 
-        // Recurse into parents
-        for parent in &self.vertices[&vx.hash()].parents.clone() {
-            // TODO: do this in parallel
-            self.recompute_at(&self.vertices[parent].clone());
+            // Add this vertex to the frontier, if it has no children
+            if self.children[&vx.hash()].is_empty() {
+                self.frontier.insert(vx.hash());
+            }
         }
-
-        I think I need to recurse into parents _before_ updating preferences.
-        If parents are not preferred, _preference_ recomp is useless.
+        println!(
+            ":::: recompute_at({}) -> pref={new_pref}, conf={new_conf}, progeny.len()={}, progeny.chits() = {child_chits}",
+            vx.hash(),
+             self.progeny[&vx.hash()].len(),
+        );
     }
 
     /// Insert a [`Vertex`] without checking. Returns boolean indicating if the vertex is preferred
@@ -228,7 +240,7 @@ impl DAG {
     fn insert_unchecked(&mut self, vx: &Arc<Vertex>) -> (bool, Option<HashSet<VertexHash>>) {
         // Initialize state variables for this vertex
         let _ = self.children.try_insert(vx.hash(), HashSet::new());
-        let _ = self.progeny.try_insert(vx.hash(), HashSet::new());
+        self.progeny.try_insert(vx.hash(), HashSet::new()).unwrap();
         self.conflicts.insert(vx);
         self.vertices.try_insert(vx.hash(), vx.clone()).unwrap();
         self.chitconf.try_insert(vx.hash(), (0, 0)).unwrap();
@@ -449,20 +461,13 @@ mod test {
 
     #[test]
     fn recompute_at() {
-        // Helper to map the child to each of its parents
-        let map_child = |dag: &mut DAG, vx: &Arc<Vertex>| {
-            for parent in &vx.parents {
-                dag.map_child(&vx.hash(), parent)
-            }
-        };
-
         // Set up test vertices and dag
         let gen = Arc::new(Vertex::empty());
         let a00 = test_vertex([&gen]);
         let a01 = test_vertex([&gen]);
         let a02 = test_vertex([&gen]);
 
-        // Create conflicting sets a & b
+        // Create conflicting sets b & c
         let b10 = test_vertex([&a00, &a01]);
         let b11 = test_vertex([&a00, &a02]);
         let b20 = test_vertex([&b10]);
@@ -478,14 +483,33 @@ mod test {
         let add_to_dag = |dag: &mut DAG, vx: &Arc<Vertex>| {
             dag.vertices.insert(vx.hash(), vx.clone());
             dag.children.insert(vx.hash(), HashSet::new());
-            map_child(dag, &vx);
+            dag.progeny.insert(vx.hash(), HashSet::new());
             dag.chitconf.insert(vx.hash(), (0, 0));
             dag.preferences.insert(vx.hash(), false);
             dag.conflicts.insert(&vx);
+            for parent in &vx.parents {
+                dag.map_child(&vx.hash(), parent);
+                dag.map_progeny(&vx.hash(), parent);
+            }
         };
 
         // Helper to assert that all confidences match expected
         let assert_confs_and_prefs = |dag: &DAG, expected: &[(&Arc<Vertex>, (usize, bool))]| {
+            // Print actual states
+            expected
+                .iter()
+                .map(|(vx, _)| {
+                    (
+                        vx.hash(),
+                        dag.chitconf[&vx.hash()].0,
+                        dag.chitconf[&vx.hash()].1,
+                        dag.preferences[&vx.hash()],
+                    )
+                })
+                .for_each(|(vhash, chit, conf, pref)| {
+                    println!("state({vhash}) = ({chit}, {conf}, {pref})");
+                });
+            // Confirm actual states match expected states
             for (vhash, conf, pref) in expected
                 .iter()
                 .map(|(vx, confpref)| (vx.hash(), confpref.0, confpref.1))
@@ -498,6 +522,11 @@ mod test {
         // Helper to set the confidence of a vertex
         let set_chit = |dag: &mut DAG, vx: &Arc<Vertex>, chit: usize| {
             dag.chitconf.get_mut(&vx.hash()).unwrap().0 = chit;
+            if chit == 0 {
+                // If we are resetting this vertex, also clear its confidence and preference
+                dag.chitconf.get_mut(&vx.hash()).unwrap().1 = 0;
+                *dag.preferences.get_mut(&vx.hash()).unwrap() = false;
+            }
         };
 
         // Insert everything into the DAG
@@ -554,7 +583,7 @@ mod test {
         set_chit(&mut dag, &b20, 1);
         set_chit(&mut dag, &b21, 1);
         set_chit(&mut dag, &b30, 1);
-        println!(":::: c30 = {}", &c30.hash());
+        println!(":::: b30 = {}", &b30.hash());
         dag.recompute_at(&b30);
         assert_confs_and_prefs(
             &dag,
@@ -576,12 +605,18 @@ mod test {
             ],
         );
 
-        // Awarding chits to "c" sub tree should not change the results
+        // Awarding chits to "c" sub tree instead
+        set_chit(&mut dag, &b10, 0);
+        set_chit(&mut dag, &b11, 0);
+        set_chit(&mut dag, &b20, 0);
+        set_chit(&mut dag, &b21, 0);
+        set_chit(&mut dag, &b30, 0);
         set_chit(&mut dag, &c10, 1);
         set_chit(&mut dag, &c11, 1);
         set_chit(&mut dag, &c20, 1);
         set_chit(&mut dag, &c21, 1);
         set_chit(&mut dag, &c30, 1);
+        println!(":::: c30 = {}", &c30.hash());
         dag.recompute_at(&c30);
         assert_confs_and_prefs(
             &dag,
@@ -590,42 +625,91 @@ mod test {
                 (&a00, (6, true)),
                 (&a01, (5, true)),
                 (&a02, (4, true)),
-                (&b10, (4, true)),
-                (&b11, (3, true)),
-                (&b20, (2, true)),
-                (&b21, (2, true)),
-                (&b30, (1, true)),
+                (&b10, (0, false)),
+                (&b11, (0, false)),
+                (&b20, (0, false)),
+                (&b21, (0, false)),
+                (&b30, (0, false)),
+                (&c10, (4, true)),
+                (&c11, (3, true)),
+                (&c20, (2, true)),
+                (&c21, (2, true)),
+                (&c30, (1, true)),
+            ],
+        );
+
+        // Extend progeny of b30 to flip "b" sub tree back into preference
+        let b40 = test_vertex([&b30]);
+        let b50 = test_vertex([&b40]);
+        let b60 = test_vertex([&b50]);
+        let b70 = test_vertex([&b60]);
+        let b80 = test_vertex([&b70]);
+        add_to_dag(&mut dag, &b40);
+        add_to_dag(&mut dag, &b50);
+        add_to_dag(&mut dag, &b60);
+        add_to_dag(&mut dag, &b70);
+        add_to_dag(&mut dag, &b80);
+        set_chit(&mut dag, &b40, 1);
+        set_chit(&mut dag, &b50, 1);
+        set_chit(&mut dag, &b60, 1);
+        set_chit(&mut dag, &b70, 1);
+        set_chit(&mut dag, &b80, 1);
+        println!(":::: b80 = {}", &b80.hash());
+        dag.recompute_at(&b80);
+        println!(
+            ":::: gen.progeny = len={}, w/chits={}",
+            dag.progeny[&gen.hash()].len(),
+            dag.progeny[&gen.hash()]
+                .iter()
+                .filter(|vhash| dag.chitconf[vhash].0 != 0)
+                .count()
+        );
+        println!(
+            ":::: a00.progeny = len={}, w/chits={}",
+            dag.progeny[&a00.hash()].len(),
+            dag.progeny[&a00.hash()]
+                .iter()
+                .filter(|vhash| dag.chitconf[vhash].0 != 0)
+                .count()
+        );
+        println!(
+            ":::: a01.progeny = len={}, w/chits={}",
+            dag.progeny[&a01.hash()].len(),
+            dag.progeny[&a01.hash()]
+                .iter()
+                .filter(|vhash| dag.chitconf[vhash].0 != 0)
+                .count()
+        );
+        println!(
+            ":::: a02.progeny = len={}, w/chits={}",
+            dag.progeny[&a02.hash()].len(),
+            dag.progeny[&a02.hash()]
+                .iter()
+                .filter(|vhash| dag.chitconf[vhash].0 != 0)
+                .count()
+        );
+        assert_confs_and_prefs(
+            &dag,
+            &[
+                (&gen, (MAX_CONF, true)),
+                (&a00, (6, true)),
+                (&a01, (6, true)),
+                (&a02, (6, true)),
+                (&b10, (5, true)),
+                (&b11, (5, true)),
+                (&b20, (5, true)),
+                (&b21, (5, true)),
+                (&b30, (5, true)),
                 (&c10, (0, false)),
                 (&c11, (0, false)),
                 (&c20, (0, false)),
                 (&c21, (0, false)),
                 (&c30, (0, false)),
-            ],
-        );
-
-        // Extend progeny of c30 to flip "c" sub tree into preference
-        let c40 = test_vertex([&c21, &c20]);
-        add_to_dag(&mut dag, &c40);
-        set_chit(&mut dag, &c40, 1);
-        dag.recompute_at(&c40);
-        assert_confs_and_prefs(
-            &dag,
-            &[
-                (&gen, (MAX_CONF, true)),
-                (&a00, (7, true)),
-                (&a01, (6, true)),
-                (&a02, (5, true)),
-                (&b10, (0, true)),
-                (&b11, (0, true)),
-                (&b20, (0, true)),
-                (&b21, (0, true)),
-                (&b30, (0, true)),
-                (&c10, (5, false)),
-                (&c11, (4, false)),
-                (&c20, (3, false)),
-                (&c21, (3, false)),
-                (&c30, (2, false)),
-                (&c40, (1, false)),
+                (&b40, (5, true)),
+                (&b50, (4, true)),
+                (&b60, (3, true)),
+                (&b70, (2, true)),
+                (&b80, (1, true)),
             ],
         );
     }
