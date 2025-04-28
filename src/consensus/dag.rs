@@ -247,6 +247,8 @@ impl DAG {
     /// Recompute the preference of the given [`Vertex`], and return a tuple indicating if the
     /// preference has changed and the latest preference
     fn recompute_preference(&mut self, vhash: &VertexHash) -> (bool, bool) {
+        println!("");
+        println!(":::: recompute_preference({vhash})");
         let vx = &self.vertices[vhash];
         let conflicts = self.conflicts.conflicts_of(vx);
 
@@ -256,11 +258,18 @@ impl DAG {
             .map(|vhash| self.chitconf[vhash].1)
             .max()
             .unwrap_or(0);
+        println!(":::: max_conflict_confidence = {max_conflict_confidence}");
 
         // Determine if this vertex is preferred over its conflicts
         let confidence = self.chitconf[vhash].1;
+        println!(":::: confidence = {confidence}");
         let old_preference = self.preferences[vhash];
-        let new_preference = if !vx.parents.iter().all(|parent| self.preferences[parent]) {
+        let new_preference = if !vx
+            .parents
+            .iter()
+            .inspect(|parent| println!(":::: parent.pref = {}", self.preferences[parent]))
+            .all(|parent| self.preferences[parent])
+        {
             // If any parents are not preferred, this vertex cannot be preferred
             false
         } else if confidence == max_conflict_confidence {
@@ -584,11 +593,141 @@ mod test {
 
     #[test]
     fn recompute_preferences() {
-        todo!();
+        // Set up test vertices and dag
+        let gen = Arc::new(Vertex::empty());
+        let a00 = test_vertex([&gen]);
+        let a01 = test_vertex([&gen]);
+        let a02 = test_vertex([&gen]);
+        // Create conflicting sets a & b
+        let b10 = test_vertex([&a00, &a01]);
+        let b11 = test_vertex([&a00, &a02]);
+        let c10 = test_vertex([&a01, &a00]);
+        let c11 = test_vertex([&a02, &a00]);
+        let b20 = test_vertex([&b10]);
+        let b21 = test_vertex([&b10, &b11]);
+        let c20 = test_vertex([&c10]);
+        let c21 = test_vertex([&c10, &c11]);
+
+        // Helper to advance the DAG with new vertices
+        let add_to_dag = |dag: &mut DAG, vx: &Arc<Vertex>| {
+            dag.vertices.insert(vx.hash(), vx.clone());
+            dag.children.insert(vx.hash(), HashMap::new());
+            dag.map_child(&vx);
+            dag.chitconf.insert(vx.hash(), (0, 0));
+            dag.preferences.insert(vx.hash(), false);
+            dag.conflicts.insert(&vx);
+        };
+
+        // Helper to set the confidence of a vertex
+        let set_confidence = |dag: &mut DAG, vx: &Arc<Vertex>, conf: usize| {
+            dag.chitconf.insert(vx.hash(), (0, conf)); // chit doesn't matter in these tests
+        };
+
+        // Insert everything into the DAG
+        let mut dag = DAG::new(Config::default());
+        add_to_dag(&mut dag, &gen);
+        add_to_dag(&mut dag, &a00);
+        add_to_dag(&mut dag, &a01);
+        add_to_dag(&mut dag, &a02);
+        add_to_dag(&mut dag, &b10);
+        add_to_dag(&mut dag, &b11);
+        add_to_dag(&mut dag, &b20);
+        add_to_dag(&mut dag, &b21);
+        add_to_dag(&mut dag, &c10);
+        add_to_dag(&mut dag, &c11);
+        add_to_dag(&mut dag, &c20);
+        add_to_dag(&mut dag, &c21);
+
+        // Basic test
+        set_confidence(&mut dag, &gen, 100); // High enough to always be preferred
+        assert_eq!(dag.recompute_preference(&gen.hash()), (true, true));
+        assert_eq!(dag.recompute_preference(&gen.hash()), (false, true)); // No update
+
+        // Set "b" sub tree to be preferred
+        set_confidence(&mut dag, &a00, 10);
+        set_confidence(&mut dag, &a01, 10);
+        set_confidence(&mut dag, &a02, 10);
+        set_confidence(&mut dag, &b10, 5);
+        set_confidence(&mut dag, &b11, 4);
+        set_confidence(&mut dag, &b20, 3);
+        set_confidence(&mut dag, &b21, 3);
+        set_confidence(&mut dag, &c10, 0);
+        set_confidence(&mut dag, &c11, 4);
+        set_confidence(&mut dag, &c20, 10); // cannot be preferred, because of non-preferred parent
+        set_confidence(&mut dag, &c21, 10); // cannot be preferred, because of non-preferred parent
+
+        // Check that b subtree is preferred over c
+        assert_eq!(dag.recompute_preference(&gen.hash()), (false, true));
+        assert_eq!(dag.recompute_preference(&a00.hash()), (true, true));
+        assert_eq!(dag.recompute_preference(&a01.hash()), (true, true));
+        assert_eq!(dag.recompute_preference(&a02.hash()), (true, true));
+        assert_eq!(dag.recompute_preference(&b10.hash()), (true, true));
+        assert_eq!(dag.recompute_preference(&b11.hash()), (false, false)); // tie with c11
+        set_confidence(&mut dag, &b11, 5);
+        assert_eq!(dag.recompute_preference(&b11.hash()), (true, true)); // now beats c11
+        assert_eq!(dag.recompute_preference(&b20.hash()), (true, true));
+        assert_eq!(dag.recompute_preference(&b21.hash()), (true, true));
+        assert_eq!(dag.recompute_preference(&c10.hash()), (false, false));
+        assert_eq!(dag.recompute_preference(&c11.hash()), (false, false));
+        assert_eq!(dag.recompute_preference(&c20.hash()), (false, false));
+        assert_eq!(dag.recompute_preference(&c21.hash()), (false, false));
+
+        // Flip c subtree to being preferred
+        set_confidence(&mut dag, &c10, 6);
+        set_confidence(&mut dag, &c11, 6);
+        assert_eq!(dag.recompute_preference(&gen.hash()), (false, true));
+        assert_eq!(dag.recompute_preference(&a00.hash()), (false, true));
+        assert_eq!(dag.recompute_preference(&a01.hash()), (false, true));
+        assert_eq!(dag.recompute_preference(&a02.hash()), (false, true));
+        assert_eq!(dag.recompute_preference(&b10.hash()), (true, false));
+        assert_eq!(dag.recompute_preference(&b11.hash()), (true, false));
+        assert_eq!(dag.recompute_preference(&b20.hash()), (true, false));
+        assert_eq!(dag.recompute_preference(&b21.hash()), (true, false));
+        assert_eq!(dag.recompute_preference(&c10.hash()), (true, true));
+        assert_eq!(dag.recompute_preference(&c11.hash()), (true, true));
+        assert_eq!(dag.recompute_preference(&c20.hash()), (true, true));
+        assert_eq!(dag.recompute_preference(&c21.hash()), (true, true));
     }
 
     #[test]
     fn try_insert() {
+        // Set up test vertices and dag
+        let gen = Arc::new(Vertex::empty());
+        let a00 = test_vertex([&gen]);
+        let a01 = test_vertex([&gen]);
+        let a02 = test_vertex([&gen]);
+        // Create conflicting sets a & b
+        let b10 = test_vertex([&a00, &a01]);
+        let b11 = test_vertex([&a00, &a02]);
+        let c10 = test_vertex([&a01, &a00]);
+        let c11 = test_vertex([&a02, &a00]);
+        let b20 = test_vertex([&b10]);
+        let b21 = test_vertex([&b10, &b11]);
+        let c20 = test_vertex([&c10]);
+        let c21 = test_vertex([&c10, &c11]);
+
+        // Helper to advance the DAG with new vertices
+        let add_to_dag = |dag: &mut DAG, vx: &Arc<Vertex>| {
+            dag.vertices.insert(vx.hash(), vx.clone());
+            dag.children.insert(vx.hash(), HashMap::new());
+            dag.map_child(&vx);
+            dag.chitconf.insert(vx.hash(), (0, 0));
+        };
+
+        // Insert everything into the DAG
+        let mut dag = DAG::new(Config::default());
+        add_to_dag(&mut dag, &gen);
+        add_to_dag(&mut dag, &a00);
+        add_to_dag(&mut dag, &a01);
+        add_to_dag(&mut dag, &a02);
+        add_to_dag(&mut dag, &b10);
+        add_to_dag(&mut dag, &b11);
+        add_to_dag(&mut dag, &b20);
+        add_to_dag(&mut dag, &b21);
+        add_to_dag(&mut dag, &c10);
+        add_to_dag(&mut dag, &c11);
+        add_to_dag(&mut dag, &c20);
+        add_to_dag(&mut dag, &c21);
         todo!()
     }
 
