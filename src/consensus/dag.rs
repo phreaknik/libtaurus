@@ -214,24 +214,29 @@ impl DAG {
         // constraint has changed.
         fn reset(dag: &mut DAG, c: &Constraint) -> bool {
             // Reset self chit & confidence for this vertex
-            let (conf_changed, children_to_reset) = dag
-                .state
-                .get_mut(&c)
-                .and_then(|state| {
-                    let orig_conf = state.confidence;
-                    state.chit = false;
-                    state.confidence = 0;
-                    state.preferred = false;
-                    Some((orig_conf != state.confidence, state.children.clone()))
-                })
-                .unwrap();
+            let children_to_reset = {
+                let state = dag.state.get_mut(&c).unwrap();
+                let orig_conf = state.confidence;
+                state.chit = false;
+                state.confidence = 0;
+                state.preferred = false;
+                let conf_changed = orig_conf != state.confidence;
+                if conf_changed {
+                    Some(state.children.clone())
+                } else {
+                    None
+                }
+            };
 
             // Recursively reset each child
-            for child in &children_to_reset {
-                reset(dag, child);
+            if let Some(children) = children_to_reset {
+                for child in &children {
+                    reset(dag, child);
+                }
+                true
+            } else {
+                false
             }
-
-            conf_changed
         }
 
         // Helper to recursively recompute confidences
@@ -249,7 +254,10 @@ impl DAG {
                 .state
                 .get_mut(c)
                 .and_then(|state| {
-                    state.confidence = state.chit as usize + child_conf;
+                    state.confidence = usize::min(
+                        dag.config.acceptance_threshold,
+                        state.chit as usize + child_conf,
+                    );
                     Some(state.confidence)
                 })
                 .unwrap();
@@ -270,7 +278,7 @@ impl DAG {
             }
         }
 
-        // Award each constraint a chit
+        // Award each constraint a chit, and collect which constraint states have been modified
         let modified = self
             .vertex
             .get(vhash)
