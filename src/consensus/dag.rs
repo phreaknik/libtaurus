@@ -347,6 +347,7 @@ mod test {
         assert_matches::assert_matches,
         collections::{HashMap, HashSet},
         sync::Arc,
+        thread, time,
     };
 
     #[test]
@@ -729,6 +730,26 @@ mod test {
 
     #[test]
     fn get_frontier() {
-        todo!()
+        let ten_millis = time::Duration::from_millis(10);
+        let gen = Arc::new(Vertex::empty());
+        thread::sleep(ten_millis);
+        let c0 = test_vertex([&gen]);
+        thread::sleep(ten_millis);
+        let c1 = test_vertex([&gen]);
+        thread::sleep(ten_millis);
+        let c2 = test_vertex([&c0, &c1]);
+        thread::sleep(ten_millis);
+        let mut dag = DAG::new(Config::default());
+        dag.vertex.insert(gen.hash(), gen.clone());
+        dag.vertex.insert(c0.hash(), c0.clone());
+        dag.vertex.insert(c1.hash(), c1.clone());
+        dag.vertex.insert(c2.hash(), c2.clone());
+
+        // Confirm that frontier is always sorted by timestamp
+        dag.frontier.insert(c0.hash());
+        dag.frontier.insert(c2.hash());
+        assert_eq!(dag.get_frontier(), vec![c0.hash(), c2.hash()]);
+        dag.frontier.insert(c1.hash()); // comes before c2
+        assert_eq!(dag.get_frontier(), vec![c0.hash(), c1.hash(), c2.hash()]);
     }
 }
