@@ -181,7 +181,7 @@ impl DAG {
         self.map_child(&vx.hash(), &vx.parents);
 
         (
-            self.is_preferred(vx).unwrap(),
+            self.is_preferred(&vx.hash()).unwrap(),
             self.children.get(&vx.hash()).cloned(),
         )
     }
@@ -204,8 +204,9 @@ impl DAG {
     }
 
     /// Return true if the specified vertex is preferred over all its conflicts
-    pub fn is_preferred(&self, _vx: &Vertex) -> Result<bool> {
-        todo!()
+    pub fn is_preferred(&self, vhash: &VertexHash) -> Result<bool> {
+        let vx = self.vertex.get(vhash).ok_or(Error::NotFound)?;
+        Ok(vx.parent_constraints().all(|c| self.state[&c].preferred))
     }
 
     /// Award a chit to the specified vertex, according to the Avalanche protocol
@@ -342,7 +343,12 @@ struct AvalancheState {
 #[cfg(test)]
 mod test {
     use super::{Config, DAG};
-    use crate::{consensus::dag, params, vertex::test_vertex, Vertex, WireFormat};
+    use crate::{
+        consensus::dag::{self, AvalancheState},
+        params,
+        vertex::test_vertex,
+        Vertex, WireFormat,
+    };
     use std::{
         assert_matches::assert_matches,
         collections::{HashMap, HashSet},
@@ -476,7 +482,25 @@ mod test {
 
     #[test]
     fn is_preferred() {
-        todo!()
+        let gen = Arc::new(Vertex::empty());
+        let c0 = test_vertex([&gen]);
+        let c1 = test_vertex([&gen]);
+        let c2 = test_vertex([&c0, &c1]);
+        let mut dag = DAG::new(Config::default());
+
+        // Confirm that frontier is always sorted by timestamp
+        assert_matches!(dag.is_preferred(&c2.hash()), Err(dag::Error::NotFound));
+        dag.vertex.insert(c2.hash(), c2.clone());
+        dag.constraints
+            .insert(c2.hash(), c2.parent_constraints().collect());
+        for constraint in c2.parent_constraints() {
+            dag.state.insert(constraint, AvalancheState::default());
+        }
+        assert_eq!(dag.is_preferred(&c2.hash()).unwrap(), false);
+        for constraint in c2.parent_constraints() {
+            dag.state.get_mut(&constraint).unwrap().preferred = true;
+        }
+        assert_eq!(dag.is_preferred(&c2.hash()).unwrap(), true);
     }
 
     #[test]
