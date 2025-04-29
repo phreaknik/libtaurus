@@ -197,6 +197,11 @@ impl Constraint {
     pub fn opposite(&self) -> Constraint {
         Constraint(self.1, self.0)
     }
+
+    /// Returns true if this is a unity constraint; i.e. it only references one vertex
+    pub fn is_unity(&self) -> bool {
+        self.0 == self.1
+    }
 }
 
 /// An [`Iterator`] which iterates over every permutation of parents [`Constraint`]s a [`Vertex`]
@@ -445,6 +450,12 @@ mod test {
         assert_eq!(Constraint(H1, H1).opposite(), Constraint(H1, H1));
         assert_eq!(Constraint(H1, H2).opposite(), Constraint(H2, H1));
         assert_eq!(Constraint(H3, H4).opposite(), Constraint(H4, H3));
+    }
+
+    #[test]
+    fn unity_constraint() {
+        assert_eq!(Constraint(H1, H1).is_unity(), true);
+        assert_eq!(Constraint(H2, H1).is_unity(), false);
     }
 
     #[test]

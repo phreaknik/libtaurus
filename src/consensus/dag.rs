@@ -142,6 +142,21 @@ impl DAG {
             return Err(Error::BadHeight(vx.height, expected_height));
         }
 
+        // Confirm parents do not have conflicting constraints
+        let constraints_of_parents = vx
+            .parents
+            .iter()
+            .map(|vhash| self.vertex[vhash].parent_constraints())
+            .flatten()
+            .collect::<HashSet<_>>();
+        if constraints_of_parents
+            .iter()
+            .filter(|c| !c.is_unity())
+            .any(|c| constraints_of_parents.contains(&c.opposite()))
+        {
+            return Err(Error::ConflictingParents);
+        }
+
         Ok(())
     }
 
@@ -431,18 +446,18 @@ mod test {
 
     #[test]
     fn check_vertex() {
-        // TODO: must test case where vertex references two conflicting parents
         let gen = Arc::new(Vertex::empty());
         let v0 = test_vertex([&gen]);
         let v1 = test_vertex([&gen]);
         let v2 = test_vertex([&gen]);
         let v3 = test_vertex([&v1, &v2]);
+        let x3 = test_vertex([&v2, &v1]); // conflicts with v3
+        let b4 = test_vertex([&v3, &x3]); // illegal! references conflicting parents
         let mut dag = DAG::new(Config::default());
 
-        dag.vertex.insert(gen.hash(), gen.clone());
-        dag.children.insert(gen.hash(), HashSet::new()); // Genesis is "processed"
-        dag.children.insert(v0.hash(), HashSet::new());
-        dag.vertex.insert(v0.hash(), v0.clone()); // c0 is "processed"
+        // Test for missing/waiting parents
+        dag.insert_unchecked(&gen);
+        dag.insert_unchecked(&v0);
         assert_matches!(dag.check_vertex(&v0), Err(dag::Error::AlreadyInserted));
         match dag.check_vertex(&v3) {
             Err(dag::Error::MissingParents(missing)) => {
@@ -450,37 +465,34 @@ mod test {
             }
             _ => panic!("Expected Error::MissingParents"),
         }
-        dag.children.insert(v1.hash(), HashSet::new()); // c1 is known but not processed
+        dag.vertex.insert(v1.hash(), v1.clone()); // v1 is known but not processed
         match dag.check_vertex(&v3) {
             Err(dag::Error::MissingParents(missing)) => {
                 assert_eq!(missing, [v2.hash()])
             }
             _ => panic!("Expected Error::MissingParents"),
         }
-        dag.children.insert(v2.hash(), HashSet::new()); // c2 is known but not processed
+        dag.vertex.insert(v2.hash(), v2.clone()); // v2 is known but not processed
         match dag.check_vertex(&v3) {
             Err(dag::Error::WaitingOnParents(waiting)) => {
                 assert_eq!(waiting, [v1.hash(), v2.hash()])
             }
             _ => panic!("Expected Error::WaitingOnParents"),
         }
-        dag.children.insert(v1.hash(), HashSet::new());
-        dag.vertex.insert(v1.hash(), v1.clone()); // c1 is "processed"
+        dag.insert_unchecked(&v1); // v1 is "processed"
         match dag.check_vertex(&v3) {
             Err(dag::Error::WaitingOnParents(waiting)) => {
                 assert_eq!(waiting, [v2.hash()])
             }
             _ => panic!("Expected Error::WaitingOnParents"),
         }
-        dag.children.insert(v2.hash(), HashSet::new());
-        dag.vertex.insert(v2.hash(), v2.clone()); // c2 is "processed"
+        dag.insert_unchecked(&v2); // v2 is "processed"
         assert_matches!(dag.check_vertex(&v3), Ok(()));
 
+        // Test parent heights
         let c4 = test_vertex([&gen, &v1]); // Parents have mismatched height
         assert_matches!(dag.check_vertex(&c4), Err(dag::Error::BadParentHeight));
-
-        dag.vertex.insert(v3.hash(), v3.clone());
-        dag.children.insert(v3.hash(), HashSet::new()); // c3 is "processed"
+        dag.insert_unchecked(&v3); // v3 is "processed"
         let mut c5 = Vertex::empty().with_parents([&v3]).unwrap();
         c5.height = 2; // Should have height 3
         match dag.check_vertex(&Arc::new(c5)) {
@@ -490,6 +502,10 @@ mod test {
             }
             _ => panic!("Expected Error::BadHeight"),
         }
+
+        // Catch conflicting parents
+        dag.insert_unchecked(&x3); // x3 is "processed"
+        assert_matches!(dag.check_vertex(&b4), Err(dag::Error::ConflictingParents));
     }
 
     #[test]
@@ -889,11 +905,35 @@ mod test {
 
     #[test]
     fn state_with_parents() {
-        todo!()
+        let gen = Arc::new(Vertex::empty());
+        let v0 = test_vertex([&gen]);
+        let v1 = test_vertex([&gen]);
+        let v2 = test_vertex([&v0, &v1]);
+        let v1_parents = v1.parent_constraints().collect::<HashSet<_>>();
+        let v2_parents = v2.parent_constraints().collect::<HashSet<_>>();
+        assert_eq!(
+            AvalancheState::default()
+                .with_parents(v1_parents.clone())
+                .parents,
+            v1_parents
+        );
+        assert_eq!(
+            AvalancheState::default()
+                .with_parents(v2_parents.clone())
+                .parents,
+            v2_parents
+        );
     }
 
     #[test]
     fn state_with_preference() {
-        todo!()
+        assert_eq!(
+            AvalancheState::default().with_preference(true).preferred,
+            true
+        );
+        assert_eq!(
+            AvalancheState::default().with_preference(false).preferred,
+            false
+        );
     }
 }
