@@ -14,12 +14,14 @@ use tracing::error;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[error("already exists")]
-    AlreadyExists,
+    #[error("already inserted")]
+    AlreadyInserted,
     #[error("bad height")]
     BadHeight(u64, u64),
     #[error("bad parent height")]
     BadParentHeight,
+    #[error("parents conflict")]
+    ConflictingParents,
     #[error(transparent)]
     Hash(#[from] crate::hash::Error),
     #[error("missing parents")]
@@ -98,8 +100,8 @@ impl DAG {
         vx.sanity_checks()?;
 
         // Check the child map to make sure this vertex doesn't already exist
-        if self.children.contains_key(&vx.hash()) {
-            return Err(Error::AlreadyExists);
+        if self.vertex.contains_key(&vx.hash()) {
+            return Err(Error::AlreadyInserted);
         }
 
         // Collect any parent vertices which we do not have yet, or which we are still waiting to
@@ -186,12 +188,12 @@ impl DAG {
 
     /// Insert a vertex into the [`DAG`].  Returns a list of known children waiting to be inserted
     /// after this vertex
-    pub fn try_insert(&mut self, vx: &Arc<Vertex>) -> Result<HashMap<VertexHash, Arc<Vertex>>> {
+    pub fn try_insert(&mut self, vx: &Arc<Vertex>) -> Result<HashSet<VertexHash>> {
         // TODO: this should be thread safe...need mutex on DAG?
         // Check if the vertex may be inserted
         self.check_vertex(vx).map_err(|e| {
             // Add vertex as known child, even if we are missing some of its parents
-            if let Error::MissingParents(_) = e {
+            if let Error::MissingParents(_) | Error::WaitingOnParents(_) = e {
                 self.map_child(&vx.hash(), &vx.parents);
             }
             e
@@ -205,7 +207,6 @@ impl DAG {
             .get_known_children(&vx.hash())?
             .into_iter()
             .filter(|vhash| !self.vertex.contains_key(vhash))
-            .map(|vhash| (vhash, self.vertex[&vhash].clone()))
             .collect())
     }
 
@@ -389,6 +390,7 @@ mod test {
 
     #[test]
     fn check_vertex() {
+        // TODO: must test case where vertex references two conflicting parents
         let gen = Arc::new(Vertex::empty());
         let v0 = test_vertex([&gen]);
         let v1 = test_vertex([&gen]);
@@ -400,7 +402,7 @@ mod test {
         dag.children.insert(gen.hash(), HashSet::new()); // Genesis is "processed"
         dag.children.insert(v0.hash(), HashSet::new());
         dag.vertex.insert(v0.hash(), v0.clone()); // c0 is "processed"
-        assert_matches!(dag.check_vertex(&v0), Err(dag::Error::AlreadyExists));
+        assert_matches!(dag.check_vertex(&v0), Err(dag::Error::AlreadyInserted));
         match dag.check_vertex(&v3) {
             Err(dag::Error::MissingParents(missing)) => {
                 assert_eq!(missing, [v1.hash(), v2.hash()])
@@ -483,7 +485,56 @@ mod test {
 
     #[test]
     fn try_insert() {
-        todo!()
+        let gen = Arc::new(Vertex::empty());
+        let v0 = test_vertex([&gen]);
+        let v1 = test_vertex([&gen]);
+        let v2 = test_vertex([&v0, &v1]);
+        let x2 = test_vertex([&v1, &v0]); // conflicts with v2
+        let v3 = test_vertex([&v2]);
+        let b3 = test_vertex([&v2, &x2]); // illegal to reference conflicting parents
+        let mut dag = DAG::new(Config::default());
+
+        // Initialize graph with genesis vertex
+        dag.insert_unchecked(&gen);
+
+        // Test for missing parents, waiting parents, and preference after insertions
+        match dag.try_insert(&v2) {
+            Err(dag::Error::MissingParents(missing)) => {
+                assert_eq!(missing, [v0.hash(), v1.hash()])
+            }
+            _ => panic!("Expected Error::MissingParents"),
+        }
+        assert_eq!(dag.try_insert(&v0).unwrap(), [v2.hash()].into());
+        assert!(dag.is_preferred(&v0.hash()).unwrap());
+        match dag.try_insert(&v2) {
+            Err(dag::Error::MissingParents(missing)) => {
+                assert_eq!(missing, [v1.hash()])
+            }
+            _ => panic!("Expected Error::MissingParents"),
+        }
+        match dag.try_insert(&x2) {
+            Err(dag::Error::MissingParents(missing)) => {
+                assert_eq!(missing, [v1.hash()])
+            }
+            _ => panic!("Expected Error::MissingParents"),
+        }
+        assert_eq!(dag.try_insert(&v1).unwrap(), [v2.hash(), x2.hash(),].into());
+        assert!(dag.is_preferred(&v1.hash()).unwrap());
+        match dag.try_insert(&v3) {
+            Err(dag::Error::WaitingOnParents(waiting)) => {
+                assert_eq!(waiting, [v2.hash()])
+            }
+            _ => panic!("Expected Error::WaitingOnParents"),
+        }
+        assert_eq!(dag.try_insert(&v2).unwrap(), [v3.hash()].into());
+        assert!(dag.is_preferred(&v2.hash()).unwrap());
+        assert_eq!(dag.try_insert(&v3).unwrap(), [].into());
+        assert!(dag.is_preferred(&v3.hash()).unwrap());
+        assert_eq!(dag.try_insert(&x2).unwrap(), [].into());
+        // x2 should not be preferred, due to conflict
+        assert!(dag.is_preferred(&x2.hash()).unwrap() == false);
+        // b3 should fail due to illegal parent combination
+        assert_matches!(dag.try_insert(&b3), Err(dag::Error::ConflictingParents));
     }
 
     #[test]
