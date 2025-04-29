@@ -151,17 +151,16 @@ impl DAG {
     }
 
     /// Insert a [`Vertex`] without checking. Returns boolean indicating if the vertex is preferred
-    /// or not, as well as a list of known children waiting to be inserted.
-    fn insert_unchecked(&mut self, vx: &Arc<Vertex>) -> (bool, Option<HashSet<VertexHash>>) {
+    fn insert_unchecked(&mut self, vx: &Arc<Vertex>) {
         // Add vertex to list of inserted vertices
-        self.vertex.try_insert(vx.hash(), vx.clone()).unwrap();
+        self.vertex.insert(vx.hash(), vx.clone());
 
         // Add an entry in the child map, if it doesn't already exist
         if !self.children.contains_key(&vx.hash()) {
             self.children.insert(vx.hash(), HashSet::new());
         }
 
-        // Add an entry in the constraint map, if it doesn't already exist
+        // Update constraint maps
         let constraints = vx
             .parent_constraints()
             .inspect(|c| {
@@ -171,25 +170,23 @@ impl DAG {
                 }
 
                 // Add an entry to the constraint map of every vertex constrained by these
-                self.constraints.get_mut(&c.0).unwrap().insert(*c);
-                self.constraints.get_mut(&c.1).unwrap().insert(*c);
+                if let Some(map) = self.constraints.get_mut(&c.0) {
+                    map.insert(*c);
+                }
+                if let Some(map) = self.constraints.get_mut(&c.1) {
+                    map.insert(*c);
+                }
             })
             .collect();
         self.constraints.insert(vx.hash(), constraints);
 
-        // Update child and progeny maps
+        // Update child map
         self.map_child(&vx.hash(), &vx.parents);
-
-        (
-            self.is_preferred(&vx.hash()).unwrap(),
-            self.children.get(&vx.hash()).cloned(),
-        )
     }
 
-    /// Insert a vertex into the [`DAG`]. Returns boolean indicating
-    /// if the vertex is preferred or not, as well as a list of known children waiting to be
-    /// inserted.
-    pub fn try_insert(&mut self, vx: &Arc<Vertex>) -> Result<(bool, Option<HashSet<VertexHash>>)> {
+    /// Insert a vertex into the [`DAG`].  Returns a list of known children waiting to be inserted
+    /// after this vertex
+    pub fn try_insert(&mut self, vx: &Arc<Vertex>) -> Result<HashMap<VertexHash, Arc<Vertex>>> {
         // TODO: this should be thread safe...need mutex on DAG?
         // Check if the vertex may be inserted
         self.check_vertex(vx).map_err(|e| {
@@ -200,7 +197,16 @@ impl DAG {
             e
         })?;
 
-        Ok(self.insert_unchecked(vx))
+        // Insert the vertex into the graph
+        self.insert_unchecked(vx);
+
+        // Return any waiting children
+        Ok(self
+            .get_known_children(&vx.hash())?
+            .into_iter()
+            .filter(|vhash| !self.vertex.contains_key(vhash))
+            .map(|vhash| (vhash, self.vertex[&vhash].clone()))
+            .collect())
     }
 
     /// Return true if the specified vertex is preferred over all its conflicts
@@ -317,6 +323,11 @@ impl DAG {
             .copied()
             .collect()
     }
+
+    /// Get the known children of the specified [`Vertex`]
+    pub fn get_known_children(&mut self, vhash: &VertexHash) -> Result<HashSet<VertexHash>> {
+        self.children.get(vhash).ok_or(Error::NotFound).cloned()
+    }
 }
 
 /// State variables used in Avalanche consensus, to reach agreement on the [`Constraint`] graph.
@@ -379,55 +390,55 @@ mod test {
     #[test]
     fn check_vertex() {
         let gen = Arc::new(Vertex::empty());
-        let c0 = test_vertex([&gen]);
-        let c1 = test_vertex([&gen]);
-        let c2 = test_vertex([&gen]);
-        let c3 = test_vertex([&c1, &c2]);
+        let v0 = test_vertex([&gen]);
+        let v1 = test_vertex([&gen]);
+        let v2 = test_vertex([&gen]);
+        let v3 = test_vertex([&v1, &v2]);
         let mut dag = DAG::new(Config::default());
 
         dag.vertex.insert(gen.hash(), gen.clone());
         dag.children.insert(gen.hash(), HashSet::new()); // Genesis is "processed"
-        dag.children.insert(c0.hash(), HashSet::new());
-        dag.vertex.insert(c0.hash(), c0.clone()); // c0 is "processed"
-        assert_matches!(dag.check_vertex(&c0), Err(dag::Error::AlreadyExists));
-        match dag.check_vertex(&c3) {
+        dag.children.insert(v0.hash(), HashSet::new());
+        dag.vertex.insert(v0.hash(), v0.clone()); // c0 is "processed"
+        assert_matches!(dag.check_vertex(&v0), Err(dag::Error::AlreadyExists));
+        match dag.check_vertex(&v3) {
             Err(dag::Error::MissingParents(missing)) => {
-                assert_eq!(missing, [c1.hash(), c2.hash()])
+                assert_eq!(missing, [v1.hash(), v2.hash()])
             }
             _ => panic!("Expected Error::MissingParents"),
         }
-        dag.children.insert(c1.hash(), HashSet::new()); // c1 is known but not processed
-        match dag.check_vertex(&c3) {
+        dag.children.insert(v1.hash(), HashSet::new()); // c1 is known but not processed
+        match dag.check_vertex(&v3) {
             Err(dag::Error::MissingParents(missing)) => {
-                assert_eq!(missing, [c2.hash()])
+                assert_eq!(missing, [v2.hash()])
             }
             _ => panic!("Expected Error::MissingParents"),
         }
-        dag.children.insert(c2.hash(), HashSet::new()); // c2 is known but not processed
-        match dag.check_vertex(&c3) {
+        dag.children.insert(v2.hash(), HashSet::new()); // c2 is known but not processed
+        match dag.check_vertex(&v3) {
             Err(dag::Error::WaitingOnParents(waiting)) => {
-                assert_eq!(waiting, [c1.hash(), c2.hash()])
+                assert_eq!(waiting, [v1.hash(), v2.hash()])
             }
             _ => panic!("Expected Error::WaitingOnParents"),
         }
-        dag.children.insert(c1.hash(), HashSet::new());
-        dag.vertex.insert(c1.hash(), c1.clone()); // c1 is "processed"
-        match dag.check_vertex(&c3) {
+        dag.children.insert(v1.hash(), HashSet::new());
+        dag.vertex.insert(v1.hash(), v1.clone()); // c1 is "processed"
+        match dag.check_vertex(&v3) {
             Err(dag::Error::WaitingOnParents(waiting)) => {
-                assert_eq!(waiting, [c2.hash()])
+                assert_eq!(waiting, [v2.hash()])
             }
             _ => panic!("Expected Error::WaitingOnParents"),
         }
-        dag.children.insert(c2.hash(), HashSet::new());
-        dag.vertex.insert(c2.hash(), c2.clone()); // c2 is "processed"
-        assert_matches!(dag.check_vertex(&c3), Ok(()));
+        dag.children.insert(v2.hash(), HashSet::new());
+        dag.vertex.insert(v2.hash(), v2.clone()); // c2 is "processed"
+        assert_matches!(dag.check_vertex(&v3), Ok(()));
 
-        let c4 = test_vertex([&gen, &c1]); // Parents have mismatched height
+        let c4 = test_vertex([&gen, &v1]); // Parents have mismatched height
         assert_matches!(dag.check_vertex(&c4), Err(dag::Error::BadParentHeight));
 
-        dag.vertex.insert(c3.hash(), c3.clone());
-        dag.children.insert(c3.hash(), HashSet::new()); // c3 is "processed"
-        let mut c5 = Vertex::empty().with_parents([&c3]).unwrap();
+        dag.vertex.insert(v3.hash(), v3.clone());
+        dag.children.insert(v3.hash(), HashSet::new()); // c3 is "processed"
+        let mut c5 = Vertex::empty().with_parents([&v3]).unwrap();
         c5.height = 2; // Should have height 3
         match dag.check_vertex(&Arc::new(c5)) {
             Err(dag::Error::BadHeight(actual, expected)) => {
@@ -441,38 +452,33 @@ mod test {
     #[test]
     fn map_child() {
         let gen = Arc::new(Vertex::empty());
-        let c0 = test_vertex([&gen]);
-        let c1 = test_vertex([&gen]);
-        let c2 = test_vertex([&c0, &c1]);
+        let v0 = test_vertex([&gen]);
+        let v1 = test_vertex([&gen]);
+        let v2 = test_vertex([&v0, &v1]);
         let mut dag = DAG::new(Config::default());
         dag.children.insert(gen.hash(), HashSet::new());
-        dag.children.insert(c0.hash(), HashSet::new());
-        dag.children.insert(c1.hash(), HashSet::new());
-        dag.children.insert(c2.hash(), HashSet::new());
+        dag.children.insert(v0.hash(), HashSet::new());
+        dag.children.insert(v1.hash(), HashSet::new());
+        dag.children.insert(v2.hash(), HashSet::new());
         assert_eq!(dag.children[&gen.hash()].len(), 0);
-        assert_eq!(dag.children[&c0.hash()].len(), 0);
-        assert_eq!(dag.children[&c1.hash()].len(), 0);
-        assert_eq!(dag.children[&c2.hash()].len(), 0);
-        dag.map_child(&c0.hash(), &c0.parents);
+        assert_eq!(dag.children[&v0.hash()].len(), 0);
+        assert_eq!(dag.children[&v1.hash()].len(), 0);
+        assert_eq!(dag.children[&v2.hash()].len(), 0);
+        dag.map_child(&v0.hash(), &v0.parents);
         assert_eq!(dag.children[&gen.hash()].len(), 1);
-        assert_eq!(dag.children[&c0.hash()].len(), 0);
-        assert_eq!(dag.children[&c1.hash()].len(), 0);
-        assert_eq!(dag.children[&c2.hash()].len(), 0);
-        dag.map_child(&c1.hash(), &c1.parents);
+        assert_eq!(dag.children[&v0.hash()].len(), 0);
+        assert_eq!(dag.children[&v1.hash()].len(), 0);
+        assert_eq!(dag.children[&v2.hash()].len(), 0);
+        dag.map_child(&v1.hash(), &v1.parents);
         assert_eq!(dag.children[&gen.hash()].len(), 2);
-        assert_eq!(dag.children[&c0.hash()].len(), 0);
-        assert_eq!(dag.children[&c1.hash()].len(), 0);
-        assert_eq!(dag.children[&c2.hash()].len(), 0);
-        dag.map_child(&c2.hash(), &c2.parents);
+        assert_eq!(dag.children[&v0.hash()].len(), 0);
+        assert_eq!(dag.children[&v1.hash()].len(), 0);
+        assert_eq!(dag.children[&v2.hash()].len(), 0);
+        dag.map_child(&v2.hash(), &v2.parents);
         assert_eq!(dag.children[&gen.hash()].len(), 2);
-        assert_eq!(dag.children[&c0.hash()].len(), 1);
-        assert_eq!(dag.children[&c1.hash()].len(), 1);
-        assert_eq!(dag.children[&c2.hash()].len(), 0);
-    }
-
-    #[test]
-    fn insert_unchecked() {
-        todo!()
+        assert_eq!(dag.children[&v0.hash()].len(), 1);
+        assert_eq!(dag.children[&v1.hash()].len(), 1);
+        assert_eq!(dag.children[&v2.hash()].len(), 0);
     }
 
     #[test]
@@ -483,24 +489,24 @@ mod test {
     #[test]
     fn is_preferred() {
         let gen = Arc::new(Vertex::empty());
-        let c0 = test_vertex([&gen]);
-        let c1 = test_vertex([&gen]);
-        let c2 = test_vertex([&c0, &c1]);
+        let v0 = test_vertex([&gen]);
+        let v1 = test_vertex([&gen]);
+        let v2 = test_vertex([&v0, &v1]);
         let mut dag = DAG::new(Config::default());
 
         // Confirm that frontier is always sorted by timestamp
-        assert_matches!(dag.is_preferred(&c2.hash()), Err(dag::Error::NotFound));
-        dag.vertex.insert(c2.hash(), c2.clone());
+        assert_matches!(dag.is_preferred(&v2.hash()), Err(dag::Error::NotFound));
+        dag.vertex.insert(v2.hash(), v2.clone());
         dag.constraints
-            .insert(c2.hash(), c2.parent_constraints().collect());
-        for constraint in c2.parent_constraints() {
+            .insert(v2.hash(), v2.parent_constraints().collect());
+        for constraint in v2.parent_constraints() {
             dag.state.insert(constraint, AvalancheState::default());
         }
-        assert_eq!(dag.is_preferred(&c2.hash()).unwrap(), false);
-        for constraint in c2.parent_constraints() {
+        assert_eq!(dag.is_preferred(&v2.hash()).unwrap(), false);
+        for constraint in v2.parent_constraints() {
             dag.state.get_mut(&constraint).unwrap().preferred = true;
         }
-        assert_eq!(dag.is_preferred(&c2.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&v2.hash()).unwrap(), true);
     }
 
     #[test]
@@ -757,23 +763,35 @@ mod test {
         let ten_millis = time::Duration::from_millis(10);
         let gen = Arc::new(Vertex::empty());
         thread::sleep(ten_millis);
-        let c0 = test_vertex([&gen]);
+        let v0 = test_vertex([&gen]);
         thread::sleep(ten_millis);
-        let c1 = test_vertex([&gen]);
+        let v1 = test_vertex([&gen]);
         thread::sleep(ten_millis);
-        let c2 = test_vertex([&c0, &c1]);
+        let v2 = test_vertex([&v0, &v1]);
         thread::sleep(ten_millis);
         let mut dag = DAG::new(Config::default());
         dag.vertex.insert(gen.hash(), gen.clone());
-        dag.vertex.insert(c0.hash(), c0.clone());
-        dag.vertex.insert(c1.hash(), c1.clone());
-        dag.vertex.insert(c2.hash(), c2.clone());
+        dag.vertex.insert(v0.hash(), v0.clone());
+        dag.vertex.insert(v1.hash(), v1.clone());
+        dag.vertex.insert(v2.hash(), v2.clone());
 
         // Confirm that frontier is always sorted by timestamp
-        dag.frontier.insert(c0.hash());
-        dag.frontier.insert(c2.hash());
-        assert_eq!(dag.get_frontier(), vec![c0.hash(), c2.hash()]);
-        dag.frontier.insert(c1.hash()); // comes before c2
-        assert_eq!(dag.get_frontier(), vec![c0.hash(), c1.hash(), c2.hash()]);
+        dag.frontier.insert(v0.hash());
+        dag.frontier.insert(v2.hash());
+        assert_eq!(dag.get_frontier(), vec![v0.hash(), v2.hash()]);
+        dag.frontier.insert(v1.hash()); // comes before c2
+        assert_eq!(dag.get_frontier(), vec![v0.hash(), v1.hash(), v2.hash()]);
+    }
+
+    #[test]
+    fn get_known_children() {
+        let v0 = Arc::new(Vertex::empty());
+        let mut dag = DAG::new(Config::default());
+        assert_matches!(
+            dag.get_known_children(&v0.hash()),
+            Err(dag::Error::NotFound)
+        );
+        dag.children.insert(v0.hash(), HashSet::new());
+        assert_eq!(dag.get_known_children(&v0.hash()).unwrap(), HashSet::new());
     }
 }

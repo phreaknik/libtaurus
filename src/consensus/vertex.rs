@@ -439,21 +439,37 @@ mod test {
     fn opposite_constraint() {
         assert_ne!(Constraint(H1, H2), Constraint(H2, H1));
         assert_ne!(Constraint(H3, H4), Constraint(H4, H3));
+        assert_eq!(Constraint(H1, H1).opposite(), Constraint(H1, H1));
         assert_eq!(Constraint(H1, H2).opposite(), Constraint(H2, H1));
         assert_eq!(Constraint(H3, H4).opposite(), Constraint(H4, H3));
     }
 
     #[test]
     fn new_constraint_iter() {
-        assert!(Constraints::new(&vec![H1]).eq(vec![]));
-        assert!(Constraints::new(&vec![H1, H2]).eq(vec![Constraint(H1, H2)]));
-        assert!(Constraints::new(&vec![H3, H2]).eq(vec![Constraint(H3, H2)]));
+        assert!(Constraints::new(&vec![H1]).eq(vec![Constraint(H1, H1)]));
+        assert!(Constraints::new(&vec![H1, H2]).eq(vec![
+            Constraint(H1, H1),
+            Constraint(H2, H2),
+            Constraint(H1, H2)
+        ]));
+        assert!(Constraints::new(&vec![H3, H2]).eq(vec![
+            Constraint(H3, H3),
+            Constraint(H2, H2),
+            Constraint(H3, H2)
+        ]));
         assert!(Constraints::new(&vec![H1, H2, H3]).eq(vec![
+            Constraint(H1, H1),
+            Constraint(H2, H2),
+            Constraint(H3, H3),
             Constraint(H1, H2),
             Constraint(H1, H3),
             Constraint(H2, H3),
         ]));
         assert!(Constraints::new(&vec![H1, H2, H3, H4]).eq(vec![
+            Constraint(H1, H1),
+            Constraint(H2, H2),
+            Constraint(H3, H3),
+            Constraint(H4, H4),
             Constraint(H1, H2),
             Constraint(H1, H3),
             Constraint(H1, H4),
