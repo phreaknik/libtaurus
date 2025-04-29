@@ -64,8 +64,11 @@ pub struct DAG {
     /// Configuration parameters
     config: Config,
 
-    /// Map of every vertex in the event graph
+    /// Map of every known undecided vertex
     vertex: HashMap<VertexHash, Arc<Vertex>>,
+
+    /// Set of vertices which are in the active region of the graph
+    graph: HashSet<VertexHash>,
 
     /// Map of known children for each vertex in the event graph
     children: HashMap<VertexHash, HashSet<VertexHash>>,
@@ -87,6 +90,7 @@ impl DAG {
         DAG {
             config,
             vertex: HashMap::new(),
+            graph: HashSet::new(),
             children: HashMap::new(),
             constraints: HashMap::new(),
             state: HashMap::new(),
@@ -100,7 +104,7 @@ impl DAG {
         vx.sanity_checks()?;
 
         // Check the child map to make sure this vertex doesn't already exist
-        if self.vertex.contains_key(&vx.hash()) {
+        if self.graph.contains(&vx.hash()) {
             return Err(Error::AlreadyInserted);
         }
 
@@ -109,9 +113,9 @@ impl DAG {
         let mut missing = Vec::with_capacity(vx.parents.len());
         let mut waiting = Vec::with_capacity(vx.parents.len());
         for vhash in &vx.parents {
-            if !self.children.contains_key(vhash) {
+            if !self.vertex.contains_key(vhash) {
                 missing.push(*vhash);
-            } else if !self.vertex.contains_key(vhash) {
+            } else if !self.graph.contains(vhash) {
                 waiting.push(*vhash);
             }
         }
@@ -166,11 +170,30 @@ impl DAG {
         let constraints = vx
             .parent_constraints()
             .inspect(|c| {
+                // Lookup this constraint's parents
+                let c_parents = self.vertex[&c.0]
+                    .parent_constraints()
+                    .chain(self.vertex[&c.1].parent_constraints())
+                    .collect::<HashSet<_>>();
+
+                // Is this constraint preferred?
+                let prefer_conflict = self
+                    .state
+                    .get(&c.opposite())
+                    .and_then(|s| Some(s.preferred))
+                    .unwrap_or(false);
+                let parents_preferred = || c_parents.iter().all(|c| self.state[c].preferred);
+                let prefer = !prefer_conflict && parents_preferred();
+
                 // Add an entry in the state map, if it doesn't already exist
                 if !self.state.contains_key(c) {
-                    self.state.insert(*c, AvalancheState::default());
+                    self.state.insert(
+                        *c,
+                        AvalancheState::default()
+                            .with_parents(c_parents)
+                            .with_preference(prefer),
+                    );
                 }
-
                 // Add an entry to the constraint map of every vertex constrained by these
                 if let Some(map) = self.constraints.get_mut(&c.0) {
                     map.insert(*c);
@@ -184,6 +207,9 @@ impl DAG {
 
         // Update child map
         self.map_child(&vx.hash(), &vx.parents);
+
+        // Register this vertex as part of the graph
+        self.graph.insert(vx.hash());
     }
 
     /// Insert a vertex into the [`DAG`].  Returns a list of known children waiting to be inserted
@@ -195,6 +221,7 @@ impl DAG {
             // Add vertex as known child, even if we are missing some of its parents
             if let Error::MissingParents(_) | Error::WaitingOnParents(_) = e {
                 self.map_child(&vx.hash(), &vx.parents);
+                self.vertex.insert(vx.hash(), vx.clone());
             }
             e
         })?;
@@ -206,7 +233,7 @@ impl DAG {
         Ok(self
             .get_known_children(&vx.hash())?
             .into_iter()
-            .filter(|vhash| !self.vertex.contains_key(vhash))
+            .filter(|vhash| !self.graph.contains(vhash))
             .collect())
     }
 
@@ -350,6 +377,20 @@ struct AvalancheState {
 
     /// Known ordering constraints which depend on this
     children: HashSet<Constraint>,
+}
+
+impl AvalancheState {
+    /// Assign constraint parents to the constraint state
+    fn with_parents(mut self, parents: HashSet<Constraint>) -> AvalancheState {
+        self.parents = parents;
+        self
+    }
+
+    /// Assign preference to the constraint state
+    fn with_preference(mut self, preference: bool) -> AvalancheState {
+        self.preferred = preference;
+        self
+    }
 }
 
 #[cfg(test)]
@@ -502,7 +543,7 @@ mod test {
             Err(dag::Error::MissingParents(missing)) => {
                 assert_eq!(missing, [v0.hash(), v1.hash()])
             }
-            _ => panic!("Expected Error::MissingParents"),
+            e @ _ => panic!("unexpected result: {e:?}"),
         }
         assert_eq!(dag.try_insert(&v0).unwrap(), [v2.hash()].into());
         assert!(dag.is_preferred(&v0.hash()).unwrap());
@@ -510,13 +551,13 @@ mod test {
             Err(dag::Error::MissingParents(missing)) => {
                 assert_eq!(missing, [v1.hash()])
             }
-            _ => panic!("Expected Error::MissingParents"),
+            e @ _ => panic!("unexpected result: {e:?}"),
         }
         match dag.try_insert(&x2) {
             Err(dag::Error::MissingParents(missing)) => {
                 assert_eq!(missing, [v1.hash()])
             }
-            _ => panic!("Expected Error::MissingParents"),
+            e @ _ => panic!("unexpected result: {e:?}"),
         }
         assert_eq!(dag.try_insert(&v1).unwrap(), [v2.hash(), x2.hash(),].into());
         assert!(dag.is_preferred(&v1.hash()).unwrap());
@@ -524,7 +565,7 @@ mod test {
             Err(dag::Error::WaitingOnParents(waiting)) => {
                 assert_eq!(waiting, [v2.hash()])
             }
-            _ => panic!("Expected Error::WaitingOnParents"),
+            e @ _ => panic!("unexpected result: {e:?}"),
         }
         assert_eq!(dag.try_insert(&v2).unwrap(), [v3.hash()].into());
         assert!(dag.is_preferred(&v2.hash()).unwrap());
@@ -844,5 +885,15 @@ mod test {
         );
         dag.children.insert(v0.hash(), HashSet::new());
         assert_eq!(dag.get_known_children(&v0.hash()).unwrap(), HashSet::new());
+    }
+
+    #[test]
+    fn state_with_parents() {
+        todo!()
+    }
+
+    #[test]
+    fn state_with_preference() {
+        todo!()
     }
 }
