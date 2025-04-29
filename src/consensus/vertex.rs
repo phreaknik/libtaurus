@@ -107,8 +107,8 @@ impl Vertex {
     }
 
     /// Return a list of parent ordering [`Constraint`]s this [`Vertex`] commits to
-    pub fn parent_constraints<'a>(&'a self) -> Constraints<'a> {
-        Constraints::new(&self.parents)
+    pub fn parent_constraints(&self) -> Constraints {
+        Constraints::new(self.parents.clone())
     }
 }
 
@@ -201,14 +201,14 @@ impl Constraint {
 
 /// An [`Iterator`] which iterates over every permutation of parents [`Constraint`]s a [`Vertex`]
 /// commits to.
-pub struct Constraints<'a> {
-    vertices: &'a Vec<VertexHash>,
+pub struct Constraints {
+    vertices: Vec<VertexHash>,
     idx1: usize,
     idx2: usize,
 }
 
-impl<'a> Constraints<'a> {
-    fn new(vertices: &'a Vec<VertexHash>) -> Constraints<'a> {
+impl Constraints {
+    fn new(vertices: Vec<VertexHash>) -> Constraints {
         Constraints {
             vertices,
             idx1: 0,
@@ -217,24 +217,20 @@ impl<'a> Constraints<'a> {
     }
 }
 
-impl<'a> Iterator for Constraints<'a> {
+impl Iterator for Constraints {
     type Item = Constraint;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.vertices.len() < 2 {
-            None
+        if self.idx1 + 1 >= self.vertices.len() {
+            self.vertices.pop().map(|vhash| Constraint(vhash, vhash))
         } else {
-            if self.idx1 == self.vertices.len() - 1 {
-                None
-            } else {
-                let constraint = Constraint(self.vertices[self.idx1], self.vertices[self.idx2]);
-                self.idx2 += 1;
-                if self.idx2 == self.vertices.len() {
-                    self.idx1 += 1;
-                    self.idx2 = self.idx1 + 1;
-                }
-                Some(constraint)
+            let constraint = Constraint(self.vertices[self.idx1], self.vertices[self.idx2]);
+            self.idx2 += 1;
+            if self.idx2 == self.vertices.len() {
+                self.idx1 += 1;
+                self.idx2 = self.idx1 + 1;
             }
+            Some(constraint)
         }
     }
 }
@@ -418,12 +414,16 @@ mod test {
             .with_parents(vec![&p1])
             .unwrap()
             .parent_constraints()
-            .eq(vec![]));
+            .eq(vec![Constraint(p1.hash(), p1.hash())]));
         assert!(Vertex::empty()
             .with_parents(vec![&p1, &p2])
             .unwrap()
             .parent_constraints()
-            .eq(vec![Constraint(p1.hash(), p2.hash())]));
+            .eq(vec![
+                Constraint(p1.hash(), p2.hash()),
+                Constraint(p2.hash(), p2.hash()),
+                Constraint(p1.hash(), p1.hash()),
+            ]));
         assert!(Vertex::empty()
             .with_parents(vec![&p1, &p2, &p3])
             .unwrap()
@@ -432,6 +432,9 @@ mod test {
                 Constraint(p1.hash(), p2.hash()),
                 Constraint(p1.hash(), p3.hash()),
                 Constraint(p2.hash(), p3.hash()),
+                Constraint(p3.hash(), p3.hash()),
+                Constraint(p2.hash(), p2.hash()),
+                Constraint(p1.hash(), p1.hash()),
             ]));
     }
 
@@ -446,36 +449,36 @@ mod test {
 
     #[test]
     fn new_constraint_iter() {
-        assert!(Constraints::new(&vec![H1]).eq(vec![Constraint(H1, H1)]));
-        assert!(Constraints::new(&vec![H1, H2]).eq(vec![
-            Constraint(H1, H1),
+        assert!(Constraints::new(vec![H1]).eq(vec![Constraint(H1, H1)]));
+        assert!(Constraints::new(vec![H1, H2]).eq(vec![
+            Constraint(H1, H2),
             Constraint(H2, H2),
-            Constraint(H1, H2)
-        ]));
-        assert!(Constraints::new(&vec![H3, H2]).eq(vec![
-            Constraint(H3, H3),
-            Constraint(H2, H2),
-            Constraint(H3, H2)
-        ]));
-        assert!(Constraints::new(&vec![H1, H2, H3]).eq(vec![
             Constraint(H1, H1),
+        ]));
+        assert!(Constraints::new(vec![H3, H2]).eq(vec![
+            Constraint(H3, H2),
             Constraint(H2, H2),
             Constraint(H3, H3),
+        ]));
+        assert!(Constraints::new(vec![H1, H2, H3]).eq(vec![
             Constraint(H1, H2),
             Constraint(H1, H3),
             Constraint(H2, H3),
-        ]));
-        assert!(Constraints::new(&vec![H1, H2, H3, H4]).eq(vec![
-            Constraint(H1, H1),
-            Constraint(H2, H2),
             Constraint(H3, H3),
-            Constraint(H4, H4),
+            Constraint(H2, H2),
+            Constraint(H1, H1),
+        ]));
+        assert!(Constraints::new(vec![H1, H2, H3, H4]).eq(vec![
             Constraint(H1, H2),
             Constraint(H1, H3),
             Constraint(H1, H4),
             Constraint(H2, H3),
             Constraint(H2, H4),
             Constraint(H3, H4),
+            Constraint(H4, H4),
+            Constraint(H3, H3),
+            Constraint(H2, H2),
+            Constraint(H1, H1),
         ]));
     }
 }
