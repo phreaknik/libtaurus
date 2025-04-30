@@ -151,8 +151,8 @@ impl DAG {
             .collect::<HashSet<_>>();
         if constraints_of_parents
             .iter()
-            .filter(|c| !c.is_unity())
-            .any(|c| constraints_of_parents.contains(&c.opposite()))
+            .filter_map(|c| c.opposite())
+            .any(|opp| constraints_of_parents.contains(&opp))
         {
             return Err(Error::ConflictingParents);
         }
@@ -197,10 +197,10 @@ impl DAG {
                 }
 
                 // Is this constraint preferred?
-                let prefer_conflict = self
-                    .state
-                    .get(&c.opposite())
-                    .and_then(|s| Some(s.preferred))
+                let prefer_conflict = c
+                    .opposite()
+                    .and_then(|opp| self.state.get(&opp))
+                    .and_then(|state| Some(state.preferred))
                     .unwrap_or(false);
                 let parents_preferred = || c_parents.iter().all(|c| self.state[c].preferred);
                 let prefer = !prefer_conflict && parents_preferred();
@@ -260,7 +260,10 @@ impl DAG {
     /// Return true if the specified vertex is preferred over all its conflicts
     pub fn is_preferred(&self, vhash: &VertexHash) -> Result<bool> {
         let vx = self.vertex.get(vhash).ok_or(Error::NotFound)?;
-        Ok(vx.parent_constraints().all(|c| self.state[&c].preferred))
+        Ok(vx.parent_constraints().all(|c| {
+            println!(":::: pref({c} = {}", self.state[&c].preferred);
+            self.state[&c].preferred
+        }))
     }
 
     /// Award a chit to the specified vertex, according to the Avalanche protocol
@@ -268,17 +271,16 @@ impl DAG {
         // Helper to recursively reset confidences. Returns true if the confidence of the specified
         // constraint has changed.
         fn reset(dag: &mut DAG, c: &Constraint) -> bool {
-            println!(":::: reset -- {c:?}");
+            println!(":::: reset -- {c}");
             // Since this constraint is no longer preferred, test if its conflict can now be
             // marked preferred.
-            if let Some(cflct_parents) = dag
-                .state
-                .get(&c.opposite())
-                .map(|state| state.parents.clone())
-            {
-                dag.state.get_mut(&c.opposite()).unwrap().preferred |=
-                    cflct_parents.iter().all(|c| dag.state[c].preferred);
-            }
+            c.opposite()
+                .and_then(|opp| dag.state.get(&opp).map(|state| (opp, state)))
+                .map(|(opp, state)| (opp, state.parents.clone()))
+                .map(|(opp, cflct_parents)| {
+                    dag.state.get_mut(&opp).unwrap().preferred =
+                        cflct_parents.iter().all(|c| dag.state[c].preferred);
+                });
 
             // Reset self chit & confidence for this vertex
             let children_to_reset = {
@@ -315,47 +317,61 @@ impl DAG {
 
         // Helper to recursively recompute state of ancestors. Ancestors must recompute confidence
         // as well as preference.
-        fn recompute_ancestry(dag: &mut DAG, c: &Constraint) {
-            println!(":::: recompute -- {c:?}");
+        fn recompute(dag: &mut DAG, c: &Constraint) {
+            println!(":::: recompute -- {c}");
             // Sum up child confidences
-            let orig_state = dag.state[c].clone();
-            let child_conf = orig_state
+            let child_conf = dag.state[c]
                 .children
                 .iter()
                 .map(|child| dag.state[child].confidence)
                 .sum::<usize>();
 
-            // Assign new confidence as chit + child_conf
-            let new_conf = dag
-                .state
+            // Look up confidence of the conflicting constraint
+            let cflct_conf = c
+                .opposite()
+                .map(|opp| dag.state[&opp].confidence)
+                .unwrap_or(0);
+
+            // Look up state and recompute
+            dag.state
                 .get_mut(c)
                 .and_then(|state| {
+                    let orig_conf = state.confidence;
+                    let orig_pref = state.preferred;
+
+                    // Assign new confidence (chit + child confidences), and update preference
                     state.confidence = usize::min(
                         dag.config.acceptance_threshold,
                         state.chit as usize + child_conf,
                     );
-                    Some(state.confidence)
+                    state.preferred = state.confidence > cflct_conf;
+
+                    // If state was modified, return parents to be recomputed
+                    if orig_pref != state.preferred || orig_conf != state.confidence {
+                        Some(state.parents.clone())
+                    } else {
+                        None
+                    }
                 })
-                .unwrap();
+                .map(|mut need_recompute| {
+                    //  Check to see if it has overtaken the confidence of the conflicting/opposite
+                    // constraint.
+                    if let Some(opp) = c.opposite() {
+                        if reset(dag, &opp) {
+                            need_recompute.extend(&dag.state[&opp].parents);
+                        }
+                    }
 
-            if orig_state.confidence != new_conf {
-                //  Check to see if it has overtaken the confidence of the conflicting/opposite
-                // constraint.
-                let mut need_recompute = orig_state.parents.clone();
-                if dag.state[&c.opposite()].confidence < new_conf && reset(dag, &c.opposite()) {
-                    need_recompute.extend(&dag.state[&c.opposite()].parents);
-                }
-
-                // Recursively recompute confidences for each constraint which depends on modified
-                // the newl constraints.
-                for c in &need_recompute {
-                    recompute_ancestry(dag, c);
-                }
-            }
+                    // Recursively recompute confidences for each constraint which depends on
+                    // modified the newl constraints.
+                    for c in &need_recompute {
+                        recompute(dag, c);
+                    }
+                });
         }
 
-        // Award each constraint a chit, and collect which constraint states have been modified
-        let modified = self
+        // Award each constraint a chit, and recompute state from each constraint which changed
+        for c in self
             .vertex
             .get(vhash)
             .ok_or(Error::NotFound)?
@@ -363,20 +379,16 @@ impl DAG {
             .filter_map(|c| {
                 let state = self.state.get_mut(&c).unwrap();
                 let orig_chit = state.chit;
-                let orig_pref = state.preferred;
                 state.chit = true;
-                state.preferred = true;
-                if !orig_chit || !orig_pref {
+                if !orig_chit {
                     Some(c)
                 } else {
                     None
                 }
             })
-            .collect::<Vec<_>>();
-
-        // Recompute state for each constraint with a new chit
-        for c in modified {
-            recompute_ancestry(self, &c);
+            .collect::<HashSet<_>>()
+        {
+            recompute(self, &c);
         }
 
         Ok(())

@@ -4,6 +4,7 @@ use super::{
 };
 use crate::wire::{generated::proto, WireFormat};
 use chrono::{DateTime, Utc};
+use core::fmt;
 use itertools::Itertools;
 use serde_derive::{Deserialize, Serialize};
 use std::{result, sync::Arc};
@@ -193,14 +194,30 @@ impl std::fmt::Display for Vertex {
 pub struct Constraint(pub VertexHash, pub VertexHash);
 
 impl Constraint {
-    /// Return a [`Constraint`] for the opposite [`Vertex`] ordering
-    pub fn opposite(&self) -> Constraint {
-        Constraint(self.1, self.0)
+    /// Return a [`Constraint`] for the opposite [`Vertex`] ordering, if any. In the case of a
+    /// unity constraint, there is no opposite.
+    pub fn opposite(&self) -> Option<Constraint> {
+        if !self.is_unity() {
+            Some(Constraint(self.1, self.0))
+        } else {
+            None
+        }
     }
 
     /// Returns true if this is a unity constraint; i.e. it only references one vertex
     pub fn is_unity(&self) -> bool {
         self.0 == self.1
+    }
+}
+
+impl fmt::Display for Constraint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Constraint({}, {})",
+            self.0.to_short_hex(),
+            self.1.to_short_hex()
+        )
     }
 }
 
@@ -447,9 +464,9 @@ mod test {
     fn opposite_constraint() {
         assert_ne!(Constraint(H1, H2), Constraint(H2, H1));
         assert_ne!(Constraint(H3, H4), Constraint(H4, H3));
-        assert_eq!(Constraint(H1, H1).opposite(), Constraint(H1, H1));
-        assert_eq!(Constraint(H1, H2).opposite(), Constraint(H2, H1));
-        assert_eq!(Constraint(H3, H4).opposite(), Constraint(H4, H3));
+        assert_eq!(Constraint(H1, H1).opposite(), None);
+        assert_eq!(Constraint(H1, H2).opposite(), None);
+        assert_eq!(Constraint(H3, H4).opposite(), None);
     }
 
     #[test]
