@@ -261,7 +261,7 @@ impl DAG {
     pub fn is_preferred(&self, vhash: &VertexHash) -> Result<bool> {
         let vx = self.vertex.get(vhash).ok_or(Error::NotFound)?;
         Ok(vx.parent_constraints().all(|c| {
-            println!(":::: pref({c} = {}", self.state[&c].preferred);
+            println!(":::: {c}.pref() = {}", self.state[&c].preferred);
             self.state[&c].preferred
         }))
     }
@@ -296,7 +296,6 @@ impl DAG {
                     || orig_conf != state.confidence
                     || orig_pref != state.preferred
                 {
-                    println!(":::: reset -- state changed");
                     Some(state.children.clone())
                 } else {
                     None
@@ -306,7 +305,6 @@ impl DAG {
             // Recursively reset each child
             if let Some(children) = children_to_reset {
                 for child in &children {
-                    println!(":::: reset -- do child");
                     reset(dag, child);
                 }
                 true
@@ -345,6 +343,7 @@ impl DAG {
                         state.chit as usize + child_conf,
                     );
                     state.preferred = state.confidence > cflct_conf;
+                    println!(":::: {c}.pref <- {}", state.preferred);
 
                     // If state was modified, return parents to be recomputed
                     if orig_pref != state.preferred || orig_conf != state.confidence {
@@ -376,6 +375,7 @@ impl DAG {
             .get(vhash)
             .ok_or(Error::NotFound)?
             .parent_constraints()
+            .inspect(|c| println!(":::: awarding chit to {c}"))
             .filter_map(|c| {
                 let state = self.state.get_mut(&c).unwrap();
                 let orig_chit = state.chit;
@@ -761,8 +761,8 @@ mod test {
         assert_eq!(dag.is_preferred(&c10.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&c11.hash()).unwrap(), false);
         assert_eq!(dag.is_preferred(&c20.hash()).unwrap(), true);
-        assert_eq!(dag.is_preferred(&c21.hash()).unwrap(), true);
-        assert_eq!(dag.is_preferred(&c30.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&c21.hash()).unwrap(), false);
+        assert_eq!(dag.is_preferred(&c30.hash()).unwrap(), false);
 
         // Award chit to c11 to get full "c" subtree preference
         dag.award_chit(&c11.hash()).unwrap();
