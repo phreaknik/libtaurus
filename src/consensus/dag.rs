@@ -16,6 +16,8 @@ use tracing::error;
 pub enum Error {
     #[error("already inserted")]
     AlreadyInserted,
+    #[error("already queried")]
+    AlreadyQueried,
     #[error("bad height")]
     BadHeight(u64, u64),
     #[error("bad parent height")]
@@ -37,7 +39,7 @@ pub enum Error {
     #[error(transparent)]
     Vertex(#[from] vertex::Error),
     #[error("waiting on vertex")]
-    Waiting,
+    WaitingOnVertex,
     #[error("waiting on vertex parents")]
     WaitingOnParents(Vec<VertexHash>),
 }
@@ -72,6 +74,9 @@ pub struct DAG {
     /// Set of vertices which are in the active region of the graph
     graph: HashSet<VertexHash>,
 
+    /// Set of vertices which are waiting for the results of a query
+    pending_query: HashSet<VertexHash>,
+
     /// Map of known children for each vertex in the event graph
     children: HashMap<VertexHash, HashSet<VertexHash>>,
 
@@ -93,6 +98,7 @@ impl DAG {
             config,
             vertex: HashMap::new(),
             graph: HashSet::new(),
+            pending_query: HashSet::new(),
             children: HashMap::new(),
             constraints: HashMap::new(),
             state: HashMap::new(),
@@ -223,8 +229,9 @@ impl DAG {
         // Update child map
         self.map_child(&vx.hash(), &vx.parents);
 
-        // Register this vertex as part of the graph
+        // Register this vertex as part of the graph and waiting for query results
         self.graph.insert(vx.hash());
+        self.pending_query.insert(vx.hash());
     }
 
     /// Insert a vertex into the [`DAG`].  Returns a list of known children waiting to be inserted
@@ -258,7 +265,12 @@ impl DAG {
             .vertex
             .get(vhash)
             .ok_or(Error::NotFound)
-            .and_then(|vx| self.graph.get(vhash).ok_or(Error::Waiting).map(|_| vx))?
+            .and_then(|vx| {
+                self.graph
+                    .get(vhash)
+                    .ok_or(Error::WaitingOnVertex)
+                    .map(|_| vx)
+            })?
             .parent_constraints()
             .all(|c| self.state[&c.conflict_set_key()].preferred == c))
     }
@@ -325,37 +337,53 @@ impl DAG {
             */
         }
 
-        // First, confirm the vertex has already been inserted
-        if !self.vertex.contains_key(vhash) {
-            Err(Error::NotFound)
-        } else if !self.graph.contains(vhash) {
-            Err(Error::Waiting)
-        } else {
-            // Award each constraint a chit, and recompute state for the entire ancestry of each
-            for constraint in self.vertex[vhash]
-                .parent_constraints()
-                .inspect(|c| println!(":::: awarding chit to {c}"))
-                .filter_map(|c| {
-                    let state = self.state.get_mut(&c.conflict_set_key()).unwrap();
-                    let orig_chit = state.chit;
-                    let orig_pref = state.preferred;
-                    state.chit = true;
-                    if orig_pref != c {
-                        state.preferred = c;
-                        state.count = 1;
-                    }
-                    if !orig_chit {
-                        Some(c)
-                    } else {
-                        None
-                    }
-                })
-                .collect::<HashSet<_>>()
-            {
-                // TODO: if preferred, set chit, recompute ancestors
-                // if not preferred, clear chit & counter, and reset ANCESTORS. See protocol.
+        // Check that we have the vertex, and that we are able to record a query for it.
+        if let Some(vx) = self.vertex.get(vhash) {
+            if !self.graph.contains(vhash) {
+                Err(Error::WaitingOnVertex)
+            } else if vx.parents.iter().any(|v| self.pending_query.contains(v)) {
+                Err(Error::WaitingOnParents(
+                    vx.parents
+                        .iter()
+                        .filter(|v| self.pending_query.contains(v))
+                        .copied()
+                        .collect::<Vec<_>>(),
+                ))
+            } else if self.pending_query.take(vhash).is_none() {
+                Err(Error::AlreadyQueried)
+                // TODO: test this
+            } else {
+                // Award each constraint a chit, and recompute state for the entire ancestry of each
+                for constraint in vx
+                    .parent_constraints()
+                    .inspect(|c| println!(":::: awarding chit to {c}"))
+                    .filter_map(|c| {
+                        let state = self.state.get_mut(&c.conflict_set_key()).unwrap();
+                        let orig_chit = state.chit;
+                        let orig_pref = state.preferred == c;
+                        state.chit = true;
+                        if preferred {
+                            if !orig_pref {
+                                state.preferred = c;
+                                state.count = 1;
+                                Some(c)
+                            } else if !orig_chit {
+                                state.count = 1;
+                                Some(c)
+                            } else {
+                                None
+                            }
+                        }
+                    })
+                    .collect::<HashSet<_>>()
+                {
+                    // Recompute the state of the ancestors of the modified vertices
+                    recompute(self, &constraint);
+                }
+                Ok(())
             }
-            Ok(())
+        } else {
+            Err(Error::NotFound)
         }
     }
 
@@ -609,7 +637,10 @@ mod test {
         // Confirm that frontier is always sorted by timestamp
         assert_matches!(dag.is_preferred(&v2.hash()), Err(dag::Error::NotFound));
         let _ = dag.try_insert(&v2); // V2 is known now, but still waiting on parents to process
-        assert_matches!(dag.is_preferred(&v2.hash()), Err(dag::Error::Waiting));
+        assert_matches!(
+            dag.is_preferred(&v2.hash()),
+            Err(dag::Error::WaitingOnVertex)
+        );
 
         // Insert all parents of v2 and x2, so they will insert successfully now
         dag.insert_unchecked(&gen);
@@ -623,7 +654,7 @@ mod test {
     }
 
     #[test]
-    fn award_chit() {
+    fn record_query_result() {
         // Set up test vertices and dag
         let gen = Arc::new(Vertex::empty());
         let a00 = test_vertex([&gen]);
