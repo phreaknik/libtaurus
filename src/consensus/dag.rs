@@ -196,25 +196,23 @@ impl DAG {
                     self.state.get_mut(parent).unwrap().children.insert(*c);
                 }
 
-                // Is this constraint preferred?
-                let prefer_conflict = c
-                    .opposite()
-                    .and_then(|opp| self.state.get(&opp))
-                    .and_then(|state| Some(state.preferred))
-                    .unwrap_or(false);
-                let parents_preferred = || c_parents.iter().all(|c| self.state[c].preferred);
-                let prefer = !prefer_conflict && parents_preferred();
-
                 // Add an entry in the state map, if it doesn't already exist
                 if !self.state.contains_key(c) {
                     self.state.insert(
                         *c,
                         AvalancheState::default()
                             .with_parents(c_parents)
-                            .with_preference(prefer),
+                            .with_preference(
+                                // Only prefer if conflict is not already preferred
+                                c.opposite()
+                                    .and_then(|opp| self.state.get(&opp))
+                                    .map(|state| !state.preferred)
+                                    .unwrap_or(true),
+                            ),
                     );
                 }
-                // Add an entry to the constraint map of every vertex constrained by these
+
+                // Add an entry to the constraint map of each vertex constrained by this constraint
                 if let Some(map) = self.constraints.get_mut(&c.0) {
                     map.insert(*c);
                 }
@@ -268,59 +266,10 @@ impl DAG {
 
     /// Award a chit to the specified vertex, according to the Avalanche protocol
     pub fn award_chit(&mut self, vhash: &VertexHash) -> Result<()> {
-        // Helper to recursively reset confidences. Returns true if the confidence of the specified
-        // constraint has changed.
-        fn reset(dag: &mut DAG, c: &Constraint) -> bool {
-            println!(":::: reset -- {c}");
-            // Since this constraint is no longer preferred, test if its conflict can now be
-            // marked preferred.
-            c.opposite()
-                .and_then(|opp| dag.state.get(&opp).map(|state| (opp, state)))
-                .map(|(opp, state)| (opp, state.parents.clone()))
-                .map(|(opp, cflct_parents)| {
-                    dag.state.get_mut(&opp).unwrap().preferred =
-                        cflct_parents.iter().all(|c| dag.state[c].preferred);
-                });
-
-            // Reset self chit & confidence for this vertex
-            let children_to_reset = dag.state.get_mut(&c).and_then(|state| {
-                let orig_chit = state.chit;
-                let orig_conf = state.confidence;
-                let orig_pref = state.preferred;
-                // Reset state for this vertex
-                state.chit = false;
-                state.confidence = 0;
-                state.preferred = false;
-                if orig_chit != state.chit
-                    || orig_conf != state.confidence
-                    || orig_pref != state.preferred
-                {
-                    Some(state.children.clone())
-                } else {
-                    None
-                }
-            });
-
-            // Recursively reset each child
-            if let Some(children) = children_to_reset {
-                for child in &children {
-                    reset(dag, child);
-                }
-                true
-            } else {
-                false
-            }
-        }
-
         // Helper to recursively recompute state of ancestors. Returns true if the given constraint
         // becomes preferred as a result of this recomputation.
-        fn recompute(dag: &mut DAG, c: &Constraint) -> bool {
+        fn recompute(dag: &mut DAG, c: &Constraint) {
             println!(":::: recompute -- {c}");
-            // Determine if parents are preferred
-            let parent_pref = dag.state[c]
-                .parents
-                .iter()
-                .all(|parent| dag.state[parent].preferred);
 
             // Sum up child confidences
             let child_conf = dag.state[c]
@@ -329,83 +278,54 @@ impl DAG {
                 .map(|child| dag.state[child].confidence)
                 .sum::<usize>();
 
-            // Look up confidence of the conflicting constraint
-            let cflct_conf = c
+            // Look up the conflict confidence, if any
+            let conflict_confidence = c
                 .opposite()
-                .and_then(|opp| dag.state.get(&opp).map(|s| s.confidence))
+                .and_then(|opp| dag.state.get(&opp))
+                .map(|s| s.confidence)
                 .unwrap_or(0);
 
             // Look up state and recompute
-            dag.state
+            let (overtook_conflict, need_recompute) = dag
+                .state
                 .get_mut(c)
-                .and_then(|state| {
+                .map(|state| {
                     let orig_conf = state.confidence;
                     let orig_pref = state.preferred;
 
-                    // Assign new confidence (chit + child confidences), and update preference
+                    // Recompute confidence as chit + child confidences
                     state.confidence = usize::min(
                         dag.config.acceptance_threshold,
                         state.chit as usize + child_conf,
                     );
-                    state.preferred = parent_pref && state.confidence > cflct_conf;
-                    if !orig_pref && state.preferred {
-                        println!(":::: {c} becoming preferred");
-                    }
+
+                    // Update preference
+                    state.preferred = state.confidence > conflict_confidence;
 
                     // If state was modified, return parents to be recomputed
-                    if orig_pref != state.preferred || orig_conf != state.confidence {
-                        Some((state.preferred, state.parents.clone()))
+                    let need_recompute = if orig_conf != state.confidence {
+                        Some(state.parents.clone())
                     } else {
                         None
-                    }
+                    };
+                    (!orig_pref && state.preferred, need_recompute)
                 })
-                .map(|(newly_preferred, mut need_recompute)| {
-                    // If this constraint has just overtaken its conflict (if any), reset the
-                    // state of the conflict
-                    if let Some(opp) = c.opposite() {
-                        if newly_preferred && reset(dag, &opp) {
-                            need_recompute.extend(&dag.state[&opp].parents);
-                        }
-                    }
+                .unwrap();
 
-                    // Recursively recompute confidences for each constraint which depends on
-                    // modified the newl constraints.
-                    for c in &need_recompute {
-                        recompute(dag, c);
-                    }
+            // If constraint confidence overtook that of its conflict, reset the conflict's state.
+            if overtook_conflict {
+                c.opposite()
+                    .and_then(|opp| dag.state.get_mut(&opp))
+                    .map(|s| {
+                        s.preferred = false;
+                        s.confidence = 0;
+                    });
+            }
 
-                    // Return true if this constraint has newly become preferred
-                    newly_preferred
-                })
-                .unwrap_or(false)
-        }
-
-        /// Helper to check for any child vertices which may be preferred due to newly preferred
-        /// parents.
-        fn check_for_preferred_children(dag: &mut DAG, c: &Constraint) {
-            // Can only be preferred if there does not exist a preferred conflicting constraint
-            if c.opposite()
-                .and_then(|opp| dag.state.get(&opp))
-                .map(|s| !s.preferred)
-                .unwrap_or(true)
-            {
-                // Load state and update preference
-                let new_pref = dag.state[&c].parents.iter().all(|p| {
-                    println!(":::: {c}.parent[{p}].pref() = {}", dag.state[&p].preferred);
-                    dag.state[p].preferred
-                });
-                if new_pref {
-                    println!(":::: child {c} becoming preferred");
-                }
-                let state = dag.state.get_mut(c).unwrap();
-                state.preferred = new_pref;
-
-                // If this vertex is newly preferred, check each of its childrent to see if they too
-                // may become preferred
-                if state.preferred {
-                    for child in &state.children.clone() {
-                        check_for_preferred_children(dag, child);
-                    }
+            // Recursively recompute confidences
+            if let Some(constraints) = need_recompute {
+                for c in &constraints {
+                    recompute(dag, c);
                 }
             }
         }
@@ -431,9 +351,7 @@ impl DAG {
         {
             // If constraint becomes preferred, need to check children to see if they too can become
             // preferred
-            if recompute(self, &c) {
-                check_for_preferred_children(self, &c);
-            }
+            recompute(self, &c);
         }
 
         Ok(())
