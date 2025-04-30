@@ -280,7 +280,7 @@ impl DAG {
     }
 
     /// Record the result of an Avalanche preference query for the specified [`Vertex`]
-    pub fn record_query_result(&mut self, vhash: &VertexHash, preferred: bool) -> Result<()> {
+    pub fn record_query_result(&mut self, vhash: &VertexHash, preferred: &[bool]) -> Result<()> {
         // Helper to lookup ancestors of the given constraint, which have not yet been accepted by
         // the Avalanche consensus protocol. Warning: may contain duplicate entries.
         fn get_ancestors(dag: &mut DAG, c: &Constraint) -> Vec<Constraint> {
@@ -338,9 +338,10 @@ impl DAG {
                 // a chit to each.
                 let parent_constraints = vx
                     .parent_constraints()
-                    .inspect(|c| {
+                    .zip(preferred)
+                    .inspect(|(c, &pref)| {
                         // If preferred, award each constraint a chit
-                        if preferred {
+                        if pref {
                             *self
                                 .state
                                 .get_mut(&c.conflict_set_key())
@@ -352,64 +353,62 @@ impl DAG {
                     })
                     .collect::<HashSet<_>>();
 
-                // Look up every undecided ancestor of these constraints
-                let ancestors = parent_constraints
-                    .into_iter()
-                    .flat_map(|c| get_ancestors(self, &c).into_iter())
-                    .collect::<HashSet<_>>();
-
                 // Update the state of each ancestor, according to the query result
-                for a in ancestors {
-                    if preferred {
-                        // If this constraint has a conflict, compute its confidence
-                        let conf_opp = a
-                            .opposite()
-                            .map(|opp| chits_in_progeny(self, &opp).into_iter().unique().count())
-                            .unwrap_or(0);
-                        let conf_a = if conf_opp > 0 {
-                            chits_in_progeny(self, &a).into_iter().unique().count()
+                for (c, &pref) in parent_constraints.into_iter().sorted_by_key(|x| x.1) {
+                    for a in get_ancestors(self, &c).into_iter().unique() {
+                        if pref {
+                            // If this constraint has a conflict, compute its confidence
+                            let conf_opp = a
+                                .opposite()
+                                .map(|opp| {
+                                    chits_in_progeny(self, &opp).into_iter().unique().count()
+                                })
+                                .unwrap_or(0);
+                            let conf_a = if conf_opp > 0 {
+                                chits_in_progeny(self, &a).into_iter().unique().count()
+                            } else {
+                                1
+                            };
+                            let state = self.state.get_mut(&a.conflict_set_key()).unwrap();
+
+                            // Set this constraint as preferred if it has the higher confidence
+                            if conf_a > conf_opp {
+                                state.preferred = a;
+                            }
+
+                            // Increment the counter, if this vote is the same as the previous vote
+                            // in this conflict set.
+                            if state.last != a {
+                                state.last = a;
+                                *self
+                                    .state
+                                    .get_mut(&a.conflict_set_key())
+                                    .unwrap()
+                                    .count
+                                    .get_mut(&a)
+                                    .unwrap() = 1;
+                            } else {
+                                *self
+                                    .state
+                                    .get_mut(&a.conflict_set_key())
+                                    .unwrap()
+                                    .count
+                                    .get_mut(&a)
+                                    .unwrap() += 1;
+                            }
+
+                            // If this vote reinforces the prior vote, increment the counter.
+                            // Otherwise, reset the counter.
                         } else {
-                            1
-                        };
-                        let state = self.state.get_mut(&a.conflict_set_key()).unwrap();
-
-                        // Set this constraint as preferred if it has the higher confidence
-                        if conf_a > conf_opp {
-                            state.preferred = a;
-                        }
-
-                        // Increment the counter, if this vote is the same as the previous vote in
-                        // this conflict set.
-                        if state.last != a {
-                            state.last = a;
+                            // Reset the counter
                             *self
                                 .state
                                 .get_mut(&a.conflict_set_key())
                                 .unwrap()
                                 .count
                                 .get_mut(&a)
-                                .unwrap() = 1;
-                        } else {
-                            *self
-                                .state
-                                .get_mut(&a.conflict_set_key())
-                                .unwrap()
-                                .count
-                                .get_mut(&a)
-                                .unwrap() += 1;
+                                .unwrap() = 0;
                         }
-
-                        // If this vote reinforces the prior vote, increment the counter.
-                        // Otherwise, reset the counter.
-                    } else {
-                        // Reset the counter
-                        *self
-                            .state
-                            .get_mut(&a.conflict_set_key())
-                            .unwrap()
-                            .count
-                            .get_mut(&a)
-                            .unwrap() = 0;
                     }
                 }
 
