@@ -316,6 +316,12 @@ impl DAG {
         // becomes preferred as a result of this recomputation.
         fn recompute(dag: &mut DAG, c: &Constraint) -> bool {
             println!(":::: recompute -- {c}");
+            // Determine if parents are preferred
+            let parent_pref = dag.state[c]
+                .parents
+                .iter()
+                .all(|parent| dag.state[parent].preferred);
+
             // Sum up child confidences
             let child_conf = dag.state[c]
                 .children
@@ -341,7 +347,10 @@ impl DAG {
                         dag.config.acceptance_threshold,
                         state.chit as usize + child_conf,
                     );
-                    state.preferred = state.confidence > cflct_conf;
+                    state.preferred = parent_pref && state.confidence > cflct_conf;
+                    if !orig_pref && state.preferred {
+                        println!(":::: {c} becoming preferred");
+                    }
 
                     // If state was modified, return parents to be recomputed
                     if orig_pref != state.preferred || orig_conf != state.confidence {
@@ -838,9 +847,65 @@ mod test {
         // Award chits to "b" sub tree, to equal "c" confidence. "c" sub tree should remain
         // preferred
         dag.award_chit(&b10.hash()).unwrap();
+        assert_eq!(dag.is_preferred(&gen.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&a00.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&a01.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&a02.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&b10.hash()).unwrap(), false);
+        assert_eq!(dag.is_preferred(&b11.hash()).unwrap(), false);
+        assert_eq!(dag.is_preferred(&b20.hash()).unwrap(), false);
+        assert_eq!(dag.is_preferred(&b21.hash()).unwrap(), false);
+        assert_eq!(dag.is_preferred(&b30.hash()).unwrap(), false);
+        assert_eq!(dag.is_preferred(&c10.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&c11.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&c20.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&c21.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&c30.hash()).unwrap(), true);
         dag.award_chit(&b11.hash()).unwrap();
+        assert_eq!(dag.is_preferred(&gen.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&a00.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&a01.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&a02.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&b10.hash()).unwrap(), false);
+        assert_eq!(dag.is_preferred(&b11.hash()).unwrap(), false);
+        assert_eq!(dag.is_preferred(&b20.hash()).unwrap(), false);
+        assert_eq!(dag.is_preferred(&b21.hash()).unwrap(), false);
+        assert_eq!(dag.is_preferred(&b30.hash()).unwrap(), false);
+        assert_eq!(dag.is_preferred(&c10.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&c11.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&c20.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&c21.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&c30.hash()).unwrap(), true);
         dag.award_chit(&b20.hash()).unwrap();
+        assert_eq!(dag.is_preferred(&gen.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&a00.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&a01.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&a02.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&b10.hash()).unwrap(), false);
+        assert_eq!(dag.is_preferred(&b11.hash()).unwrap(), false);
+        assert_eq!(dag.is_preferred(&b20.hash()).unwrap(), false);
+        assert_eq!(dag.is_preferred(&b21.hash()).unwrap(), false);
+        assert_eq!(dag.is_preferred(&b30.hash()).unwrap(), false);
+        assert_eq!(dag.is_preferred(&c10.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&c11.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&c20.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&c21.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&c30.hash()).unwrap(), true);
         dag.award_chit(&b21.hash()).unwrap();
+        assert_eq!(dag.is_preferred(&gen.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&a00.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&a01.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&a02.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&b10.hash()).unwrap(), false);
+        assert_eq!(dag.is_preferred(&b11.hash()).unwrap(), false);
+        assert_eq!(dag.is_preferred(&b20.hash()).unwrap(), false);
+        assert_eq!(dag.is_preferred(&b21.hash()).unwrap(), false);
+        assert_eq!(dag.is_preferred(&b30.hash()).unwrap(), false);
+        assert_eq!(dag.is_preferred(&c10.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&c11.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&c20.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&c21.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&c30.hash()).unwrap(), true);
         dag.award_chit(&b30.hash()).unwrap();
         assert_eq!(dag.is_preferred(&gen.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&a00.hash()).unwrap(), true);
