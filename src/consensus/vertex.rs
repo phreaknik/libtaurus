@@ -480,16 +480,23 @@ mod test {
 
     #[test]
     fn constraint_conflict_set_key() {
-        todo!()
+        assert_eq!(
+            Constraint(H1, H2).conflict_set_key(),
+            Constraint(H2, H1).conflict_set_key()
+        );
+        assert_eq!(
+            Constraint(H3, H4).conflict_set_key(),
+            Constraint(H4, H3).conflict_set_key()
+        );
     }
 
     #[test]
     fn opposite_constraint() {
+        assert_eq!(Constraint(H1, H2), Constraint(H1, H2));
         assert_ne!(Constraint(H1, H2), Constraint(H2, H1));
-        assert_ne!(Constraint(H3, H4), Constraint(H4, H3));
         assert_eq!(Constraint(H1, H1).opposite(), None);
-        assert_eq!(Constraint(H1, H2).opposite(), None);
-        assert_eq!(Constraint(H3, H4).opposite(), None);
+        assert_eq!(Constraint(H1, H2).opposite(), Some(Constraint(H2, H1)));
+        assert_eq!(Constraint(H3, H4).opposite(), Some(Constraint(H4, H3)));
     }
 
     #[test]

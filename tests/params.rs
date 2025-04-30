@@ -6,6 +6,11 @@ fn valid_quorum_size() {
 }
 
 #[test]
-fn valid_acceptance_threshold() {
-    assert!(AVALANCHE_ACCEPTANCE_THRESHOLD > 0);
+fn valid_confidence_threshold() {
+    assert!(AVALANCHE_CONFIDENCE_THRESHOLD > 0);
+}
+
+#[test]
+fn valid_counter_threshold() {
+    assert!(AVALANCHE_COUNTER_THRESHOLD > 0);
 }
