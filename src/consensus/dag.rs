@@ -283,8 +283,7 @@ impl DAG {
                 });
 
             // Reset self chit & confidence for this vertex
-            let children_to_reset = {
-                let state = dag.state.get_mut(&c).unwrap();
+            let children_to_reset = dag.state.get_mut(&c).and_then(|state| {
                 let orig_chit = state.chit;
                 let orig_conf = state.confidence;
                 let orig_pref = state.preferred;
@@ -300,7 +299,7 @@ impl DAG {
                 } else {
                     None
                 }
-            };
+            });
 
             // Recursively reset each child
             if let Some(children) = children_to_reset {
@@ -313,9 +312,9 @@ impl DAG {
             }
         }
 
-        // Helper to recursively recompute state of ancestors. Ancestors must recompute confidence
-        // as well as preference.
-        fn recompute(dag: &mut DAG, c: &Constraint) {
+        // Helper to recursively recompute state of ancestors. Returns true if the given constraint
+        // becomes preferred as a result of this recomputation.
+        fn recompute(dag: &mut DAG, c: &Constraint) -> bool {
             println!(":::: recompute -- {c}");
             // Sum up child confidences
             let child_conf = dag.state[c]
@@ -327,7 +326,7 @@ impl DAG {
             // Look up confidence of the conflicting constraint
             let cflct_conf = c
                 .opposite()
-                .map(|opp| dag.state[&opp].confidence)
+                .and_then(|opp| dag.state.get(&opp).map(|s| s.confidence))
                 .unwrap_or(0);
 
             // Look up state and recompute
@@ -343,20 +342,19 @@ impl DAG {
                         state.chit as usize + child_conf,
                     );
                     state.preferred = state.confidence > cflct_conf;
-                    println!(":::: {c}.pref <- {}", state.preferred);
 
                     // If state was modified, return parents to be recomputed
                     if orig_pref != state.preferred || orig_conf != state.confidence {
-                        Some(state.parents.clone())
+                        Some((state.preferred, state.parents.clone()))
                     } else {
                         None
                     }
                 })
-                .map(|mut need_recompute| {
-                    //  Check to see if it has overtaken the confidence of the conflicting/opposite
-                    // constraint.
+                .map(|(newly_preferred, mut need_recompute)| {
+                    // If this constraint has just overtaken its conflict (if any), reset the
+                    // state of the conflict
                     if let Some(opp) = c.opposite() {
-                        if reset(dag, &opp) {
+                        if newly_preferred && reset(dag, &opp) {
                             need_recompute.extend(&dag.state[&opp].parents);
                         }
                     }
@@ -366,7 +364,41 @@ impl DAG {
                     for c in &need_recompute {
                         recompute(dag, c);
                     }
+
+                    // Return true if this constraint has newly become preferred
+                    newly_preferred
+                })
+                .unwrap_or(false)
+        }
+
+        /// Helper to check for any child vertices which may be preferred due to newly preferred
+        /// parents.
+        fn check_for_preferred_children(dag: &mut DAG, c: &Constraint) {
+            // Can only be preferred if there does not exist a preferred conflicting constraint
+            if c.opposite()
+                .and_then(|opp| dag.state.get(&opp))
+                .map(|s| !s.preferred)
+                .unwrap_or(true)
+            {
+                // Load state and update preference
+                let new_pref = dag.state[&c].parents.iter().all(|p| {
+                    println!(":::: {c}.parent[{p}].pref() = {}", dag.state[&p].preferred);
+                    dag.state[p].preferred
                 });
+                if new_pref {
+                    println!(":::: child {c} becoming preferred");
+                }
+                let state = dag.state.get_mut(c).unwrap();
+                state.preferred = new_pref;
+
+                // If this vertex is newly preferred, check each of its childrent to see if they too
+                // may become preferred
+                if state.preferred {
+                    for child in &state.children.clone() {
+                        check_for_preferred_children(dag, child);
+                    }
+                }
+            }
         }
 
         // Award each constraint a chit, and recompute state from each constraint which changed
@@ -388,7 +420,11 @@ impl DAG {
             })
             .collect::<HashSet<_>>()
         {
-            recompute(self, &c);
+            // If constraint becomes preferred, need to check children to see if they too can become
+            // preferred
+            if recompute(self, &c) {
+                check_for_preferred_children(self, &c);
+            }
         }
 
         Ok(())
@@ -669,8 +705,8 @@ mod test {
         let b20 = test_vertex([&b10]);
         let b21 = test_vertex([&b10, &b11]);
         let b30 = test_vertex([&b21, &b20]);
-        let c10 = test_vertex([&a01, &a00]);
-        let c11 = test_vertex([&a02, &a00]);
+        let c10 = test_vertex([&a01, &a00]); // Conflicts with b10
+        let c11 = test_vertex([&a02, &a00]); // Conflicts with b11
         let c20 = test_vertex([&c10]);
         let c21 = test_vertex([&c10, &c11]);
         let c30 = test_vertex([&c21, &c20]);
@@ -746,8 +782,7 @@ mod test {
         assert_eq!(dag.is_preferred(&c21.hash()).unwrap(), false);
         assert_eq!(dag.is_preferred(&c30.hash()).unwrap(), false);
 
-        // Award chit to c10 and confirm "c" subtree becomes preferred (except b11 which does not
-        // conflict)
+        // Award chit to c10 and confirm "c" subtree becomes partially preferred
         dag.award_chit(&c10.hash()).unwrap();
         assert_eq!(dag.is_preferred(&gen.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&a00.hash()).unwrap(), true);
@@ -800,71 +835,13 @@ mod test {
         assert_eq!(dag.is_preferred(&c21.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&c30.hash()).unwrap(), true);
 
-        // Award chit to b10 and confirm "b" subtree becomes preferred (except c11 which does not
-        // conflict)
+        // Award chits to "b" sub tree, to equal "c" confidence. "c" sub tree should remain
+        // preferred
         dag.award_chit(&b10.hash()).unwrap();
-        assert_eq!(dag.is_preferred(&gen.hash()).unwrap(), true);
-        assert_eq!(dag.is_preferred(&a00.hash()).unwrap(), true);
-        assert_eq!(dag.is_preferred(&a01.hash()).unwrap(), true);
-        assert_eq!(dag.is_preferred(&a02.hash()).unwrap(), true);
-        assert_eq!(dag.is_preferred(&b10.hash()).unwrap(), true);
-        assert_eq!(dag.is_preferred(&b11.hash()).unwrap(), true);
-        assert_eq!(dag.is_preferred(&b20.hash()).unwrap(), true);
-        assert_eq!(dag.is_preferred(&b21.hash()).unwrap(), true);
-        assert_eq!(dag.is_preferred(&b30.hash()).unwrap(), true);
-        assert_eq!(dag.is_preferred(&c10.hash()).unwrap(), false);
-        assert_eq!(dag.is_preferred(&c11.hash()).unwrap(), true); // Does not conflict with b10
-        assert_eq!(dag.is_preferred(&c20.hash()).unwrap(), false);
-        assert_eq!(dag.is_preferred(&c21.hash()).unwrap(), false);
-        assert_eq!(dag.is_preferred(&c30.hash()).unwrap(), false);
-
-        // Award chits to rest of "b" sub tree
+        dag.award_chit(&b11.hash()).unwrap();
         dag.award_chit(&b20.hash()).unwrap();
         dag.award_chit(&b21.hash()).unwrap();
         dag.award_chit(&b30.hash()).unwrap();
-        assert_eq!(dag.is_preferred(&gen.hash()).unwrap(), true);
-        assert_eq!(dag.is_preferred(&a00.hash()).unwrap(), true);
-        assert_eq!(dag.is_preferred(&a01.hash()).unwrap(), true);
-        assert_eq!(dag.is_preferred(&a02.hash()).unwrap(), true);
-        assert_eq!(dag.is_preferred(&b10.hash()).unwrap(), true);
-        assert_eq!(dag.is_preferred(&b11.hash()).unwrap(), true);
-        assert_eq!(dag.is_preferred(&b20.hash()).unwrap(), true);
-        assert_eq!(dag.is_preferred(&b21.hash()).unwrap(), true);
-        assert_eq!(dag.is_preferred(&b30.hash()).unwrap(), true);
-        assert_eq!(dag.is_preferred(&c10.hash()).unwrap(), false);
-        assert_eq!(dag.is_preferred(&c11.hash()).unwrap(), false);
-        assert_eq!(dag.is_preferred(&c20.hash()).unwrap(), false);
-        assert_eq!(dag.is_preferred(&c21.hash()).unwrap(), false);
-        assert_eq!(dag.is_preferred(&c30.hash()).unwrap(), false);
-
-        // Extend "c" subtree until confidences are even, but not flipped. Confirm "b" subtree is
-        // still in favor
-        let c40 = test_vertex([&c30]);
-        let c50 = test_vertex([&c40]);
-        let c60 = test_vertex([&c50]);
-        let c70 = test_vertex([&c60]);
-        dag.try_insert(&c40).unwrap();
-        dag.try_insert(&c50).unwrap();
-        dag.try_insert(&c60).unwrap();
-        dag.try_insert(&c70).unwrap();
-        assert_eq!(dag.is_preferred(&gen.hash()).unwrap(), true);
-        assert_eq!(dag.is_preferred(&a00.hash()).unwrap(), true);
-        assert_eq!(dag.is_preferred(&a01.hash()).unwrap(), true);
-        assert_eq!(dag.is_preferred(&a02.hash()).unwrap(), true);
-        assert_eq!(dag.is_preferred(&b10.hash()).unwrap(), true);
-        assert_eq!(dag.is_preferred(&b11.hash()).unwrap(), true);
-        assert_eq!(dag.is_preferred(&b20.hash()).unwrap(), true);
-        assert_eq!(dag.is_preferred(&b21.hash()).unwrap(), true);
-        assert_eq!(dag.is_preferred(&b30.hash()).unwrap(), true);
-        assert_eq!(dag.is_preferred(&c10.hash()).unwrap(), false);
-        assert_eq!(dag.is_preferred(&c11.hash()).unwrap(), false);
-        assert_eq!(dag.is_preferred(&c20.hash()).unwrap(), false);
-        assert_eq!(dag.is_preferred(&c21.hash()).unwrap(), false);
-        assert_eq!(dag.is_preferred(&c30.hash()).unwrap(), false);
-
-        // Extend "c" subtree once more. Should be enough to flip "c" subtree into preference.
-        let c80 = test_vertex([&c70]);
-        dag.try_insert(&c80).unwrap();
         assert_eq!(dag.is_preferred(&gen.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&a00.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&a01.hash()).unwrap(), true);
@@ -879,6 +856,25 @@ mod test {
         assert_eq!(dag.is_preferred(&c20.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&c21.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&c30.hash()).unwrap(), true);
+
+        // Extend "b" subtree once more. Should be enough to flip "b" subtree into preference.
+        let c40 = test_vertex([&c30]);
+        dag.try_insert(&c40).unwrap();
+        dag.award_chit(&c40.hash()).unwrap();
+        assert_eq!(dag.is_preferred(&gen.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&a00.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&a01.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&a02.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&b10.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&b11.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&b20.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&b21.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&b30.hash()).unwrap(), true);
+        assert_eq!(dag.is_preferred(&c10.hash()).unwrap(), false);
+        assert_eq!(dag.is_preferred(&c11.hash()).unwrap(), false);
+        assert_eq!(dag.is_preferred(&c20.hash()).unwrap(), false);
+        assert_eq!(dag.is_preferred(&c21.hash()).unwrap(), false);
+        assert_eq!(dag.is_preferred(&c30.hash()).unwrap(), false);
     }
 
     #[test]
