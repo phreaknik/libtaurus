@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use core::fmt;
 use itertools::Itertools;
 use serde_derive::{Deserialize, Serialize};
-use std::{result, sync::Arc};
+use std::{hash::Hash, result, sync::Arc};
 
 /// Current revision of the vertex structure
 pub const VERSION: u32 = 1;
@@ -187,6 +187,10 @@ impl std::fmt::Display for Vertex {
     }
 }
 
+/// Key used to map a constraint to the conflict set it belongs to
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ConflictSetKey([u8; 64]);
+
 /// A [`Constraint`] describes an ordred [`Vertex`] pair, and is used to reach consensus on the
 /// total ordering of vertices in the graph. The left [`Vertex`] is constraint to come in sequence
 /// before the right.
@@ -194,6 +198,20 @@ impl std::fmt::Display for Vertex {
 pub struct Constraint(pub VertexHash, pub VertexHash);
 
 impl Constraint {
+    /// Compute a deterministic key that can be used to map any constraint to the same conflict set
+    /// as its opposite.
+    pub fn conflict_set_key(&self) -> ConflictSetKey {
+        let (lt, gt) = if self.0 < self.1 {
+            (self.0, self.1)
+        } else {
+            (self.1, self.0)
+        };
+        let mut ret = ConflictSetKey([0; 64]);
+        ret.0[..32].copy_from_slice(lt.as_slice());
+        ret.0[32..].copy_from_slice(gt.as_slice());
+        ret
+    }
+
     /// Return a [`Constraint`] for the opposite [`Vertex`] ordering, if any. In the case of a
     /// unity constraint, there is no opposite.
     pub fn opposite(&self) -> Option<Constraint> {
@@ -458,6 +476,11 @@ mod test {
                 Constraint(p2.hash(), p2.hash()),
                 Constraint(p1.hash(), p1.hash()),
             ]));
+    }
+
+    #[test]
+    fn constraint_conflict_set_key() {
+        todo!()
     }
 
     #[test]

@@ -34,6 +34,11 @@ impl Hash {
         Hash(bytes)
     }
 
+    /// Yield a reference to the inner bytes
+    pub fn as_slice(&self) -> &[u8; 32] {
+        &self.0
+    }
+
     /// Format the Hash as a hex string
     pub fn to_hex(&self) -> String {
         hex::encode(self.0)

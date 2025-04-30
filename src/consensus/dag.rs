@@ -1,6 +1,6 @@
 use crate::{
     params,
-    vertex::{self, Constraint},
+    vertex::{self, ConflictSetKey, Constraint},
     Vertex, VertexHash, WireFormat,
 };
 use itertools::Itertools;
@@ -36,7 +36,9 @@ pub enum Error {
     ProstEncode(#[from] prost::EncodeError),
     #[error(transparent)]
     Vertex(#[from] vertex::Error),
-    #[error("waiting on parents to process")]
+    #[error("waiting on vertex")]
+    Waiting,
+    #[error("waiting on vertex parents")]
     WaitingOnParents(Vec<VertexHash>),
 }
 type Result<T> = result::Result<T, Error>;
@@ -77,7 +79,7 @@ pub struct DAG {
     constraints: HashMap<VertexHash, HashSet<Constraint>>,
 
     /// Map of each ordering constraint to its corresponding Avalanche state variables
-    state: HashMap<Constraint, AvalancheState>,
+    state: HashMap<ConflictSetKey, ConflictSet>,
 
     /// Vertices which define the frontier of the graph.
     /// The frontier is ordered according to latest ordering preference
@@ -171,15 +173,14 @@ impl DAG {
         }
     }
 
-    /// Insert a [`Vertex`] without checking. Returns boolean indicating if the vertex is preferred
+    /// Insert a [`Vertex`] without checking DAG constraints. Will panic if parents have not
+    /// already been inserted.
     fn insert_unchecked(&mut self, vx: &Arc<Vertex>) {
         // Add vertex to list of inserted vertices
         self.vertex.insert(vx.hash(), vx.clone());
 
         // Add an entry in the child map, if it doesn't already exist
-        if !self.children.contains_key(&vx.hash()) {
-            self.children.insert(vx.hash(), HashSet::new());
-        }
+        let _ = self.children.try_insert(vx.hash(), HashSet::new());
 
         // Update constraint maps
         let constraints = vx
@@ -193,24 +194,20 @@ impl DAG {
 
                 // Register constraint as child to each of its parent constraints
                 for parent in &c_parents {
-                    self.state.get_mut(parent).unwrap().children.insert(*c);
+                    self.state
+                        .get_mut(&parent.conflict_set_key())
+                        .unwrap()
+                        .children
+                        .insert(*c);
                 }
 
                 // Add an entry in the state map, if it doesn't already exist
-                if !self.state.contains_key(c) {
-                    self.state.insert(
-                        *c,
-                        AvalancheState::default()
-                            .with_parents(c_parents)
-                            .with_preference(
-                                // Only prefer if conflict is not already preferred
-                                c.opposite()
-                                    .and_then(|opp| self.state.get(&opp))
-                                    .map(|state| !state.preferred)
-                                    .unwrap_or(true),
-                            ),
-                    );
-                }
+                let _ = self.state.try_insert(
+                    c.conflict_set_key(),
+                    ConflictSet::default()
+                        .with_parents(c_parents)
+                        .with_preference(*c),
+                );
 
                 // Add an entry to the constraint map of each vertex constrained by this constraint
                 if let Some(map) = self.constraints.get_mut(&c.0) {
@@ -257,33 +254,30 @@ impl DAG {
 
     /// Return true if the specified vertex is preferred over all its conflicts
     pub fn is_preferred(&self, vhash: &VertexHash) -> Result<bool> {
-        let vx = self.vertex.get(vhash).ok_or(Error::NotFound)?;
-        Ok(vx.parent_constraints().all(|c| {
-            println!(":::: {c}.pref() = {}", self.state[&c].preferred);
-            self.state[&c].preferred
-        }))
+        Ok(self
+            .vertex
+            .get(vhash)
+            .ok_or(Error::NotFound)
+            .and_then(|vx| self.graph.get(vhash).ok_or(Error::Waiting).map(|_| vx))?
+            .parent_constraints()
+            .all(|c| self.state[&c.conflict_set_key()].preferred == c))
     }
 
-    /// Award a chit to the specified vertex, according to the Avalanche protocol
-    pub fn award_chit(&mut self, vhash: &VertexHash) -> Result<()> {
+    /// Record the result of an Avalanche preference query for the specified [`Vertex`]
+    pub fn record_query_result(&mut self, vhash: &VertexHash, preferred: bool) -> Result<()> {
         // Helper to recursively recompute state of ancestors. Returns true if the given constraint
         // becomes preferred as a result of this recomputation.
         fn recompute(dag: &mut DAG, c: &Constraint) {
             println!(":::: recompute -- {c}");
+            todo!()
 
+            /*
             // Sum up child confidences
-            let child_conf = dag.state[c]
+            let child_conf = dag.state[&c.conflict_set_key()]
                 .children
                 .iter()
-                .map(|child| dag.state[child].confidence)
+                .map(|child| dag.state[&child.conflict_set_key()].count)
                 .sum::<usize>();
-
-            // Look up the conflict confidence, if any
-            let conflict_confidence = c
-                .opposite()
-                .and_then(|opp| dag.state.get(&opp))
-                .map(|s| s.confidence)
-                .unwrap_or(0);
 
             // Look up state and recompute
             let (overtook_conflict, need_recompute) = dag
@@ -328,33 +322,41 @@ impl DAG {
                     recompute(dag, c);
                 }
             }
+            */
         }
 
-        // Award each constraint a chit, and recompute state from each constraint which changed
-        for c in self
-            .vertex
-            .get(vhash)
-            .ok_or(Error::NotFound)?
-            .parent_constraints()
-            .inspect(|c| println!(":::: awarding chit to {c}"))
-            .filter_map(|c| {
-                let state = self.state.get_mut(&c).unwrap();
-                let orig_chit = state.chit;
-                state.chit = true;
-                if !orig_chit {
-                    Some(c)
-                } else {
-                    None
-                }
-            })
-            .collect::<HashSet<_>>()
-        {
-            // If constraint becomes preferred, need to check children to see if they too can become
-            // preferred
-            recompute(self, &c);
+        // First, confirm the vertex has already been inserted
+        if !self.vertex.contains_key(vhash) {
+            Err(Error::NotFound)
+        } else if !self.graph.contains(vhash) {
+            Err(Error::Waiting)
+        } else {
+            // Award each constraint a chit, and recompute state for the entire ancestry of each
+            for constraint in self.vertex[vhash]
+                .parent_constraints()
+                .inspect(|c| println!(":::: awarding chit to {c}"))
+                .filter_map(|c| {
+                    let state = self.state.get_mut(&c.conflict_set_key()).unwrap();
+                    let orig_chit = state.chit;
+                    let orig_pref = state.preferred;
+                    state.chit = true;
+                    if orig_pref != c {
+                        state.preferred = c;
+                        state.count = 1;
+                    }
+                    if !orig_chit {
+                        Some(c)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<HashSet<_>>()
+            {
+                // TODO: if preferred, set chit, recompute ancestors
+                // if not preferred, clear chit & counter, and reset ANCESTORS. See protocol.
+            }
+            Ok(())
         }
-
-        Ok(())
     }
 
     /// Get the latest vertices which have no children, in the order we've observed them
@@ -375,35 +377,35 @@ impl DAG {
 }
 
 /// State variables used in Avalanche consensus, to reach agreement on the [`Constraint`] graph.
+/// Every constraint forms a binary conflict set, where only itself and its opposite are
+/// possibilities. Avalanche consensus will decide which is preferred.
 #[derive(Clone, Default, Debug, PartialEq, Eq)]
-struct AvalancheState {
+struct ConflictSet {
+    /// Which of the two possible constraints is currently preferred
+    preferred: Constraint,
+
     /// A chit is awarded if enough peers preferred this vertex when queried
     chit: bool,
 
-    /// Confidence counter represents the number of successive chits awarded in the progeny
-    confidence: usize,
+    /// Counter, tracking how many chits have reinforced this preference.
+    count: usize,
 
-    /// Is this constraint preferred over its conflict constraint? Since a constraint only commits
-    /// to the relative order of two vertices, a constraint may only conflict with its
-    /// opposite.
-    preferred: bool,
-
-    /// Ordering constraints does this constraint depend on
+    /// Parents in the constraint graph
     parents: HashSet<Constraint>,
 
-    /// Known ordering constraints which depend on this
+    /// Known children in the constraint graph
     children: HashSet<Constraint>,
 }
 
-impl AvalancheState {
+impl ConflictSet {
     /// Assign constraint parents to the constraint state
-    fn with_parents(mut self, parents: HashSet<Constraint>) -> AvalancheState {
+    fn with_parents(mut self, parents: HashSet<Constraint>) -> ConflictSet {
         self.parents = parents;
         self
     }
 
     /// Assign preference to the constraint state
-    fn with_preference(mut self, preference: bool) -> AvalancheState {
+    fn with_preference(mut self, preference: Constraint) -> ConflictSet {
         self.preferred = preference;
         self
     }
@@ -413,10 +415,10 @@ impl AvalancheState {
 mod test {
     use super::{Config, DAG};
     use crate::{
-        consensus::dag::{self, AvalancheState},
+        consensus::dag::{self, ConflictSet},
         params,
-        vertex::test_vertex,
-        Vertex, WireFormat,
+        vertex::{test_vertex, Constraint},
+        Vertex, VertexHash, WireFormat,
     };
     use std::{
         assert_matches::assert_matches,
@@ -601,21 +603,23 @@ mod test {
         let v0 = test_vertex([&gen]);
         let v1 = test_vertex([&gen]);
         let v2 = test_vertex([&v0, &v1]);
+        let x2 = test_vertex([&v1, &v0]); // Conflicts with v2
         let mut dag = DAG::new(Config::default());
 
         // Confirm that frontier is always sorted by timestamp
         assert_matches!(dag.is_preferred(&v2.hash()), Err(dag::Error::NotFound));
-        dag.vertex.insert(v2.hash(), v2.clone());
-        dag.constraints
-            .insert(v2.hash(), v2.parent_constraints().collect());
-        for constraint in v2.parent_constraints() {
-            dag.state.insert(constraint, AvalancheState::default());
-        }
-        assert_eq!(dag.is_preferred(&v2.hash()).unwrap(), false);
-        for constraint in v2.parent_constraints() {
-            dag.state.get_mut(&constraint).unwrap().preferred = true;
-        }
-        assert_eq!(dag.is_preferred(&v2.hash()).unwrap(), true);
+        let _ = dag.try_insert(&v2); // V2 is known now, but still waiting on parents to process
+        assert_matches!(dag.is_preferred(&v2.hash()), Err(dag::Error::Waiting));
+
+        // Insert all parents of v2 and x2, so they will insert successfully now
+        dag.insert_unchecked(&gen);
+        dag.insert_unchecked(&v0);
+        dag.insert_unchecked(&v1);
+
+        dag.insert_unchecked(&v2);
+        assert_matches!(dag.is_preferred(&v2.hash()), Ok(true));
+        dag.insert_unchecked(&x2);
+        assert_matches!(dag.is_preferred(&x2.hash()), Ok(false));
     }
 
     #[test]
@@ -690,10 +694,10 @@ mod test {
         assert_eq!(dag.is_preferred(&c30.hash()).unwrap(), false);
 
         // Award chits to gen & "a" vertices, and confirm preferences don't change
-        dag.award_chit(&gen.hash()).unwrap();
-        dag.award_chit(&a00.hash()).unwrap();
-        dag.award_chit(&a01.hash()).unwrap();
-        dag.award_chit(&a02.hash()).unwrap();
+        dag.record_query_result(&gen.hash()).unwrap();
+        dag.record_query_result(&a00.hash()).unwrap();
+        dag.record_query_result(&a01.hash()).unwrap();
+        dag.record_query_result(&a02.hash()).unwrap();
         assert_eq!(dag.is_preferred(&gen.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&a00.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&a01.hash()).unwrap(), true);
@@ -710,7 +714,7 @@ mod test {
         assert_eq!(dag.is_preferred(&c30.hash()).unwrap(), false);
 
         // Award chit to c10 and confirm "c" subtree becomes partially preferred
-        dag.award_chit(&c10.hash()).unwrap();
+        dag.record_query_result(&c10.hash()).unwrap();
         assert_eq!(dag.is_preferred(&gen.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&a00.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&a01.hash()).unwrap(), true);
@@ -727,7 +731,7 @@ mod test {
         assert_eq!(dag.is_preferred(&c30.hash()).unwrap(), false);
 
         // Award chit to c11 to get full "c" subtree preference
-        dag.award_chit(&c11.hash()).unwrap();
+        dag.record_query_result(&c11.hash()).unwrap();
         assert_eq!(dag.is_preferred(&gen.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&a00.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&a01.hash()).unwrap(), true);
@@ -744,9 +748,9 @@ mod test {
         assert_eq!(dag.is_preferred(&c30.hash()).unwrap(), true);
 
         // Award chits to rest of "c" sub tree
-        dag.award_chit(&c20.hash()).unwrap();
-        dag.award_chit(&c21.hash()).unwrap();
-        dag.award_chit(&c30.hash()).unwrap();
+        dag.record_query_result(&c20.hash()).unwrap();
+        dag.record_query_result(&c21.hash()).unwrap();
+        dag.record_query_result(&c30.hash()).unwrap();
         assert_eq!(dag.is_preferred(&gen.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&a00.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&a01.hash()).unwrap(), true);
@@ -764,7 +768,7 @@ mod test {
 
         // Award chits to "b" sub tree, to equal "c" confidence. "c" sub tree should remain
         // preferred
-        dag.award_chit(&b10.hash()).unwrap();
+        dag.record_query_result(&b10.hash()).unwrap();
         assert_eq!(dag.is_preferred(&gen.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&a00.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&a01.hash()).unwrap(), true);
@@ -779,7 +783,7 @@ mod test {
         assert_eq!(dag.is_preferred(&c20.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&c21.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&c30.hash()).unwrap(), true);
-        dag.award_chit(&b11.hash()).unwrap();
+        dag.record_query_result(&b11.hash()).unwrap();
         assert_eq!(dag.is_preferred(&gen.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&a00.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&a01.hash()).unwrap(), true);
@@ -794,7 +798,7 @@ mod test {
         assert_eq!(dag.is_preferred(&c20.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&c21.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&c30.hash()).unwrap(), true);
-        dag.award_chit(&b20.hash()).unwrap();
+        dag.record_query_result(&b20.hash()).unwrap();
         assert_eq!(dag.is_preferred(&gen.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&a00.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&a01.hash()).unwrap(), true);
@@ -809,7 +813,7 @@ mod test {
         assert_eq!(dag.is_preferred(&c20.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&c21.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&c30.hash()).unwrap(), true);
-        dag.award_chit(&b21.hash()).unwrap();
+        dag.record_query_result(&b21.hash()).unwrap();
         assert_eq!(dag.is_preferred(&gen.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&a00.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&a01.hash()).unwrap(), true);
@@ -824,7 +828,7 @@ mod test {
         assert_eq!(dag.is_preferred(&c20.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&c21.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&c30.hash()).unwrap(), true);
-        dag.award_chit(&b30.hash()).unwrap();
+        dag.record_query_result(&b30.hash()).unwrap();
         assert_eq!(dag.is_preferred(&gen.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&a00.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&a01.hash()).unwrap(), true);
@@ -843,7 +847,7 @@ mod test {
         // Extend "b" subtree once more. Should be enough to flip "b" subtree into preference.
         let c40 = test_vertex([&c30]);
         dag.try_insert(&c40).unwrap();
-        dag.award_chit(&c40.hash()).unwrap();
+        dag.record_query_result(&c40.hash()).unwrap();
         assert_eq!(dag.is_preferred(&gen.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&a00.hash()).unwrap(), true);
         assert_eq!(dag.is_preferred(&a01.hash()).unwrap(), true);
@@ -906,13 +910,13 @@ mod test {
         let v1_parents = v1.parent_constraints().collect::<HashSet<_>>();
         let v2_parents = v2.parent_constraints().collect::<HashSet<_>>();
         assert_eq!(
-            AvalancheState::default()
+            ConflictSet::default()
                 .with_parents(v1_parents.clone())
                 .parents,
             v1_parents
         );
         assert_eq!(
-            AvalancheState::default()
+            ConflictSet::default()
                 .with_parents(v2_parents.clone())
                 .parents,
             v2_parents
@@ -921,13 +925,23 @@ mod test {
 
     #[test]
     fn state_with_preference() {
-        assert_eq!(
-            AvalancheState::default().with_preference(true).preferred,
-            true
+        let constraint = Constraint(
+            VertexHash::with_bytes([
+                100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 1,
+            ]),
+            VertexHash::with_bytes([
+                9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 1,
+            ]),
         );
         assert_eq!(
-            AvalancheState::default().with_preference(false).preferred,
-            false
+            ConflictSet::default().with_preference(constraint).preferred,
+            constraint
+        );
+        assert_ne!(
+            ConflictSet::default().with_preference(constraint).preferred,
+            constraint.opposite().unwrap(),
         );
     }
 }
