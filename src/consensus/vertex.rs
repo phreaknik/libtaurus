@@ -162,18 +162,22 @@ impl<'a> WireFormat<'a, proto::Vertex> for Vertex {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct PrettyVertex {
     version: u32,
+    height: u64,
     parents: Vec<String>,
     namespace_id: String,
     event_root: String,
+    timestamp: DateTime<Utc>,
 }
 
 impl From<&Vertex> for PrettyVertex {
     fn from(vertex: &Vertex) -> Self {
         PrettyVertex {
             version: vertex.version,
+            height: vertex.height,
             parents: vertex.parents.iter().map(|p| p.to_hex()).collect(),
             namespace_id: vertex.namespace_id.to_hex(),
             event_root: vertex.root.to_hex(),
+            timestamp: vertex.timestamp,
         }
     }
 }
@@ -195,7 +199,7 @@ pub struct ConflictSetKey([u8; 64]);
 /// A [`Constraint`] describes an ordred [`Vertex`] pair, and is used to reach consensus on the
 /// total ordering of vertices in the graph. The left [`Vertex`] is constraint to come in sequence
 /// before the right.
-#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Constraint(pub VertexHash, pub VertexHash);
 
 impl Constraint {

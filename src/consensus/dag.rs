@@ -102,9 +102,6 @@ pub struct DAG {
     /// Map of known children for each vertex in the event graph
     children: HashMap<VertexHash, HashSet<VertexHash>>,
 
-    /// Map of each vertex to the list of ordering constraints applied to it
-    constraints: HashMap<VertexHash, HashSet<Constraint>>,
-
     /// Map of each ordering constraint to its corresponding Avalanche state variables
     state: HashMap<ConflictSetKey, ConflictSet>,
 
@@ -122,7 +119,6 @@ impl DAG {
             graph: HashSet::new(),
             pending_query: HashSet::new(),
             children: HashMap::new(),
-            constraints: HashMap::new(),
             state: HashMap::new(),
             frontier: HashSet::new(),
         }
@@ -238,41 +234,31 @@ impl DAG {
         let _ = self.children.try_insert(vx.hash(), HashSet::new());
 
         // Update constraint maps
-        let constraints = vx
-            .parent_constraints()
-            .inspect(|&c| {
-                // Lookup this constraint's parents
-                let c_parents = self.vertex[&c.0]
-                    .parent_constraints()
-                    .chain(self.vertex[&c.1].parent_constraints())
-                    .collect::<HashSet<_>>();
+        for c in vx.parent_constraints() {
+            // Lookup this constraint's parents
+            let c_parents = self.vertex[&c.0]
+                .parent_constraints()
+                .chain(self.vertex[&c.1].parent_constraints())
+                .collect::<HashSet<_>>();
 
-                // Register constraint as child to each of its parent constraints
-                for parent in &c_parents {
-                    self.state
-                        .get_mut(&parent.conflict_set_key())
-                        .unwrap()
-                        .children
-                        .get_mut(parent)
-                        .unwrap()
-                        .insert(c);
-                }
-
-                // Add an entry in the state map, if it doesn't already exist
-                let _ = self
+            // Register constraint as child to each of its parent constraints
+            for &parent in &c_parents {
+                let p_state = self
                     .state
-                    .try_insert(c.conflict_set_key(), ConflictSet::new(c, c_parents));
+                    .get_mut(&parent.conflict_set_key())
+                    .expect("parent state not found");
+                if let Some(children) = p_state.children.get_mut(&parent) {
+                    children.insert(c);
+                } else {
+                    p_state.children.insert(parent, once(c).collect());
+                }
+            }
 
-                // Add an entry to the constraint map of each vertex constrained by this constraint
-                if let Some(map) = self.constraints.get_mut(&c.0) {
-                    map.insert(c);
-                }
-                if let Some(map) = self.constraints.get_mut(&c.1) {
-                    map.insert(c);
-                }
-            })
-            .collect();
-        self.constraints.insert(vx.hash(), constraints);
+            // Add an entry in the state map, if it doesn't already exist
+            let _ = self
+                .state
+                .try_insert(c.conflict_set_key(), ConflictSet::new(c, c_parents));
+        }
 
         // Update child map
         self.map_child(&vx.hash(), &vx.parents);
@@ -389,13 +375,11 @@ impl DAG {
                     .inspect(|(c, &pref)| {
                         // If preferred, award each constraint a chit
                         if pref {
-                            *self
-                                .state
+                            self.state
                                 .get_mut(&c.conflict_set_key())
                                 .unwrap()
                                 .chit
-                                .get_mut(&c)
-                                .unwrap() = true;
+                                .insert(*c, true);
                         }
                     })
                     .collect::<HashSet<_>>();
@@ -615,7 +599,6 @@ mod test {
         assert_eq!(dag.graph, HashSet::new());
         assert_eq!(dag.pending_query, HashSet::new());
         assert_eq!(dag.children, HashMap::new());
-        assert_eq!(dag.constraints, HashMap::new());
         assert_eq!(dag.state, HashMap::new());
         assert_eq!(dag.frontier, HashSet::new());
     }

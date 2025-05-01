@@ -1,15 +1,90 @@
-use libtaurus::{consensus::dag, vertex::make_rand_vertex, wire::WireFormat, Vertex};
-use std::sync::Arc;
+use core::panic;
+use libtaurus::{
+    consensus::dag::{self, DAG},
+    vertex::make_rand_vertex,
+    wire::WireFormat,
+    Vertex,
+};
+use std::{collections::HashMap, iter, sync::Arc};
+
+macro_rules! edges {
+    ([$($input:expr),*]) => {
+        {
+            [
+                $(
+                    {
+                        let mut parts = $input.split(" -> ");
+                        let left = parts.next().unwrap().trim();
+                        let rights: Vec<&str> = parts.next().unwrap().split(',').map(|s| s.trim()).collect();
+                        (left, rights)
+                    }
+                ),*
+            ]
+        }
+    };
+}
+
+fn build_graph(edges: &[(&str, Vec<&str>)]) -> DAG {
+    let mut vertices: HashMap<&str, Arc<Vertex>> = HashMap::new();
+    vertices.insert(edges[0].0, Arc::new(Vertex::empty())); // first is genesis
+    for (name, parent_names) in &edges[1..] {
+        let parents = parent_names
+            .into_iter()
+            .map(|name| {
+                vertices
+                    .get(name)
+                    .expect(&format!("couldn't find vertex {name}"))
+                    .clone()
+            })
+            .collect::<Vec<_>>();
+        vertices.insert(name, make_rand_vertex(&parents));
+    }
+    let mut dag = DAG::with_initial_vertices(
+        dag::Config {
+            genesis: vertices[edges[0].0].hash(),
+            max_confidence: 9,
+            max_count: 9,
+        },
+        iter::once(&vertices[edges[0].0]),
+    )
+    .unwrap();
+    for (name, _) in &edges[1..] {
+        dag.try_insert(&vertices[name]).unwrap();
+    }
+    dag
+}
 
 #[test]
-fn record_query_result() {
+fn basic_graph() {
+    // Graph sketch:
+    //      gen
+    //      / \
+    //    v00 v01
+    //    |  X  |
+    //    v10 v11
+    //    |  X  |
+    //    v20 v21
+    let dag = build_graph(&edges!([
+        "gen -> ",
+        "v00 -> gen",
+        "v01 -> gen",
+        "v10 -> v00, v01",
+        "v11 -> v00, v01",
+        "v20 -> v10, v11",
+        "v21 -> v10, v11"
+    ]));
+    todo!()
+}
+
+#[test]
+fn old_record_query__delete_this_test() {
     // Set up test vertices and dag
     let gen = Arc::new(Vertex::empty());
     let a00 = make_rand_vertex([&gen]);
     let a01 = make_rand_vertex([&gen]);
     let a02 = make_rand_vertex([&gen]);
 
-    // Create conflicting sets b & c
+    // Create conflicting graphs b & c
     let b10 = make_rand_vertex([&a00, &a01]);
     let b11 = make_rand_vertex([&a00, &a02]);
     let b20 = make_rand_vertex([&b10]);
@@ -74,12 +149,15 @@ fn record_query_result() {
     assert_eq!(dag.is_preferred(&b30.hash()).unwrap(), true);
     assert_eq!(dag.is_preferred(&c10.hash()).unwrap(), false);
     assert_eq!(dag.is_preferred(&c11.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&c20.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&c21.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&c30.hash()).unwrap(), false);
+    assert_eq!(dag.is_preferred(&c20.hash()).unwrap(), true);
+    assert_eq!(dag.is_preferred(&c21.hash()).unwrap(), true);
+    assert_eq!(dag.is_preferred(&c30.hash()).unwrap(), true);
 
     // Award chits to gen & "a" vertices, and confirm preferences don't change
-    dag.record_query_result(&gen.hash(), &[true]).unwrap();
+    assert!(matches!(
+        dag.record_query_result(&gen.hash(), &[]).unwrap_err(),
+        dag::Error::AlreadyQueried
+    ));
     dag.record_query_result(&a00.hash(), &[true]).unwrap();
     dag.record_query_result(&a01.hash(), &[true]).unwrap();
     dag.record_query_result(&a02.hash(), &[true]).unwrap();
@@ -94,38 +172,40 @@ fn record_query_result() {
     assert_eq!(dag.is_preferred(&b30.hash()).unwrap(), true);
     assert_eq!(dag.is_preferred(&c10.hash()).unwrap(), false);
     assert_eq!(dag.is_preferred(&c11.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&c20.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&c21.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&c30.hash()).unwrap(), false);
+    assert_eq!(dag.is_preferred(&c20.hash()).unwrap(), true);
+    assert_eq!(dag.is_preferred(&c21.hash()).unwrap(), true);
+    assert_eq!(dag.is_preferred(&c30.hash()).unwrap(), true);
 
     // Award chit to c10 and confirm "c" subtree becomes partially preferred
-    dag.record_query_result(&c10.hash(), &[true]).unwrap();
+    dag.record_query_result(&c10.hash(), &[true, true, true])
+        .unwrap();
     assert_eq!(dag.is_preferred(&gen.hash()).unwrap(), true);
     assert_eq!(dag.is_preferred(&a00.hash()).unwrap(), true);
     assert_eq!(dag.is_preferred(&a01.hash()).unwrap(), true);
     assert_eq!(dag.is_preferred(&a02.hash()).unwrap(), true);
     assert_eq!(dag.is_preferred(&b10.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&b11.hash()).unwrap(), true); // Does not conflict with c10
-    assert_eq!(dag.is_preferred(&b20.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&b21.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&b30.hash()).unwrap(), false);
+    assert_eq!(dag.is_preferred(&b11.hash()).unwrap(), true);
+    assert_eq!(dag.is_preferred(&b20.hash()).unwrap(), true);
+    assert_eq!(dag.is_preferred(&b21.hash()).unwrap(), true);
+    assert_eq!(dag.is_preferred(&b30.hash()).unwrap(), true);
     assert_eq!(dag.is_preferred(&c10.hash()).unwrap(), true);
     assert_eq!(dag.is_preferred(&c11.hash()).unwrap(), false);
     assert_eq!(dag.is_preferred(&c20.hash()).unwrap(), true);
-    assert_eq!(dag.is_preferred(&c21.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&c30.hash()).unwrap(), false);
+    assert_eq!(dag.is_preferred(&c21.hash()).unwrap(), true);
+    assert_eq!(dag.is_preferred(&c30.hash()).unwrap(), true);
 
     // Award chit to c11 to get full "c" subtree preference
-    dag.record_query_result(&c11.hash(), &[true]).unwrap();
+    dag.record_query_result(&c11.hash(), &[true, true, true])
+        .unwrap();
     assert_eq!(dag.is_preferred(&gen.hash()).unwrap(), true);
     assert_eq!(dag.is_preferred(&a00.hash()).unwrap(), true);
     assert_eq!(dag.is_preferred(&a01.hash()).unwrap(), true);
     assert_eq!(dag.is_preferred(&a02.hash()).unwrap(), true);
     assert_eq!(dag.is_preferred(&b10.hash()).unwrap(), false);
     assert_eq!(dag.is_preferred(&b11.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&b20.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&b21.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&b30.hash()).unwrap(), false);
+    assert_eq!(dag.is_preferred(&b20.hash()).unwrap(), true);
+    assert_eq!(dag.is_preferred(&b21.hash()).unwrap(), true);
+    assert_eq!(dag.is_preferred(&b30.hash()).unwrap(), true);
     assert_eq!(dag.is_preferred(&c10.hash()).unwrap(), true);
     assert_eq!(dag.is_preferred(&c11.hash()).unwrap(), true);
     assert_eq!(dag.is_preferred(&c20.hash()).unwrap(), true);
@@ -134,17 +214,19 @@ fn record_query_result() {
 
     // Award chits to rest of "c" sub tree
     dag.record_query_result(&c20.hash(), &[true]).unwrap();
-    dag.record_query_result(&c21.hash(), &[true]).unwrap();
-    dag.record_query_result(&c30.hash(), &[true]).unwrap();
+    dag.record_query_result(&c21.hash(), &[true, true, true])
+        .unwrap();
+    dag.record_query_result(&c30.hash(), &[true, true, true])
+        .unwrap();
     assert_eq!(dag.is_preferred(&gen.hash()).unwrap(), true);
     assert_eq!(dag.is_preferred(&a00.hash()).unwrap(), true);
     assert_eq!(dag.is_preferred(&a01.hash()).unwrap(), true);
     assert_eq!(dag.is_preferred(&a02.hash()).unwrap(), true);
     assert_eq!(dag.is_preferred(&b10.hash()).unwrap(), false);
     assert_eq!(dag.is_preferred(&b11.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&b20.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&b21.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&b30.hash()).unwrap(), false);
+    assert_eq!(dag.is_preferred(&b20.hash()).unwrap(), true);
+    assert_eq!(dag.is_preferred(&b21.hash()).unwrap(), true);
+    assert_eq!(dag.is_preferred(&b30.hash()).unwrap(), true);
     assert_eq!(dag.is_preferred(&c10.hash()).unwrap(), true);
     assert_eq!(dag.is_preferred(&c11.hash()).unwrap(), true);
     assert_eq!(dag.is_preferred(&c20.hash()).unwrap(), true);
@@ -153,76 +235,24 @@ fn record_query_result() {
 
     // Award chits to "b" sub tree, to equal "c" confidence. "c" sub tree should remain
     // preferred
-    dag.record_query_result(&b10.hash(), &[true]).unwrap();
-    assert_eq!(dag.is_preferred(&gen.hash()).unwrap(), true);
-    assert_eq!(dag.is_preferred(&a00.hash()).unwrap(), true);
-    assert_eq!(dag.is_preferred(&a01.hash()).unwrap(), true);
-    assert_eq!(dag.is_preferred(&a02.hash()).unwrap(), true);
-    assert_eq!(dag.is_preferred(&b10.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&b11.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&b20.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&b21.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&b30.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&c10.hash()).unwrap(), true);
-    assert_eq!(dag.is_preferred(&c11.hash()).unwrap(), true);
-    assert_eq!(dag.is_preferred(&c20.hash()).unwrap(), true);
-    assert_eq!(dag.is_preferred(&c21.hash()).unwrap(), true);
-    assert_eq!(dag.is_preferred(&c30.hash()).unwrap(), true);
-    dag.record_query_result(&b11.hash(), &[true]).unwrap();
-    assert_eq!(dag.is_preferred(&gen.hash()).unwrap(), true);
-    assert_eq!(dag.is_preferred(&a00.hash()).unwrap(), true);
-    assert_eq!(dag.is_preferred(&a01.hash()).unwrap(), true);
-    assert_eq!(dag.is_preferred(&a02.hash()).unwrap(), true);
-    assert_eq!(dag.is_preferred(&b10.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&b11.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&b20.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&b21.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&b30.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&c10.hash()).unwrap(), true);
-    assert_eq!(dag.is_preferred(&c11.hash()).unwrap(), true);
-    assert_eq!(dag.is_preferred(&c20.hash()).unwrap(), true);
-    assert_eq!(dag.is_preferred(&c21.hash()).unwrap(), true);
-    assert_eq!(dag.is_preferred(&c30.hash()).unwrap(), true);
+    dag.record_query_result(&b10.hash(), &[true, true, true])
+        .unwrap();
+    dag.record_query_result(&b11.hash(), &[true, true, true])
+        .unwrap();
     dag.record_query_result(&b20.hash(), &[true]).unwrap();
+    dag.record_query_result(&b21.hash(), &[true, true, true])
+        .unwrap();
+    dag.record_query_result(&b30.hash(), &[true, true, true])
+        .unwrap();
     assert_eq!(dag.is_preferred(&gen.hash()).unwrap(), true);
     assert_eq!(dag.is_preferred(&a00.hash()).unwrap(), true);
     assert_eq!(dag.is_preferred(&a01.hash()).unwrap(), true);
     assert_eq!(dag.is_preferred(&a02.hash()).unwrap(), true);
     assert_eq!(dag.is_preferred(&b10.hash()).unwrap(), false);
     assert_eq!(dag.is_preferred(&b11.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&b20.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&b21.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&b30.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&c10.hash()).unwrap(), true);
-    assert_eq!(dag.is_preferred(&c11.hash()).unwrap(), true);
-    assert_eq!(dag.is_preferred(&c20.hash()).unwrap(), true);
-    assert_eq!(dag.is_preferred(&c21.hash()).unwrap(), true);
-    assert_eq!(dag.is_preferred(&c30.hash()).unwrap(), true);
-    dag.record_query_result(&b21.hash(), &[true]).unwrap();
-    assert_eq!(dag.is_preferred(&gen.hash()).unwrap(), true);
-    assert_eq!(dag.is_preferred(&a00.hash()).unwrap(), true);
-    assert_eq!(dag.is_preferred(&a01.hash()).unwrap(), true);
-    assert_eq!(dag.is_preferred(&a02.hash()).unwrap(), true);
-    assert_eq!(dag.is_preferred(&b10.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&b11.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&b20.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&b21.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&b30.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&c10.hash()).unwrap(), true);
-    assert_eq!(dag.is_preferred(&c11.hash()).unwrap(), true);
-    assert_eq!(dag.is_preferred(&c20.hash()).unwrap(), true);
-    assert_eq!(dag.is_preferred(&c21.hash()).unwrap(), true);
-    assert_eq!(dag.is_preferred(&c30.hash()).unwrap(), true);
-    dag.record_query_result(&b30.hash(), &[true]).unwrap();
-    assert_eq!(dag.is_preferred(&gen.hash()).unwrap(), true);
-    assert_eq!(dag.is_preferred(&a00.hash()).unwrap(), true);
-    assert_eq!(dag.is_preferred(&a01.hash()).unwrap(), true);
-    assert_eq!(dag.is_preferred(&a02.hash()).unwrap(), true);
-    assert_eq!(dag.is_preferred(&b10.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&b11.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&b20.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&b21.hash()).unwrap(), false);
-    assert_eq!(dag.is_preferred(&b30.hash()).unwrap(), false);
+    assert_eq!(dag.is_preferred(&b20.hash()).unwrap(), true);
+    assert_eq!(dag.is_preferred(&b21.hash()).unwrap(), true);
+    assert_eq!(dag.is_preferred(&b30.hash()).unwrap(), true);
     assert_eq!(dag.is_preferred(&c10.hash()).unwrap(), true);
     assert_eq!(dag.is_preferred(&c11.hash()).unwrap(), true);
     assert_eq!(dag.is_preferred(&c20.hash()).unwrap(), true);
