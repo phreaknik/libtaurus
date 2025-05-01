@@ -468,7 +468,7 @@ impl DAG {
     }
 
     /// Determine the status of the specified [`Vertex`], and each constraint it commits to
-    pub fn query(&self, vhash: &VertexHash) -> Result<(Status, Vec<Status>)> {
+    pub fn query(&self, vhash: &VertexHash) -> Result<(Status, Vec<(bool, Status)>)> {
         // Collect constraint statuses
         let c_stats = self
             .vertex
@@ -481,7 +481,7 @@ impl DAG {
                     || (c.opposite().is_none()
                         && state.confidence[&c] >= self.config.max_confidence);
                 let preferred = state.preferred == c;
-                if decided && preferred {
+                let status = if decided && preferred {
                     Status::Accepted
                 } else if decided && !preferred {
                     Status::Rejected
@@ -497,12 +497,13 @@ impl DAG {
                     }
                 } else {
                     Status::NotPreferred
-                }
+                };
+                (state.chit[&c], status)
             })
             .collect::<Vec<_>>();
 
         // Collect vertex statuses
-        let v_stat = c_stats.iter().min().copied();
+        let v_stat = c_stats.iter().map(|s| s.1).min();
         if v_stat.is_none() && vhash != &self.config.genesis {
             Err(Error::NoParents)
         } else {
@@ -958,7 +959,11 @@ mod test {
             dag.query(&v4.hash()).unwrap(),
             (
                 Status::Accepted,
-                vec![Status::Accepted, Status::Accepted, Status::Accepted]
+                vec![
+                    (false, Status::Accepted),
+                    (false, Status::Accepted),
+                    (false, Status::Accepted)
+                ]
             )
         );
 
@@ -984,7 +989,11 @@ mod test {
             dag.query(&v4.hash()).unwrap(),
             (
                 Status::Rejected,
-                vec![Status::Rejected, Status::Accepted, Status::Accepted]
+                vec![
+                    (false, Status::Rejected),
+                    (false, Status::Accepted),
+                    (false, Status::Accepted)
+                ]
             )
         );
 
@@ -1010,7 +1019,11 @@ mod test {
             dag.query(&v4.hash()).unwrap(),
             (
                 Status::Accepted,
-                vec![Status::Accepted, Status::Accepted, Status::Accepted]
+                vec![
+                    (false, Status::Accepted),
+                    (false, Status::Accepted),
+                    (false, Status::Accepted)
+                ]
             )
         );
 
@@ -1037,9 +1050,9 @@ mod test {
             (
                 Status::StronglyPreferred,
                 vec![
-                    Status::StronglyPreferred,
-                    Status::Accepted,
-                    Status::Accepted
+                    (false, Status::StronglyPreferred),
+                    (false, Status::Accepted),
+                    (false, Status::Accepted)
                 ]
             )
         );
@@ -1066,36 +1079,10 @@ mod test {
             dag.query(&v4.hash()).unwrap(),
             (
                 Status::Accepted,
-                vec![Status::Accepted, Status::Accepted, Status::Accepted]
-            )
-        );
-
-        set_state(
-            &mut dag,
-            &Constraint(v2.hash(), v3.hash()),
-            (true, MAX_CONF, MAX_COUNT),
-            &[true, true, true],
-        );
-        set_state(
-            &mut dag,
-            &Constraint(v2.hash(), v2.hash()),
-            (true, 0, 0), // no longer decided
-            &[true, true, true],
-        );
-        set_state(
-            &mut dag,
-            &Constraint(v3.hash(), v3.hash()),
-            (true, MAX_CONF, MAX_COUNT),
-            &[true],
-        );
-        assert_eq!(
-            dag.query(&v4.hash()).unwrap(),
-            (
-                Status::StronglyPreferred,
                 vec![
-                    Status::Accepted,
-                    Status::Accepted,
-                    Status::StronglyPreferred,
+                    (false, Status::Accepted),
+                    (false, Status::Accepted),
+                    (false, Status::Accepted)
                 ]
             )
         );
@@ -1123,9 +1110,39 @@ mod test {
             (
                 Status::StronglyPreferred,
                 vec![
-                    Status::Accepted,
-                    Status::Accepted,
-                    Status::StronglyPreferred,
+                    (false, Status::Accepted),
+                    (false, Status::Accepted),
+                    (false, Status::StronglyPreferred)
+                ]
+            )
+        );
+
+        set_state(
+            &mut dag,
+            &Constraint(v2.hash(), v3.hash()),
+            (true, MAX_CONF, MAX_COUNT),
+            &[true, true, true],
+        );
+        set_state(
+            &mut dag,
+            &Constraint(v2.hash(), v2.hash()),
+            (true, 0, 0), // no longer decided
+            &[true, true, true],
+        );
+        set_state(
+            &mut dag,
+            &Constraint(v3.hash(), v3.hash()),
+            (true, MAX_CONF, MAX_COUNT),
+            &[true],
+        );
+        assert_eq!(
+            dag.query(&v4.hash()).unwrap(),
+            (
+                Status::StronglyPreferred,
+                vec![
+                    (false, Status::Accepted),
+                    (false, Status::Accepted),
+                    (false, Status::StronglyPreferred)
                 ]
             )
         );
@@ -1152,7 +1169,11 @@ mod test {
             dag.query(&v4.hash()).unwrap(),
             (
                 Status::Preferred,
-                vec![Status::Preferred, Status::Accepted, Status::Accepted,]
+                vec![
+                    (false, Status::Preferred),
+                    (false, Status::Accepted),
+                    (false, Status::Accepted)
+                ]
             )
         );
 
@@ -1178,7 +1199,11 @@ mod test {
             dag.query(&v4.hash()).unwrap(),
             (
                 Status::NotPreferred,
-                vec![Status::NotPreferred, Status::Accepted, Status::Accepted,]
+                vec![
+                    (false, Status::NotPreferred),
+                    (false, Status::Accepted),
+                    (false, Status::Accepted)
+                ]
             )
         );
     }
