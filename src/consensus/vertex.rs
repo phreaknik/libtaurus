@@ -36,6 +36,7 @@ type Result<T> = result::Result<T, Error>;
 /// Type alias for vertex hashes
 pub type VertexHash = crate::hash::Hash;
 
+/// Event vertex, representing the relative position of some event data within the event graph
 #[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub struct Vertex {
     /// Revision number of the vertex structure
@@ -276,8 +277,7 @@ impl Iterator for Constraints {
 }
 
 // Helper to build test vertices with unique hashes
-#[cfg(test)]
-pub fn test_vertex<'a, P>(parents: P) -> Arc<Vertex>
+pub fn make_rand_vertex<'a, P>(parents: P) -> Arc<Vertex>
 where
     P: IntoIterator<Item = &'a Arc<Vertex>>,
 {
