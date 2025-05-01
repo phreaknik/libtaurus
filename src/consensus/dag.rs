@@ -3,7 +3,6 @@ use crate::{
     vertex::{self, ConflictSetKey, Constraint},
     Vertex, VertexHash, WireFormat,
 };
-use core::panic;
 use itertools::Itertools;
 use std::{
     collections::{HashMap, HashSet},
@@ -27,8 +26,6 @@ pub enum Error {
     ConflictingParents,
     #[error(transparent)]
     Hash(#[from] crate::hash::Error),
-    #[error("mismatched data")]
-    MismatchedData,
     #[error("missing parents")]
     MissingParents(Vec<VertexHash>),
     #[error("no parents")]
@@ -47,16 +44,6 @@ pub enum Error {
     WaitingOnParents(Vec<VertexHash>),
 }
 type Result<T> = result::Result<T, Error>;
-
-/// Status type indicating the current state of a [`Vertex`] in the [`DAG`]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Status {
-    Rejected,
-    NotPreferred,
-    Preferred,
-    StronglyPreferred,
-    Accepted,
-}
 
 /// Configuraion parameters for a [`DAG`] instance
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -148,8 +135,8 @@ impl DAG {
                     }
                 }
 
-                // Set count to max value, to finalize these constraints as already accepted
-                state.count = [(c, dag.config.max_count)].into();
+                // Mark the associated constraints as accepted
+                state.decision.insert(c, true);
             }
         }
         Ok(dag)
@@ -308,17 +295,11 @@ impl DAG {
             .collect())
     }
 
-    /// Record the result of an Avalanche preference query for the specified [`Vertex`]. Query
-    /// result must indicate whether or not each parent constraint of the vertex was strongly
-    /// preferred by a majority of peers queried.
-    pub fn record_query_result(
-        &mut self,
-        vhash: &VertexHash,
-        strongly_preferred: &[bool],
-    ) -> Result<()> {
+    /// Helper method to look up all undecided ancestors of the given constraint
+    fn get_ancestors(&mut self, c: &Constraint) -> HashSet<Constraint> {
         // Helper to lookup ancestors of the given constraint, which have not yet been accepted by
         // the Avalanche consensus protocol. Warning: may contain duplicate entries.
-        fn get_ancestors(dag: &mut DAG, c: &Constraint) -> Vec<Constraint> {
+        fn walk_ancestors(dag: &mut DAG, c: &Constraint) -> Vec<Constraint> {
             // TODO: this is inefficient. Lots of allocs for each collect() and clone()
             let state = &dag.state[&c.conflict_set_key()];
 
@@ -333,12 +314,30 @@ impl DAG {
                 state.parents[c]
                     .clone()
                     .into_iter()
-                    .flat_map(|p| once(p).chain(get_ancestors(dag, &p).into_iter()))
+                    .flat_map(|p| once(p).chain(walk_ancestors(dag, &p).into_iter()))
                     .collect()
             } else {
                 Vec::new()
             }
         }
+
+        // Walk ancestors and convert the list to a HashSet to remove duplicates
+        walk_ancestors(self, c).into_iter().collect()
+    }
+
+    /// Record the result of an Avalanche preference query for the specified [`Vertex`]. Query
+    /// result must indicate whether or not each parent constraint of the vertex was strongly
+    /// preferred by a majority of peers queried.
+    ///
+    /// Every vertex is represented by a unity constraint on its own ordering. Thus, recording a
+    /// qurey for event vertex ABCD is equivalent to recording a query for the constraint vertex
+    /// (ABCD, ABCD), i.e. the unity constraint for that vertex.
+    pub fn record_query_result(
+        &mut self,
+        vhash: &VertexHash,
+        strongly_preferred: bool,
+    ) -> Result<()> {
+        // TODO: should peers be punished for submitting high rates of non-preferred vertices?
 
         // Helper to lookup every constraint which has a chit in the progeny of the given
         // constraint. Warning: may contain duplicate entries.
@@ -359,14 +358,7 @@ impl DAG {
 
         // Check that we have the vertex, and that we are able to record a query for it.
         if let Some(vx) = self.vertex.get(vhash).cloned() {
-            if vx.parent_constraints().count() != strongly_preferred.len() {
-                println!(
-                    ":::: {} / {}",
-                    vx.parent_constraints().count(),
-                    strongly_preferred.len()
-                );
-                Err(Error::MismatchedData)
-            } else if vx.parents.iter().any(|v| self.pending_query.contains(v)) {
+            if vx.parents.iter().any(|v| self.pending_query.contains(v)) {
                 Err(Error::WaitingOnParents(
                     vx.parents
                         .iter()
@@ -379,80 +371,77 @@ impl DAG {
             } else if self.pending_query.take(vhash).is_none() {
                 Err(Error::AlreadyQueried)
             } else {
-                // Determine each parent constraint this vertex commits to, and if preferred, award
-                // a chit to each.
-                let parent_constraints = vx
-                    .parent_constraints()
-                    .zip(strongly_preferred)
-                    .inspect(|(c, &pref)| {
-                        // If preferred, award each constraint a chit
-                        if pref {
-                            self.state
-                                .get_mut(&c.conflict_set_key())
-                                .unwrap()
-                                .chit
-                                .insert(*c, true);
-                        }
-                    })
-                    .collect::<HashSet<_>>();
+                // Award a chit to the unity constraint representing this vertex
+                let unity = Constraint(*vhash, *vhash);
+                self.state
+                    .get_mut(&unity.conflict_set_key())
+                    .expect("state does not exist for unity constraint of {vhash}")
+                    .chit
+                    .insert(unity, true);
 
-                // Update the state of each ancestor of a constraint, according to the query result
-                // for that constraint
-                for (c, &pref) in parent_constraints.into_iter().sorted_by_key(|x| x.1) {
-                    for a in get_ancestors(self, &c).into_iter().unique() {
-                        if pref {
-                            // If this constraint has a conflict, compute its confidence
-                            let conf_opp = a
-                                .opposite()
-                                .map(|opp| {
-                                    chits_in_progeny(self, &opp).into_iter().unique().count()
-                                })
-                                .unwrap_or(0);
-                            let conf_a = if conf_opp > 0 {
-                                chits_in_progeny(self, &a).into_iter().unique().count()
-                            } else {
-                                1
-                            };
-                            let state = self.state.get_mut(&a.conflict_set_key()).unwrap();
+                // Look up ancestors and increment their counters
+                for c in self.get_ancestors(&unity) {
+                    if strongly_preferred {
+                        // Compute the confidence of this constraint and its conflict (if any)
+                        let c_conf = chits_in_progeny(self, &c).into_iter().unique().count();
+                        let opp_conf = c
+                            .opposite()
+                            .map(|opp| chits_in_progeny(self, &opp).into_iter().unique().count())
+                            .unwrap_or(0);
+
+                        // If any parents were rejected, yet our peers prefer this vertex, then
+                        // we are in permanent conflict with our
+                        // peers. i.e. hard-fork.
+                        let c_parents = self.state[&c.conflict_set_key()].parents[&c].clone();
+                        debug_assert!(c_parents.iter().any(|p| {
+                            self.state[&p.conflict_set_key()].decision.get(p) == Some(&true)
+                        }));
+
+                        // Update state variables
+                        let c_count = {
+                            let c_state = self.state.get_mut(&c.conflict_set_key()).unwrap();
+
+                            // Update the confidence score
+                            c_state.confidence.insert(c, c_conf);
 
                             // Set this constraint as preferred if it has the higher confidence
-                            if conf_a > conf_opp {
-                                state.preferred = a;
+                            if c_conf > opp_conf {
+                                c_state.preferred = c;
                             }
 
                             // Increment the counter, if this vote is the same as the previous vote
                             // in this conflict set.
-                            if state.last != a {
-                                state.last = a;
-                                *self
-                                    .state
-                                    .get_mut(&a.conflict_set_key())
-                                    .unwrap()
-                                    .count
-                                    .get_mut(&a)
-                                    .unwrap() = 1;
+                            if c_state.last != c {
+                                c_state.last = c;
+                                c_state.count.insert(c, 1);
                             } else {
-                                *self
-                                    .state
-                                    .get_mut(&a.conflict_set_key())
-                                    .unwrap()
-                                    .count
-                                    .get_mut(&a)
-                                    .unwrap() += 1;
+                                *c_state.count.get_mut(&c).unwrap() += 1;
                             }
+                            c_state.count[&c]
+                        };
 
-                            // If this vote reinforces the prior vote, increment the counter.
-                            // Otherwise, reset the counter.
-                        } else {
-                            // Reset the counter
-                            *self
-                                .state
-                                .get_mut(&a.conflict_set_key())
-                                .unwrap()
-                                .count
-                                .get_mut(&a)
-                                .unwrap() = 0;
+                        // See if a decision can be made. A decision can be made if the vote count
+                        // reaches the protocol defined threshold, or if all parents are accepted
+                        // AND the confidence reaches the protocol defined threshold.
+                        if c_count >= self.config.max_count
+                            || (c_parents.iter().all(|p| {
+                                self.state[&p.conflict_set_key()].decision.get(p) == Some(&true)
+                            }) && c_conf > self.config.max_confidence)
+                        {
+                            let c_state = self.state.get_mut(&c.conflict_set_key()).unwrap();
+                            c_state.decision.insert(c, true); // accepted the constraint
+                            c_state.preferred = c;
+                            if let Some(opp) = c.opposite() {
+                                c_state.decision.insert(opp, false); // rejected its conflict
+                            }
                         }
+                    } else {
+                        // If not strongly preferred, reset the counters for the entire ancestry
+                        self.state
+                            .get_mut(&c.conflict_set_key())
+                            .expect("state does not exist for ancestor constraint {c}")
+                            .count
+                            .insert(c, 0);
                     }
                 }
 
@@ -480,50 +469,17 @@ impl DAG {
     }
 
     /// Determine the status of the specified [`Vertex`], and each constraint it commits to
-    pub fn query(&self, vhash: &VertexHash) -> Result<(Status, Vec<(bool, Status)>)> {
-        // Helper to get the chit and preference of a constraint
-        let constraint_to_chitpref = |c: Constraint| {
-            let state = self.state[&c.conflict_set_key()].clone();
-            let decided = state.count[&c] >= self.config.max_count
-                || (c.opposite().is_none() && state.confidence[&c] >= self.config.max_confidence);
-            let preferred = state.preferred == c;
-            let status = if decided && preferred {
-                Status::Accepted
-            } else if decided && !preferred {
-                Status::Rejected
-            } else if preferred {
-                if state.parents[&c]
-                    .clone()
-                    .into_iter()
-                    .all(|p| self.state[&p.conflict_set_key()].preferred == p)
-                {
-                    Status::StronglyPreferred
-                } else {
-                    Status::Preferred
-                }
-            } else {
-                Status::NotPreferred
-            };
-            (state.chit[&c], status)
-        };
-
-        // Collect constraint statuses
-        let mut c_stats = self
-            .vertex
-            .get(vhash)
+    pub fn query(&self, vhash: &VertexHash) -> Result<bool> {
+        // Collect ancestors of the unity constraint pertaining to the requestev vertex
+        let unity = Constraint(*vhash, *vhash);
+        Ok(self
+            .state
+            .get(&unity.conflict_set_key())
             .ok_or(Error::NotFound)?
-            .parent_constraints()
-            .chain(once(Constraint(*vhash, *vhash))) // last constraint is self-unity
-            .map(constraint_to_chitpref)
-            .collect::<Vec<_>>();
-
-        // Collect vertex statuses
-        let v_stat = c_stats.iter().map(|s| s.1).min().unwrap();
-        // pop last constraint, as it is not a parent constraint
-        if c_stats.pop().unwrap().1 > v_stat {
-            panic!("illegal state: constraint is accepted before its parents");
-        }
-        Ok((v_stat, c_stats))
+            .parents[&unity]
+            .clone()
+            .into_iter()
+            .all(|c| self.state[&c.conflict_set_key()].preferred == c))
     }
 
     /// Get the latest vertices which have no children, in the order we've observed them
@@ -566,6 +522,10 @@ struct ConflictSet {
 
     /// Known children in the constraint graph for each constraint in the conflict set
     children: HashMap<Constraint, HashSet<Constraint>>,
+
+    /// If a decision hash been made for the associated constraints (accepted or rejected), that
+    /// decision will be recorded here for faster lookups
+    decision: HashMap<Constraint, bool>,
 }
 
 impl ConflictSet {
@@ -579,13 +539,14 @@ impl ConflictSet {
             count: once((initial, 0)).collect(),
             parents: once((initial, parents)).collect(),
             children: once((initial, HashSet::new())).collect(),
+            decision: HashMap::new(),
         }
     }
 }
 
 #[cfg(test)]
 mod test {
-    use super::{Config, Status, DAG};
+    use super::{Config, DAG};
     use crate::{
         consensus::dag::{self, ConflictSet},
         params,
@@ -640,7 +601,7 @@ mod test {
         assert!(dag.pending_query.is_empty());
         assert_eq!(
             dag.query(&gen.hash()).unwrap(),
-            (dag::Status::Accepted, vec![])
+            (dag::Decision::Accepted, vec![])
         );
 
         // Confirm each initial vertex is recognized as preferred and decided
@@ -654,11 +615,11 @@ mod test {
         )
         .unwrap();
         assert!(dag.pending_query.is_empty());
-        assert_eq!(dag.query(&gen.hash()).unwrap().0, dag::Status::Accepted);
-        assert_eq!(dag.query(&v0.hash()).unwrap().0, dag::Status::Accepted);
-        assert_eq!(dag.query(&v1.hash()).unwrap().0, dag::Status::Accepted);
-        assert_eq!(dag.query(&v2.hash()).unwrap().0, dag::Status::Accepted);
-        assert_eq!(dag.query(&v3.hash()).unwrap().0, dag::Status::Accepted);
+        assert_eq!(dag.query(&gen.hash()).unwrap().0, dag::Decision::Accepted);
+        assert_eq!(dag.query(&v0.hash()).unwrap().0, dag::Decision::Accepted);
+        assert_eq!(dag.query(&v1.hash()).unwrap().0, dag::Decision::Accepted);
+        assert_eq!(dag.query(&v2.hash()).unwrap().0, dag::Decision::Accepted);
+        assert_eq!(dag.query(&v3.hash()).unwrap().0, dag::Decision::Accepted);
 
         // Check that we are able to insert a vertex which extends the initial set
         assert_matches!(dag.query(&v4.hash()), Err(dag::Error::NotFound));
@@ -816,54 +777,54 @@ mod test {
     }
 
     #[test]
+    fn get_ancestors() {
+        todo!()
+    }
+
+    #[test]
     fn record_query_result() {
         let gen = Arc::new(Vertex::empty());
         let v0 = make_rand_vertex([&gen]);
         let v1 = make_rand_vertex([&gen]);
         let v2 = make_rand_vertex([&v0, &v1]);
+        let v3 = make_rand_vertex([&v2]);
         let mut dag = DAG::with_initial_vertices(Config::default(), [&gen]).unwrap();
         dag.try_insert(&v0).unwrap();
+        dag.try_insert(&v1).unwrap();
 
-        // Not enough preferences
+        // Basic success
+        dag.record_query_result(&v0.hash(), true).unwrap();
+        dag.record_query_result(&v1.hash(), false).unwrap();
+
+        // Error cases
         assert_matches!(
-            dag.record_query_result(&v0.hash(), &[]),
-            Err(dag::Error::MismatchedData),
-        );
-        // Too many preferences
-        assert_matches!(
-            dag.record_query_result(&v0.hash(), &[true, true]),
-            Err(dag::Error::MismatchedData),
-        );
-        dag.record_query_result(&v0.hash(), &[true]).unwrap();
-        assert_matches!(
-            dag.record_query_result(&v0.hash(), &[true]),
+            dag.record_query_result(&v0.hash(), true),
             Err(dag::Error::AlreadyQueried)
         );
         assert_matches!(
-            dag.record_query_result(&v2.hash(), &[true, true, true]),
+            dag.record_query_result(&v3.hash(), true),
             Err(dag::Error::NotFound)
         );
-        // will fail, but makes v2 known
-        dag.try_insert(&v2).unwrap_err();
-        // v1 still has not been inserted
+        // will fail, but makes v3 known
+        dag.try_insert(&v3).unwrap_err();
+        // v2 still has not been inserted
         assert_matches!(
-            dag.record_query_result(&v2.hash(), &[true, true, true]),
+            dag.record_query_result(&v3.hash(), true),
             Err(dag::Error::WaitingOnParents(_))
-        );
-        dag.try_insert(&v1).unwrap();
-        // v1 still has not been queried
-        assert_matches!(
-            dag.record_query_result(&v2.hash(), &[true, true, true]),
-            Err(dag::Error::WaitingOnParents(_))
-        );
-        dag.record_query_result(&v1.hash(), &[true]).unwrap();
-        assert_matches!(
-            dag.record_query_result(&v2.hash(), &[true, true, true]),
-            Err(dag::Error::WaitingOnVertex)
         );
         dag.try_insert(&v2).unwrap();
-        dag.record_query_result(&v2.hash(), &[true, true, true])
-            .unwrap();
+        // v2 still has not been queried
+        assert_matches!(
+            dag.record_query_result(&v3.hash(), true),
+            Err(dag::Error::WaitingOnParents(_))
+        );
+        dag.record_query_result(&v2.hash(), true).unwrap();
+        assert_matches!(
+            dag.record_query_result(&v3.hash(), true),
+            Err(dag::Error::WaitingOnVertex)
+        );
+        dag.try_insert(&v3).unwrap();
+        dag.record_query_result(&v3.hash(), true).unwrap();
     }
 
     #[test]
@@ -976,11 +937,11 @@ mod test {
         assert_eq!(
             dag.query(&v4.hash()).unwrap(),
             (
-                Status::StronglyPreferred,
+                Decision::StronglyPreferred,
                 vec![
-                    (false, Status::Accepted),
-                    (false, Status::Accepted),
-                    (false, Status::Accepted)
+                    (false, Decision::Accepted),
+                    (false, Decision::Accepted),
+                    (false, Decision::Accepted)
                 ]
             )
         );
@@ -993,11 +954,11 @@ mod test {
         assert_eq!(
             dag.query(&v4.hash()).unwrap(),
             (
-                Status::Accepted,
+                Decision::Accepted,
                 vec![
-                    (false, Status::Accepted),
-                    (false, Status::Accepted),
-                    (false, Status::Accepted)
+                    (false, Decision::Accepted),
+                    (false, Decision::Accepted),
+                    (false, Decision::Accepted)
                 ]
             )
         );
@@ -1020,14 +981,20 @@ mod test {
             (true, MAX_CONF, MAX_COUNT),
             &[true],
         );
+        set_state(
+            &mut dag,
+            &Constraint(v4.hash(), v4.hash()),
+            (true, MAX_CONF, MAX_COUNT),
+            &[true, true, true],
+        );
         assert_eq!(
             dag.query(&v4.hash()).unwrap(),
             (
-                Status::Rejected,
+                Decision::Rejected,
                 vec![
-                    (false, Status::Rejected),
-                    (false, Status::Accepted),
-                    (false, Status::Accepted)
+                    (false, Decision::Rejected),
+                    (false, Decision::Accepted),
+                    (false, Decision::Accepted)
                 ]
             )
         );
@@ -1053,11 +1020,11 @@ mod test {
         assert_eq!(
             dag.query(&v4.hash()).unwrap(),
             (
-                Status::Accepted,
+                Decision::Accepted,
                 vec![
-                    (false, Status::Accepted),
-                    (false, Status::Accepted),
-                    (false, Status::Accepted)
+                    (false, Decision::Accepted),
+                    (false, Decision::Accepted),
+                    (false, Decision::Accepted)
                 ]
             )
         );
@@ -1083,11 +1050,11 @@ mod test {
         assert_eq!(
             dag.query(&v4.hash()).unwrap(),
             (
-                Status::StronglyPreferred,
+                Decision::StronglyPreferred,
                 vec![
-                    (false, Status::StronglyPreferred),
-                    (false, Status::Accepted),
-                    (false, Status::Accepted)
+                    (false, Decision::StronglyPreferred),
+                    (false, Decision::Accepted),
+                    (false, Decision::Accepted)
                 ]
             )
         );
@@ -1113,11 +1080,11 @@ mod test {
         assert_eq!(
             dag.query(&v4.hash()).unwrap(),
             (
-                Status::Accepted,
+                Decision::Accepted,
                 vec![
-                    (false, Status::Accepted),
-                    (false, Status::Accepted),
-                    (false, Status::Accepted)
+                    (false, Decision::Accepted),
+                    (false, Decision::Accepted),
+                    (false, Decision::Accepted)
                 ]
             )
         );
@@ -1143,11 +1110,11 @@ mod test {
         assert_eq!(
             dag.query(&v4.hash()).unwrap(),
             (
-                Status::StronglyPreferred,
+                Decision::StronglyPreferred,
                 vec![
-                    (false, Status::Accepted),
-                    (false, Status::Accepted),
-                    (false, Status::StronglyPreferred)
+                    (false, Decision::Accepted),
+                    (false, Decision::Accepted),
+                    (false, Decision::StronglyPreferred)
                 ]
             )
         );
@@ -1173,11 +1140,11 @@ mod test {
         assert_eq!(
             dag.query(&v4.hash()).unwrap(),
             (
-                Status::StronglyPreferred,
+                Decision::StronglyPreferred,
                 vec![
-                    (false, Status::Accepted),
-                    (false, Status::Accepted),
-                    (false, Status::StronglyPreferred)
+                    (false, Decision::Accepted),
+                    (false, Decision::Accepted),
+                    (false, Decision::StronglyPreferred)
                 ]
             )
         );
@@ -1203,11 +1170,11 @@ mod test {
         assert_eq!(
             dag.query(&v4.hash()).unwrap(),
             (
-                Status::Preferred,
+                Decision::Preferred,
                 vec![
-                    (false, Status::Preferred),
-                    (false, Status::Accepted),
-                    (false, Status::Accepted)
+                    (false, Decision::Preferred),
+                    (false, Decision::Accepted),
+                    (false, Decision::Accepted)
                 ]
             )
         );
@@ -1233,11 +1200,11 @@ mod test {
         assert_eq!(
             dag.query(&v4.hash()).unwrap(),
             (
-                Status::NotPreferred,
+                Decision::NotPreferred,
                 vec![
-                    (false, Status::NotPreferred),
-                    (false, Status::Accepted),
-                    (false, Status::Accepted)
+                    (false, Decision::NotPreferred),
+                    (false, Decision::Accepted),
+                    (false, Decision::Accepted)
                 ]
             )
         );
