@@ -3,6 +3,7 @@ use crate::{
     vertex::{self, ConflictSetKey, Constraint},
     Vertex, VertexHash, WireFormat,
 };
+use core::panic;
 use itertools::Itertools;
 use std::{
     collections::{HashMap, HashSet},
@@ -134,7 +135,10 @@ impl DAG {
         for vx in vertices {
             dag.insert_unchecked(vx);
             dag.pending_query.remove(&vx.hash());
-            for c in vx.parent_constraints() {
+            for c in vx
+                .parent_constraints()
+                .chain(once(Constraint(vx.hash(), vx.hash())))
+            {
                 let state = dag.state.get_mut(&c.conflict_set_key()).unwrap();
 
                 // Make sure none of the vertices have conflicting constraints
@@ -233,8 +237,16 @@ impl DAG {
         // Add an entry in the child map, if it doesn't already exist
         let _ = self.children.try_insert(vx.hash(), HashSet::new());
 
+        // Pre-load the self-referential unity constraint for this vertex
+        let parent_constraints: HashSet<_> = vx.parent_constraints().collect();
+        let uc = Constraint(vx.hash(), vx.hash());
+        self.state.insert(
+            uc.conflict_set_key(),
+            ConflictSet::new(uc, parent_constraints.clone()),
+        );
+
         // Update constraint maps
-        for c in vx.parent_constraints() {
+        for c in parent_constraints.into_iter().chain(once(uc)) {
             // Lookup this constraint's parents
             let c_parents = self.vertex[&c.0]
                 .parent_constraints()
@@ -469,46 +481,49 @@ impl DAG {
 
     /// Determine the status of the specified [`Vertex`], and each constraint it commits to
     pub fn query(&self, vhash: &VertexHash) -> Result<(Status, Vec<(bool, Status)>)> {
+        // Helper to get the chit and preference of a constraint
+        let constraint_to_chitpref = |c: Constraint| {
+            let state = self.state[&c.conflict_set_key()].clone();
+            let decided = state.count[&c] >= self.config.max_count
+                || (c.opposite().is_none() && state.confidence[&c] >= self.config.max_confidence);
+            let preferred = state.preferred == c;
+            let status = if decided && preferred {
+                Status::Accepted
+            } else if decided && !preferred {
+                Status::Rejected
+            } else if preferred {
+                if state.parents[&c]
+                    .clone()
+                    .into_iter()
+                    .all(|p| self.state[&p.conflict_set_key()].preferred == p)
+                {
+                    Status::StronglyPreferred
+                } else {
+                    Status::Preferred
+                }
+            } else {
+                Status::NotPreferred
+            };
+            (state.chit[&c], status)
+        };
+
         // Collect constraint statuses
-        let c_stats = self
+        let mut c_stats = self
             .vertex
             .get(vhash)
             .ok_or(Error::NotFound)?
             .parent_constraints()
-            .map(|c| {
-                let state = self.state[&c.conflict_set_key()].clone();
-                let decided = state.count[&c] >= self.config.max_count
-                    || (c.opposite().is_none()
-                        && state.confidence[&c] >= self.config.max_confidence);
-                let preferred = state.preferred == c;
-                let status = if decided && preferred {
-                    Status::Accepted
-                } else if decided && !preferred {
-                    Status::Rejected
-                } else if preferred {
-                    if state.parents[&c]
-                        .clone()
-                        .into_iter()
-                        .all(|p| self.state[&p.conflict_set_key()].preferred == p)
-                    {
-                        Status::StronglyPreferred
-                    } else {
-                        Status::Preferred
-                    }
-                } else {
-                    Status::NotPreferred
-                };
-                (state.chit[&c], status)
-            })
+            .chain(once(Constraint(*vhash, *vhash))) // last constraint is self-unity
+            .map(constraint_to_chitpref)
             .collect::<Vec<_>>();
 
         // Collect vertex statuses
-        let v_stat = c_stats.iter().map(|s| s.1).min();
-        if v_stat.is_none() && vhash != &self.config.genesis {
-            Err(Error::NoParents)
-        } else {
-            Ok((v_stat.unwrap_or(Status::Accepted), c_stats))
+        let v_stat = c_stats.iter().map(|s| s.1).min().unwrap();
+        // pop last constraint, as it is not a parent constraint
+        if c_stats.pop().unwrap().1 > v_stat {
+            panic!("illegal state: constraint is accepted before its parents");
         }
+        Ok((v_stat, c_stats))
     }
 
     /// Get the latest vertices which have no children, in the order we've observed them
@@ -620,10 +635,13 @@ mod test {
             Err(dag::Error::ConflictingParents)
         );
 
-        // Should not allow vertex without parents if it is not designated as genesis
+        // Basic test -- genesis vertex should be accepted
         let dag = DAG::with_initial_vertices(Config::default(), [&gen]).unwrap();
         assert!(dag.pending_query.is_empty());
-        assert_matches!(dag.query(&gen.hash()), Err(dag::Error::NoParents));
+        assert_eq!(
+            dag.query(&gen.hash()).unwrap(),
+            (dag::Status::Accepted, vec![])
+        );
 
         // Confirm each initial vertex is recognized as preferred and decided
         let mut dag = DAG::with_initial_vertices(
@@ -954,6 +972,23 @@ mod test {
             &Constraint(v3.hash(), v3.hash()),
             (true, MAX_CONF, MAX_COUNT),
             &[true],
+        );
+        assert_eq!(
+            dag.query(&v4.hash()).unwrap(),
+            (
+                Status::StronglyPreferred,
+                vec![
+                    (false, Status::Accepted),
+                    (false, Status::Accepted),
+                    (false, Status::Accepted)
+                ]
+            )
+        );
+        set_state(
+            &mut dag,
+            &Constraint(v4.hash(), v4.hash()),
+            (true, MAX_CONF, MAX_COUNT),
+            &[true, true, true],
         );
         assert_eq!(
             dag.query(&v4.hash()).unwrap(),

@@ -95,8 +95,11 @@ impl<'a> TestGraph<'a> {
     }
 }
 
+// TODO: I think it is possible to get a vertex to be accepted, even though its parents are not...
+// test this.
+
 #[test]
-fn basic_graph() {
+fn tower_1222() {
     let mut tg = test_graph!([
         "gen ->         ", //      gen
         "v00 -> gen     ", //      / \
