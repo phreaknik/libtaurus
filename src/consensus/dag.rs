@@ -353,7 +353,8 @@ impl DAG {
                     })
                     .collect::<HashSet<_>>();
 
-                // Update the state of each ancestor, according to the query result
+                // Update the state of each ancestor of a constraint, according to the query result
+                // for that constraint
                 for (c, &pref) in parent_constraints.into_iter().sorted_by_key(|x| x.1) {
                     for a in get_ancestors(self, &c).into_iter().unique() {
                         if pref {
