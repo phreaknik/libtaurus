@@ -296,10 +296,10 @@ impl DAG {
     }
 
     /// Helper method to look up all undecided ancestors of the given constraint
-    fn get_ancestors(&mut self, c: &Constraint) -> HashSet<Constraint> {
+    fn get_ancestors(&self, c: &Constraint) -> Result<HashSet<Constraint>> {
         // Helper to lookup ancestors of the given constraint, which have not yet been accepted by
         // the Avalanche consensus protocol. Warning: may contain duplicate entries.
-        fn walk_ancestors(dag: &mut DAG, c: &Constraint) -> Vec<Constraint> {
+        fn walk_ancestors(dag: &DAG, c: &Constraint) -> Vec<Constraint> {
             // TODO: this is inefficient. Lots of allocs for each collect() and clone()
             let state = &dag.state[&c.conflict_set_key()];
 
@@ -322,7 +322,11 @@ impl DAG {
         }
 
         // Walk ancestors and convert the list to a HashSet to remove duplicates
-        walk_ancestors(self, c).into_iter().collect()
+        if !self.state.contains_key(&c.conflict_set_key()) {
+            Err(Error::NotFound)
+        } else {
+            Ok(walk_ancestors(self, c).into_iter().collect())
+        }
     }
 
     /// Record the result of an Avalanche preference query for the specified [`Vertex`]. Query
@@ -380,7 +384,7 @@ impl DAG {
                     .insert(unity, true);
 
                 // Look up ancestors and increment their counters
-                for c in self.get_ancestors(&unity) {
+                for c in self.get_ancestors(&unity).unwrap() {
                     if strongly_preferred {
                         // Compute the confidence of this constraint and its conflict (if any)
                         let c_conf = chits_in_progeny(self, &c).into_iter().unique().count();
@@ -468,18 +472,53 @@ impl DAG {
             .all(|c| self.state[&c.conflict_set_key()].preferred == c))
     }
 
-    /// Determine the status of the specified [`Vertex`], and each constraint it commits to
-    pub fn query(&self, vhash: &VertexHash) -> Result<bool> {
-        // Collect ancestors of the unity constraint pertaining to the requestev vertex
+    /// Queries the [`DAG`] to determine the current status of the specified [`Vertex`]. Returns
+    /// two boolean values, indicating if the vertex is strongly preferred and if that decision is
+    /// final (i.e. has it been accepted or rejected).
+    ///
+    /// For example, here is the truth table of query results:
+    ///   result         | meaning
+    ///   --------------------------
+    ///   (false, false) | not preferred, not decided
+    ///   (false, true)  | not preferred, decided (rejected)
+    ///   (true, false)  | strongly-preferred, not decided
+    ///   (true, true)   | strongly-preferred, decided (accepted)
+    pub fn query(&self, vhash: &VertexHash) -> Result<(bool, bool)> {
+        // Check if there has been a decision on the unity constraint corresponding to this
+        // vertex. If not, look up all ancestors and confirm their preference.
         let unity = Constraint(*vhash, *vhash);
-        Ok(self
+        if let Some(decision) = self
             .state
             .get(&unity.conflict_set_key())
-            .ok_or(Error::NotFound)?
-            .parents[&unity]
-            .clone()
-            .into_iter()
-            .all(|c| self.state[&c.conflict_set_key()].preferred == c))
+            .and_then(|s| s.decision.get(&unity))
+        {
+            Ok(match decision {
+                true => (true, true),   // accepted
+                false => (false, true), // rejected
+            })
+        } else {
+            let states = self
+                .get_ancestors(&unity)?
+                .into_iter()
+                .map(|c| {
+                    let c_state = self.state.get(&c.conflict_set_key()).unwrap();
+                    match c_state.decision.get(&c) {
+                        Some(true) => (true, true),   // accepted
+                        Some(false) => (false, true), // rejected
+                        None => (c_state.preferred == c, false),
+                    }
+                })
+                .inspect(|s| {
+                    // It should be impossible for a rejected vertex to make it here if the vertex
+                    // is rejected
+                    debug_assert!(
+                        s.0 == false && s.1 == true,
+                        "found non-rejected vertex with rejected ancestors"
+                    );
+                })
+                .collect::<Vec<_>>();
+            Ok((states.into_iter().all(|s| s.0), false))
+        }
     }
 
     /// Get the latest vertices which have no children, in the order we've observed them
@@ -599,10 +638,7 @@ mod test {
         // Basic test -- genesis vertex should be accepted
         let dag = DAG::with_initial_vertices(Config::default(), [&gen]).unwrap();
         assert!(dag.pending_query.is_empty());
-        assert_eq!(
-            dag.query(&gen.hash()).unwrap(),
-            (dag::Decision::Accepted, vec![])
-        );
+        assert_eq!(dag.query(&gen.hash()).unwrap(), true);
 
         // Confirm each initial vertex is recognized as preferred and decided
         let mut dag = DAG::with_initial_vertices(
@@ -615,11 +651,11 @@ mod test {
         )
         .unwrap();
         assert!(dag.pending_query.is_empty());
-        assert_eq!(dag.query(&gen.hash()).unwrap().0, dag::Decision::Accepted);
-        assert_eq!(dag.query(&v0.hash()).unwrap().0, dag::Decision::Accepted);
-        assert_eq!(dag.query(&v1.hash()).unwrap().0, dag::Decision::Accepted);
-        assert_eq!(dag.query(&v2.hash()).unwrap().0, dag::Decision::Accepted);
-        assert_eq!(dag.query(&v3.hash()).unwrap().0, dag::Decision::Accepted);
+        assert_eq!(dag.query(&gen.hash()).unwrap(), true);
+        assert_eq!(dag.query(&v0.hash()).unwrap(), true);
+        assert_eq!(dag.query(&v1.hash()).unwrap(), true);
+        assert_eq!(dag.query(&v2.hash()).unwrap(), true);
+        assert_eq!(dag.query(&v3.hash()).unwrap(), true);
 
         // Check that we are able to insert a vertex which extends the initial set
         assert_matches!(dag.query(&v4.hash()), Err(dag::Error::NotFound));
@@ -856,358 +892,7 @@ mod test {
 
     #[test]
     fn query() {
-        // Helper to set constraint states
-        fn set_state(
-            dag: &mut DAG,
-            c: &Constraint,
-            c_state: (bool, usize, usize),
-            parent_preferences: &[bool],
-        ) {
-            let parents = {
-                let (preferred, conf, count) = c_state;
-                let state = dag.state.get_mut(&c.conflict_set_key()).unwrap();
-                assert!(state.parents[&c].len() == parent_preferences.len());
-                if preferred {
-                    state.preferred = *c;
-                } else {
-                    state.preferred = c.opposite().unwrap();
-                }
-                *state.confidence.get_mut(&c).unwrap() = conf;
-                *state.count.get_mut(&c).unwrap() = count;
-                state.parents[&c].clone()
-            };
-            for (p, &preferred) in izip!(
-                parents.into_iter().sorted_by_key(|x| x.is_unity()),
-                parent_preferences
-            ) {
-                let state = dag.state.get_mut(&p.conflict_set_key()).unwrap();
-                if preferred {
-                    state.preferred = p;
-                } else {
-                    state.preferred = p.opposite().unwrap();
-                }
-            }
-        }
-
-        const MAX_CONF: usize = 9;
-        const MAX_COUNT: usize = 9;
-
-        let gen = Arc::new(Vertex::empty());
-        let v0 = make_rand_vertex([&gen]);
-        let v1 = make_rand_vertex([&gen]);
-        let v2 = make_rand_vertex([&v0, &v1]);
-        let v3 = make_rand_vertex([&v0]);
-        let v4 = make_rand_vertex([&v2, &v3]);
-        let mut dag = DAG::with_initial_vertices(
-            Config {
-                genesis: gen.hash(),
-                max_confidence: MAX_CONF,
-                max_count: MAX_COUNT,
-            },
-            [&gen],
-        )
-        .unwrap();
-
-        dag.try_insert(&v0).unwrap();
-        dag.try_insert(&v1).unwrap();
-        dag.try_insert(&v2).unwrap();
-        dag.try_insert(&v3).unwrap();
-
-        assert_matches!(dag.query(&v4.hash()), Err(dag::Error::NotFound));
-        dag.try_insert(&v4).unwrap();
-
-        set_state(
-            &mut dag,
-            &Constraint(v2.hash(), v3.hash()),
-            (true, MAX_CONF, MAX_COUNT),
-            &[true, true, true],
-        );
-        set_state(
-            &mut dag,
-            &Constraint(v2.hash(), v2.hash()),
-            (true, MAX_CONF, MAX_COUNT),
-            &[true, true, true],
-        );
-        set_state(
-            &mut dag,
-            &Constraint(v3.hash(), v3.hash()),
-            (true, MAX_CONF, MAX_COUNT),
-            &[true],
-        );
-        assert_eq!(
-            dag.query(&v4.hash()).unwrap(),
-            (
-                Decision::StronglyPreferred,
-                vec![
-                    (false, Decision::Accepted),
-                    (false, Decision::Accepted),
-                    (false, Decision::Accepted)
-                ]
-            )
-        );
-        set_state(
-            &mut dag,
-            &Constraint(v4.hash(), v4.hash()),
-            (true, MAX_CONF, MAX_COUNT),
-            &[true, true, true],
-        );
-        assert_eq!(
-            dag.query(&v4.hash()).unwrap(),
-            (
-                Decision::Accepted,
-                vec![
-                    (false, Decision::Accepted),
-                    (false, Decision::Accepted),
-                    (false, Decision::Accepted)
-                ]
-            )
-        );
-
-        set_state(
-            &mut dag,
-            &Constraint(v2.hash(), v3.hash()),
-            (false, MAX_CONF, MAX_COUNT),
-            &[true, true, true],
-        );
-        set_state(
-            &mut dag,
-            &Constraint(v2.hash(), v2.hash()),
-            (true, MAX_CONF, MAX_COUNT),
-            &[true, true, true],
-        );
-        set_state(
-            &mut dag,
-            &Constraint(v3.hash(), v3.hash()),
-            (true, MAX_CONF, MAX_COUNT),
-            &[true],
-        );
-        set_state(
-            &mut dag,
-            &Constraint(v4.hash(), v4.hash()),
-            (true, MAX_CONF, MAX_COUNT),
-            &[true, true, true],
-        );
-        assert_eq!(
-            dag.query(&v4.hash()).unwrap(),
-            (
-                Decision::Rejected,
-                vec![
-                    (false, Decision::Rejected),
-                    (false, Decision::Accepted),
-                    (false, Decision::Accepted)
-                ]
-            )
-        );
-
-        set_state(
-            &mut dag,
-            &Constraint(v2.hash(), v3.hash()),
-            (true, MAX_CONF, MAX_COUNT),
-            &[true, true, true],
-        );
-        set_state(
-            &mut dag,
-            &Constraint(v2.hash(), v2.hash()),
-            (true, 0, MAX_COUNT), // still decided because of count
-            &[true, true, true],
-        );
-        set_state(
-            &mut dag,
-            &Constraint(v3.hash(), v3.hash()),
-            (true, MAX_CONF, MAX_COUNT),
-            &[true],
-        );
-        assert_eq!(
-            dag.query(&v4.hash()).unwrap(),
-            (
-                Decision::Accepted,
-                vec![
-                    (false, Decision::Accepted),
-                    (false, Decision::Accepted),
-                    (false, Decision::Accepted)
-                ]
-            )
-        );
-
-        set_state(
-            &mut dag,
-            &Constraint(v2.hash(), v3.hash()),
-            (true, MAX_CONF, 0), // Undecided, conflict doesn't allow safe early commitment
-            &[true, true, true],
-        );
-        set_state(
-            &mut dag,
-            &Constraint(v2.hash(), v2.hash()),
-            (true, MAX_CONF, MAX_COUNT),
-            &[true, true, true],
-        );
-        set_state(
-            &mut dag,
-            &Constraint(v3.hash(), v3.hash()),
-            (true, MAX_CONF, MAX_COUNT),
-            &[true],
-        );
-        assert_eq!(
-            dag.query(&v4.hash()).unwrap(),
-            (
-                Decision::StronglyPreferred,
-                vec![
-                    (false, Decision::StronglyPreferred),
-                    (false, Decision::Accepted),
-                    (false, Decision::Accepted)
-                ]
-            )
-        );
-
-        set_state(
-            &mut dag,
-            &Constraint(v2.hash(), v3.hash()),
-            (true, MAX_CONF, MAX_COUNT),
-            &[true, true, true],
-        );
-        set_state(
-            &mut dag,
-            &Constraint(v2.hash(), v2.hash()),
-            (true, MAX_CONF, MAX_COUNT),
-            &[true, true, true],
-        );
-        set_state(
-            &mut dag,
-            &Constraint(v3.hash(), v3.hash()),
-            (true, MAX_CONF, 0), // still decided for safe early commitment
-            &[true],
-        );
-        assert_eq!(
-            dag.query(&v4.hash()).unwrap(),
-            (
-                Decision::Accepted,
-                vec![
-                    (false, Decision::Accepted),
-                    (false, Decision::Accepted),
-                    (false, Decision::Accepted)
-                ]
-            )
-        );
-
-        set_state(
-            &mut dag,
-            &Constraint(v2.hash(), v3.hash()),
-            (true, MAX_CONF, MAX_COUNT),
-            &[true, true, true],
-        );
-        set_state(
-            &mut dag,
-            &Constraint(v2.hash(), v2.hash()),
-            (true, 0, 0), // no longer decided
-            &[true, true, true],
-        );
-        set_state(
-            &mut dag,
-            &Constraint(v3.hash(), v3.hash()),
-            (true, MAX_CONF, MAX_COUNT),
-            &[true],
-        );
-        assert_eq!(
-            dag.query(&v4.hash()).unwrap(),
-            (
-                Decision::StronglyPreferred,
-                vec![
-                    (false, Decision::Accepted),
-                    (false, Decision::Accepted),
-                    (false, Decision::StronglyPreferred)
-                ]
-            )
-        );
-
-        set_state(
-            &mut dag,
-            &Constraint(v2.hash(), v3.hash()),
-            (true, MAX_CONF, MAX_COUNT),
-            &[true, true, true],
-        );
-        set_state(
-            &mut dag,
-            &Constraint(v2.hash(), v2.hash()),
-            (true, 0, 0), // no longer decided
-            &[true, true, true],
-        );
-        set_state(
-            &mut dag,
-            &Constraint(v3.hash(), v3.hash()),
-            (true, MAX_CONF, MAX_COUNT),
-            &[true],
-        );
-        assert_eq!(
-            dag.query(&v4.hash()).unwrap(),
-            (
-                Decision::StronglyPreferred,
-                vec![
-                    (false, Decision::Accepted),
-                    (false, Decision::Accepted),
-                    (false, Decision::StronglyPreferred)
-                ]
-            )
-        );
-
-        set_state(
-            &mut dag,
-            &Constraint(v2.hash(), v3.hash()),
-            (true, 0, 0),
-            &[true, true, true],
-        );
-        set_state(
-            &mut dag,
-            &Constraint(v2.hash(), v2.hash()),
-            (true, MAX_CONF, MAX_COUNT),
-            &[false, true, true],
-        );
-        set_state(
-            &mut dag,
-            &Constraint(v3.hash(), v3.hash()),
-            (true, MAX_CONF, MAX_COUNT),
-            &[true],
-        );
-        assert_eq!(
-            dag.query(&v4.hash()).unwrap(),
-            (
-                Decision::Preferred,
-                vec![
-                    (false, Decision::Preferred),
-                    (false, Decision::Accepted),
-                    (false, Decision::Accepted)
-                ]
-            )
-        );
-
-        set_state(
-            &mut dag,
-            &Constraint(v2.hash(), v3.hash()),
-            (false, 0, 0), // not preferred or decided
-            &[true, true, true],
-        );
-        set_state(
-            &mut dag,
-            &Constraint(v2.hash(), v2.hash()),
-            (true, MAX_CONF, MAX_COUNT),
-            &[true, true, true],
-        );
-        set_state(
-            &mut dag,
-            &Constraint(v3.hash(), v3.hash()),
-            (true, MAX_CONF, MAX_COUNT),
-            &[true],
-        );
-        assert_eq!(
-            dag.query(&v4.hash()).unwrap(),
-            (
-                Decision::NotPreferred,
-                vec![
-                    (false, Decision::NotPreferred),
-                    (false, Decision::Accepted),
-                    (false, Decision::Accepted)
-                ]
-            )
-        );
+        todo!()
     }
 
     #[test]
