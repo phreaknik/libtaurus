@@ -126,17 +126,12 @@ impl DAG {
                 .parent_constraints()
                 .chain(once(Constraint(vx.hash(), vx.hash())))
             {
-                let state = dag.state.get_mut(&c.conflict_set_key()).unwrap();
-
-                // Make sure none of the vertices have conflicting constraints
-                if let Some(opp) = c.opposite() {
-                    if state.count.get(&opp).is_some() {
-                        return Err(Error::ConflictingParents);
-                    }
-                }
-
                 // Mark the associated constraints as accepted
-                state.decision.insert(c, true);
+                dag.state
+                    .get_mut(&c.conflict_set_key())
+                    .unwrap()
+                    .decision
+                    .insert(c, true);
             }
         }
         Ok(dag)
@@ -341,8 +336,6 @@ impl DAG {
         vhash: &VertexHash,
         strongly_preferred: bool,
     ) -> Result<()> {
-        // TODO: should peers be punished for submitting high rates of non-preferred vertices?
-
         // Helper to lookup every constraint which has a chit in the progeny of the given
         // constraint. Warning: may contain duplicate entries.
         fn chits_in_progeny(dag: &mut DAG, c: &Constraint) -> Vec<Constraint> {
@@ -379,7 +372,9 @@ impl DAG {
                 let unity = Constraint(*vhash, *vhash);
                 self.state
                     .get_mut(&unity.conflict_set_key())
-                    .expect("state does not exist for unity constraint of {vhash}")
+                    .expect(&format!(
+                        "state does not exist for unity constraint of {vhash}"
+                    ))
                     .chit
                     .insert(unity, true);
 
@@ -393,17 +388,14 @@ impl DAG {
                             .map(|opp| chits_in_progeny(self, &opp).into_iter().unique().count())
                             .unwrap_or(0);
 
-                        // If any parents were rejected, yet our peers prefer this vertex, then
-                        // we are in permanent conflict with our
-                        // peers. i.e. hard-fork.
-                        let c_parents = self.state[&c.conflict_set_key()].parents[&c].clone();
-                        debug_assert!(c_parents.iter().any(|p| {
-                            self.state[&p.conflict_set_key()].decision.get(p) == Some(&true)
-                        }));
-
                         // Update state variables
-                        let c_count = {
+                        let (c_count, c_parents) = {
                             let c_state = self.state.get_mut(&c.conflict_set_key()).unwrap();
+
+                            // If any parent constraints were rejected, yet our peers prefer this
+                            // vertex, then we are in permanent conflict with our peers. i.e.
+                            // hard-fork. Check that no ancester constraint has been rejected.
+                            debug_assert!(c_state.decision.get(&c).unwrap_or(&true));
 
                             // Update the confidence score
                             c_state.confidence.insert(c, c_conf);
@@ -421,7 +413,7 @@ impl DAG {
                             } else {
                                 *c_state.count.get_mut(&c).unwrap() += 1;
                             }
-                            c_state.count[&c]
+                            (c_state.count[&c], c_state.parents[&c].clone())
                         };
 
                         // See if a decision can be made. A decision can be made if the vote count
@@ -443,7 +435,7 @@ impl DAG {
                         // If not strongly preferred, reset the counters for the entire ancestry
                         self.state
                             .get_mut(&c.conflict_set_key())
-                            .expect("state does not exist for ancestor constraint {c}")
+                            .expect(&format!("state does not exist for ancestor constraint {c}"))
                             .count
                             .insert(c, 0);
                     }
@@ -570,14 +562,26 @@ struct ConflictSet {
 impl ConflictSet {
     /// Assign constraint parents to the constraint state
     fn new(initial: Constraint, parents: HashSet<Constraint>) -> ConflictSet {
+        let keys = match initial.opposite() {
+            None => vec![initial],
+            Some(opposite) => vec![initial, opposite],
+        };
         ConflictSet {
             preferred: initial,
             last: initial,
-            chit: once((initial, false)).collect(),
-            confidence: once((initial, 0)).collect(),
-            count: once((initial, 0)).collect(),
-            parents: once((initial, parents)).collect(),
-            children: once((initial, HashSet::new())).collect(),
+            chit: keys.iter().copied().zip([false, false]).collect(),
+            confidence: keys.iter().copied().zip([0, 0]).collect(),
+            count: keys.iter().copied().zip([0, 0]).collect(),
+            parents: keys
+                .iter()
+                .copied()
+                .zip([parents, HashSet::new()])
+                .collect(),
+            children: keys
+                .iter()
+                .copied()
+                .zip([HashSet::new(), HashSet::new()])
+                .collect(),
             decision: HashMap::new(),
         }
     }
@@ -592,7 +596,7 @@ mod test {
         vertex::{make_rand_vertex, Constraint},
         Vertex, WireFormat,
     };
-    use itertools::{izip, Itertools};
+    use itertools::Itertools;
     use std::{
         assert_matches::assert_matches,
         collections::{HashMap, HashSet},
@@ -629,16 +633,10 @@ mod test {
         let x3 = make_rand_vertex([&v2, &v1]); // conflicts with v3
         let v4 = make_rand_vertex([&v3]);
 
-        // Should not allow vertices with conflicting parent constraints
-        assert_matches!(
-            DAG::with_initial_vertices(Config::default(), [&gen, &v0, &v1, &v2, &v3, &x3]),
-            Err(dag::Error::ConflictingParents)
-        );
-
         // Basic test -- genesis vertex should be accepted
         let dag = DAG::with_initial_vertices(Config::default(), [&gen]).unwrap();
         assert!(dag.pending_query.is_empty());
-        assert_eq!(dag.query(&gen.hash()).unwrap(), true);
+        assert_eq!(dag.query(&gen.hash()).unwrap(), (true, true));
 
         // Confirm each initial vertex is recognized as preferred and decided
         let mut dag = DAG::with_initial_vertices(
@@ -651,11 +649,11 @@ mod test {
         )
         .unwrap();
         assert!(dag.pending_query.is_empty());
-        assert_eq!(dag.query(&gen.hash()).unwrap(), true);
-        assert_eq!(dag.query(&v0.hash()).unwrap(), true);
-        assert_eq!(dag.query(&v1.hash()).unwrap(), true);
-        assert_eq!(dag.query(&v2.hash()).unwrap(), true);
-        assert_eq!(dag.query(&v3.hash()).unwrap(), true);
+        assert_eq!(dag.query(&gen.hash()).unwrap(), (true, true));
+        assert_eq!(dag.query(&v0.hash()).unwrap(), (true, true));
+        assert_eq!(dag.query(&v1.hash()).unwrap(), (true, true));
+        assert_eq!(dag.query(&v2.hash()).unwrap(), (true, true));
+        assert_eq!(dag.query(&v3.hash()).unwrap(), (true, true));
 
         // Check that we are able to insert a vertex which extends the initial set
         assert_matches!(dag.query(&v4.hash()), Err(dag::Error::NotFound));
@@ -948,21 +946,57 @@ mod test {
     }
 
     #[test]
-    fn new_state() {
+    fn new_conflict_set() {
         let gen = Arc::new(Vertex::empty());
         let v0 = make_rand_vertex([&gen]);
         let v1 = make_rand_vertex([&gen]);
         let v2 = make_rand_vertex([&v0, &v1]);
+
+        // New conflict set for binary constraint
+        let constraint = Constraint(v2.hash(), v1.hash()); // Binary constraint between v2 & v1
+        let c_parents = v2.parent_constraints().collect::<HashSet<_>>();
+        let cs = ConflictSet::new(constraint, c_parents.clone());
+        assert_eq!(cs.preferred, constraint);
+        assert_eq!(cs.last, constraint);
+        assert_eq!(cs.chit.len(), 2);
+        assert_eq!(cs.chit[&constraint], false);
+        assert_eq!(cs.chit[&constraint.opposite().unwrap()], false);
+        assert_eq!(cs.confidence.len(), 2);
+        assert_eq!(cs.confidence[&constraint], 0);
+        assert_eq!(cs.confidence[&constraint.opposite().unwrap()], 0);
+        assert_eq!(cs.count.len(), 2);
+        assert_eq!(cs.count[&constraint], 0);
+        assert_eq!(cs.count[&constraint.opposite().unwrap()], 0);
+        assert_eq!(cs.parents.len(), 2);
+        assert!(cs.parents[&constraint]
+            .iter()
+            .sorted()
+            .eq(v2.parent_constraints().sorted().as_ref()));
+        assert_eq!(cs.parents[&constraint.opposite().unwrap()].len(), 0);
+        assert_eq!(cs.children.len(), 2);
+        assert_eq!(cs.children[&constraint].len(), 0);
+        assert_eq!(cs.children[&constraint.opposite().unwrap()].len(), 0);
+        assert_eq!(cs.decision.len(), 0); // Decision is intentionally empty
+
+        // New conflict set for unity constraint
         let constraint = Constraint(v2.hash(), v2.hash()); // Unity contraint on v2
         let c_parents = v2.parent_constraints().collect::<HashSet<_>>();
         let cs = ConflictSet::new(constraint, c_parents.clone());
         assert_eq!(cs.preferred, constraint);
         assert_eq!(cs.last, constraint);
-        assert!(cs.chit.into_iter().eq([(constraint, false)]));
-        assert!(cs.confidence.into_iter().eq([(constraint, 0)]));
-        assert!(cs.count.into_iter().eq([(constraint, 0)]));
+        assert_eq!(cs.chit.len(), 1);
+        assert_eq!(cs.chit[&constraint], false);
+        assert_eq!(cs.confidence.len(), 1);
+        assert_eq!(cs.confidence[&constraint], 0);
+        assert_eq!(cs.count.len(), 1);
+        assert_eq!(cs.count[&constraint], 0);
         assert_eq!(cs.parents.len(), 1);
-        assert!(cs.parents[&constraint].iter().eq(&c_parents));
-        assert!(cs.children.into_iter().eq([(constraint, HashSet::new())]));
+        assert!(cs.parents[&constraint]
+            .iter()
+            .sorted()
+            .eq(v2.parent_constraints().sorted().as_ref()));
+        assert_eq!(cs.children.len(), 1);
+        assert_eq!(cs.children[&constraint].len(), 0);
+        assert_eq!(cs.decision.len(), 0); // Decision is intentionally empty
     }
 }

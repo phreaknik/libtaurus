@@ -1,16 +1,15 @@
 use libtaurus::{
-    consensus::dag::{self, Status, DAG},
+    consensus::dag::{self, DAG},
     vertex::make_rand_vertex,
     wire::WireFormat,
     Vertex,
 };
 use std::{collections::HashMap, iter, sync::Arc};
 
-const REJECTED: Status = Status::Rejected;
-const NOT_PREF: Status = Status::NotPreferred;
-const WEAK_PREF: Status = Status::StronglyPreferred;
-const STRONG_PREF: Status = Status::StronglyPreferred;
-const ACCEPTED: Status = Status::Accepted;
+const REJECTED: (bool, bool) = (false, true);
+const NO_PREF: (bool, bool) = (false, false);
+const STRONG_PREF: (bool, bool) = (true, false);
+const ACCEPTED: (bool, bool) = (true, true);
 
 macro_rules! test_graph {
     ([$($input:expr),*]) => {
@@ -32,7 +31,7 @@ macro_rules! test_graph {
 struct TestGraph<'a> {
     dag: DAG,
     vertex_by_label: HashMap<&'a str, Arc<Vertex>>,
-    expected_state: HashMap<&'a str, (Status, Vec<(bool, Status)>)>,
+    expected_state: HashMap<&'a str, (bool, bool)>,
 }
 
 impl<'a> TestGraph<'a> {
@@ -75,22 +74,18 @@ impl<'a> TestGraph<'a> {
     /// dag matches this expected, and saves the state for subsequent executions. If no state
     /// change is expected, calling this function with an empty list of changes, will re-assert the
     /// prior state.
-    fn assert_state(&mut self, changes: Vec<(&'a str, (Status, Vec<(bool, Status)>))>) {
+    fn assert_state(&mut self, changes: Vec<(&'a str, (bool, bool))>) {
         // Update the expected state
-        for (label, states) in &changes {
-            self.expected_state.insert(label, states.clone());
+        for (label, state) in &changes {
+            self.expected_state.insert(label, *state);
         }
         // Check all the states against expected
-        for (label, (v_state, pc_states)) in changes {
-            let states = self
+        for (label, expected) in &self.expected_state {
+            let actual = self
                 .dag
                 .query(&self.vertex_by_label[label].hash())
                 .expect(&format!("Failed to query {label}"));
-            assert_eq!(
-                states.1, *pc_states,
-                "unexpected parent constraint states of {label}"
-            );
-            assert_eq!(states.0, v_state, "unexpected vertex state of {label}");
+            assert_eq!(&actual, expected, "unexpected states for {label}");
         }
     }
 }
@@ -111,53 +106,13 @@ fn tower_1222() {
     ]);
     // Assert the initial state
     tg.assert_state(vec![
-        ("gen", (ACCEPTED, vec![])),
-        ("v00", (STRONG_PREF, vec![(false, ACCEPTED)])),
-        ("v01", (STRONG_PREF, vec![(false, ACCEPTED)])),
-        (
-            "v10",
-            (
-                STRONG_PREF,
-                vec![
-                    (false, STRONG_PREF),
-                    (false, STRONG_PREF),
-                    (false, STRONG_PREF),
-                ],
-            ),
-        ),
-        (
-            "v11",
-            (
-                STRONG_PREF,
-                vec![
-                    (false, STRONG_PREF),
-                    (false, STRONG_PREF),
-                    (false, STRONG_PREF),
-                ],
-            ),
-        ),
-        (
-            "v20",
-            (
-                STRONG_PREF,
-                vec![
-                    (false, STRONG_PREF),
-                    (false, STRONG_PREF),
-                    (false, STRONG_PREF),
-                ],
-            ),
-        ),
-        (
-            "v21",
-            (
-                STRONG_PREF,
-                vec![
-                    (false, STRONG_PREF),
-                    (false, STRONG_PREF),
-                    (false, STRONG_PREF),
-                ],
-            ),
-        ),
+        ("gen", ACCEPTED),
+        ("v00", STRONG_PREF),
+        ("v01", STRONG_PREF),
+        ("v10", STRONG_PREF),
+        ("v11", STRONG_PREF),
+        ("v20", STRONG_PREF),
+        ("v21", STRONG_PREF),
     ]);
     todo!()
 }
