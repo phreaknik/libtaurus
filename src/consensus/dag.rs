@@ -290,8 +290,9 @@ impl DAG {
             .collect())
     }
 
-    /// Helper method to look up all undecided ancestors of the given constraint
-    fn get_ancestors(&self, c: &Constraint) -> Result<HashSet<Constraint>> {
+    /// Helper method to look up all undecided ancestors of the given constraint. Ancestors will be
+    /// ordered from oldest to youngest.
+    fn get_ancestors(&self, c: &Constraint) -> Result<Vec<Constraint>> {
         // Helper to lookup ancestors of the given constraint, which have not yet been accepted by
         // the Avalanche consensus protocol. Warning: may contain duplicate entries.
         fn walk_ancestors(dag: &DAG, c: &Constraint) -> Vec<Constraint> {
@@ -305,7 +306,7 @@ impl DAG {
                 state.parents[c]
                     .clone()
                     .into_iter()
-                    .flat_map(|p| once(p).chain(walk_ancestors(dag, &p).into_iter()))
+                    .flat_map(|p| walk_ancestors(dag, &p).into_iter().chain(once(p)))
                     .collect()
             }
         }
@@ -314,7 +315,7 @@ impl DAG {
         if !self.state.contains_key(&c.conflict_set_key()) {
             Err(Error::NotFound)
         } else {
-            Ok(walk_ancestors(self, c).into_iter().collect())
+            Ok(walk_ancestors(self, c).into_iter().unique().collect())
         }
     }
 
@@ -867,18 +868,12 @@ mod test {
         let c_v0v1 = Constraint(v0.hash(), v1.hash());
         let c_v2v2 = Constraint(v2.hash(), v2.hash());
         let c_v3v3 = Constraint(v3.hash(), v3.hash());
-        let expected_ancestors = HashSet::from([c_gengen, c_v0v0, c_v1v1, c_v0v1, c_v2v2]);
+        let expected_ancestors = Vec::from([c_gengen, c_v0v0, c_v1v1, c_v0v1, c_v2v2]);
 
         assert_matches!(dag.get_ancestors(&c_v3v3), Err(dag::Error::NotFound));
 
         dag.try_insert(&v3).unwrap();
-        assert_eq!(
-            dag.get_ancestors(&c_v3v3)
-                .unwrap()
-                .difference(&expected_ancestors)
-                .count(),
-            0
-        );
+        assert_eq!(dag.get_ancestors(&c_v3v3).unwrap(), expected_ancestors);
 
         // Should stop fetching ancestors at the first decided one
         dag.state
