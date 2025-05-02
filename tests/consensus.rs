@@ -14,10 +14,10 @@ const ACCEPTED: (bool, bool) = (true, true);
 const THRESH_ACCEPT: usize = 8;
 const THRESH_SE_ACCEPT: usize = 4;
 
-macro_rules! test_graph {
+macro_rules! edges {
     ([$($input:expr),*]) => {
         {
-            TestGraph::new(&[
+            &[
                 $(
                     {
                         let mut parts = $input.split(" -> ");
@@ -26,7 +26,7 @@ macro_rules! test_graph {
                         (left, rights)
                     }
                 ),*
-            ])
+            ]
         }
     };
 }
@@ -76,6 +76,26 @@ impl<'a> TestGraph<'a> {
         }
     }
 
+    /// Insert new vertices to the DAG
+    fn extend(&mut self, edges: &[(&'a str, Vec<&'a str>)]) {
+        for (label, parent_labels) in &edges[..] {
+            let parents = parent_labels
+                .into_iter()
+                .map(|label| {
+                    self.vertex_by_label
+                        .get(label)
+                        .expect(&format!("couldn't find vertex {label}"))
+                        .clone()
+                })
+                .collect::<Vec<_>>();
+            self.vertex_by_label
+                .insert(label, make_rand_vertex(&parents));
+        }
+        for (label, _) in &edges[..] {
+            self.dag.try_insert(&self.vertex_by_label[label]).unwrap();
+        }
+    }
+
     /// Updates the saved state with the specified expected states, checks that each state in the
     /// dag matches this expected, and saves the state for subsequent executions. If no state
     /// change is expected, calling this function with an empty list of changes, will re-assert the
@@ -116,13 +136,13 @@ impl<'a> TestGraph<'a> {
 fn basic_chain() {
     // Simple list of non-conflicting vertices. Any vertex in the chain should become accepted
     // under the "safe early committment" rule, once MAX_COUNT chits accumulate
-    let mut tg = test_graph!([
+    let mut tg = TestGraph::new(edges!([
         "gen ->         ",
         "v0 -> gen     ",
         "v1 -> v0     ",
         "v2 -> v1     ",
         "v3 -> v2     "
-    ]);
+    ]));
 
     // Assert the initial state
     tg.check_state_with_updates(vec![
@@ -148,21 +168,21 @@ fn basic_chain() {
 
 #[test]
 fn small_chain_with_conflicts() {
-    let mut tg = test_graph!([
+    let mut tg = TestGraph::new(edges!([
         "gen ->         ",
         "v00 -> gen     ",
         "v01 -> gen     ",
         "a10 -> v00, v01",
         "b10 -> v01, v00", // conflicts with a10
-        "v20 -> a10     ",
-        "v30 -> v20     ",
-        "v40 -> v30     ",
-        "v50 -> v40     ",
-        "v60 -> v50     ",
-        "v70 -> v60     ",
-        "v80 -> v70     ",
-        "v90 -> v80     "
-    ]);
+        "a20 -> a10     ",
+        "a30 -> a20     ",
+        "a40 -> a30     ",
+        "a50 -> a40     ",
+        "a60 -> a50     ",
+        "a70 -> a60     ",
+        "a80 -> a70     ",
+        "a90 -> a80     "
+    ]));
 
     // Assert the initial state
     tg.check_state_with_updates(vec![
@@ -171,14 +191,14 @@ fn small_chain_with_conflicts() {
         ("v01", STRONG_PREF),
         ("a10", STRONG_PREF),
         ("b10", NO_PREF),
-        ("v20", STRONG_PREF),
-        ("v30", STRONG_PREF),
-        ("v40", STRONG_PREF),
-        ("v50", STRONG_PREF),
-        ("v60", STRONG_PREF),
-        ("v70", STRONG_PREF),
-        ("v80", STRONG_PREF),
-        ("v90", STRONG_PREF),
+        ("a20", STRONG_PREF),
+        ("a30", STRONG_PREF),
+        ("a40", STRONG_PREF),
+        ("a50", STRONG_PREF),
+        ("a60", STRONG_PREF),
+        ("a70", STRONG_PREF),
+        ("a80", STRONG_PREF),
+        ("a90", STRONG_PREF),
     ]);
 
     // Award chits to everything except
@@ -190,39 +210,39 @@ fn small_chain_with_conflicts() {
     tg.check_state_with_updates(vec![
         ("a10", NO_PREF),
         ("b10", STRONG_PREF),
-        ("v20", NO_PREF),
-        ("v30", NO_PREF),
-        ("v40", NO_PREF),
-        ("v50", NO_PREF),
-        ("v60", NO_PREF),
-        ("v70", NO_PREF),
-        ("v80", NO_PREF),
-        ("v90", NO_PREF),
+        ("a20", NO_PREF),
+        ("a30", NO_PREF),
+        ("a40", NO_PREF),
+        ("a50", NO_PREF),
+        ("a60", NO_PREF),
+        ("a70", NO_PREF),
+        ("a80", NO_PREF),
+        ("a90", NO_PREF),
     ]);
-    assert!(tg.record_query("v20", false).is_err()); // waiting on a10
+    assert!(tg.record_query("a20", false).is_err()); // waiting on a10
     tg.record_query("a10", false).unwrap();
     tg.check_state_with_updates(vec![]); // should not change state
 
-    tg.record_query("v20", true).unwrap(); // vote for v20 supports a10 in lieu of b10
+    tg.record_query("a20", true).unwrap(); // vote for a20 supports a10 in lieu of b10
     tg.check_state_with_updates(vec![
         ("a10", STRONG_PREF),
         ("b10", NO_PREF),
-        ("v20", STRONG_PREF),
-        ("v30", STRONG_PREF),
-        ("v40", STRONG_PREF),
-        ("v50", STRONG_PREF),
-        ("v60", STRONG_PREF),
-        ("v70", STRONG_PREF),
-        ("v80", STRONG_PREF),
-        ("v90", STRONG_PREF),
+        ("a20", STRONG_PREF),
+        ("a30", STRONG_PREF),
+        ("a40", STRONG_PREF),
+        ("a50", STRONG_PREF),
+        ("a60", STRONG_PREF),
+        ("a70", STRONG_PREF),
+        ("a80", STRONG_PREF),
+        ("a90", STRONG_PREF),
     ]);
 
     // Vertices v00 & v01 should become accepted at safe early committment criteria
-    tg.record_query("v30", true).unwrap();
+    tg.record_query("a30", true).unwrap();
     tg.check_state_with_updates(vec![]);
-    tg.record_query("v40", true).unwrap();
+    tg.record_query("a40", true).unwrap();
     tg.check_state_with_updates(vec![]);
-    tg.record_query("v50", true).unwrap();
+    tg.record_query("a50", true).unwrap();
 
     // v00 & v01 should have reached safe early committment
     tg.check_state_with_updates(vec![("v00", ACCEPTED), ("v01", ACCEPTED)]);
@@ -230,35 +250,59 @@ fn small_chain_with_conflicts() {
     // Since there is a conflict at a10/b10, and b10 received a vote, no vertices at or after that
     // point may be accepte according to the "safe early committment rule". They must wait until
     // reaching ful confidence.
-    tg.record_query("v60", true).unwrap();
+    tg.record_query("a60", true).unwrap();
     tg.check_state_with_updates(vec![]);
-    tg.record_query("v70", true).unwrap();
+    tg.record_query("a70", true).unwrap();
     tg.check_state_with_updates(vec![]);
-    tg.record_query("v80", true).unwrap();
+    tg.record_query("a80", true).unwrap();
     tg.check_state_with_updates(vec![]);
 
     // Should reach acceptance threshold for conflicts a10/b10. A few after should become accepted
     // under SE criteria
-    tg.record_query("v90", true).unwrap();
+    tg.record_query("a90", true).unwrap();
     tg.check_state_with_updates(vec![
         ("a10", ACCEPTED),
         ("b10", REJECTED),
-        ("v20", ACCEPTED),
-        ("v30", ACCEPTED),
-        ("v40", ACCEPTED),
-        ("v50", ACCEPTED),
-        ("v60", ACCEPTED),
-        ("v70", STRONG_PREF),
-        ("v80", STRONG_PREF),
-        ("v90", STRONG_PREF),
+        ("a20", ACCEPTED),
+        ("a30", ACCEPTED),
+        ("a40", ACCEPTED),
+        ("a50", ACCEPTED),
+        ("a60", ACCEPTED),
+        ("a70", STRONG_PREF),
+        ("a80", STRONG_PREF),
+        ("a90", STRONG_PREF),
+    ]);
+
+    // Children of b10 should automatically be rejected now
+    tg.extend(edges!([
+        "b20 -> b10     ",
+        "b21 -> b10     ",
+        "b30 -> b20, b21",
+        "b40 -> b30     ",
+        "b50 -> b40     ",
+        "b60 -> b50     ",
+        "b70 -> b60     ",
+        "b80 -> b70     ",
+        "b90 -> b80     ",
+        "b100 -> b90    "
+    ]));
+    tg.check_state_with_updates(vec![
+        ("b20", REJECTED),
+        ("b21", REJECTED),
+        ("b30", REJECTED),
+        ("b40", REJECTED),
+        ("b50", REJECTED),
+        ("b60", REJECTED),
+        ("b70", REJECTED),
+        ("b80", REJECTED),
+        ("b90", REJECTED),
+        ("b100", REJECTED),
     ]);
 }
 
-// TODO: Confirm chit is cleared on color flip
-
 #[test]
 fn tower_1222() {
-    let mut tg = test_graph!([
+    let mut tg = TestGraph::new(edges!([
         "gen ->         ", //      gen
         "v00 -> gen     ", //      / \
         "v01 -> gen     ", //    v00 v01
@@ -266,7 +310,7 @@ fn tower_1222() {
         "v11 -> v00, v01", //    v10 v11
         "v20 -> v10, v11", //    |  X  |
         "v21 -> v10, v11"  //    v20 v21
-    ]);
+    ]));
     // Assert the initial state
     tg.check_state_with_updates(vec![
         ("gen", ACCEPTED),
@@ -277,5 +321,17 @@ fn tower_1222() {
         ("v20", STRONG_PREF),
         ("v21", STRONG_PREF),
     ]);
-    todo!()
+
+    tg.record_query("v00", true).unwrap();
+    tg.check_state_with_updates(vec![]);
+    tg.record_query("v01", true).unwrap();
+    tg.check_state_with_updates(vec![]);
+    tg.record_query("v10", true).unwrap();
+    tg.check_state_with_updates(vec![]);
+    tg.record_query("v11", true).unwrap();
+    tg.check_state_with_updates(vec![]);
+    tg.record_query("v20", true).unwrap();
+    tg.check_state_with_updates(vec![("v00", ACCEPTED), ("v01", ACCEPTED)]);
+    tg.record_query("v21", true).unwrap();
+    tg.check_state_with_updates(vec![]);
 }

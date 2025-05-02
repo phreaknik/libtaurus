@@ -221,19 +221,20 @@ impl DAG {
 
         // Pre-load the self-referential unity constraint for this vertex
         let parent_constraints: HashSet<_> = vx.parent_constraints().collect();
-        let uc = Constraint(vx.hash(), vx.hash());
-        self.state.insert(
-            uc.conflict_set_key(),
-            ConflictSet::new(uc, parent_constraints.clone()),
-        );
+        let unity = Constraint(vx.hash(), vx.hash());
 
         // Update constraint maps
-        for c in parent_constraints.into_iter().chain(once(uc)) {
+        for c in parent_constraints.into_iter().chain(once(unity)) {
             // Lookup this constraint's parents
             let c_parents = self.vertex[&c.0]
                 .parent_constraints()
                 .chain(self.vertex[&c.1].parent_constraints())
                 .collect::<HashSet<_>>();
+
+            // If any of the parents are rejected, this vertex is automatically rejected
+            let rejected = c_parents
+                .iter()
+                .any(|p| self.state[&p.conflict_set_key()].decision.get(p) == Some(&false));
 
             // Register constraint as child to each of its parent constraints
             for &parent in &c_parents {
@@ -249,9 +250,11 @@ impl DAG {
             }
 
             // Add an entry in the state map, if it doesn't already exist
-            let _ = self
-                .state
-                .try_insert(c.conflict_set_key(), ConflictSet::new(c, c_parents));
+            let mut new_state = ConflictSet::new(c, c_parents);
+            if rejected {
+                new_state.decision.insert(c, false);
+            }
+            let _ = self.state.try_insert(c.conflict_set_key(), new_state);
         }
 
         // Update child map
