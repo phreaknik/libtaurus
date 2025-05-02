@@ -159,7 +159,9 @@ fn small_chain_with_conflicts() {
         "v40 -> v30     ",
         "v50 -> v40     ",
         "v60 -> v50     ",
-        "v70 -> v60     "
+        "v70 -> v60     ",
+        "v80 -> v70     ",
+        "v90 -> v80     "
     ]);
 
     // Assert the initial state
@@ -175,6 +177,8 @@ fn small_chain_with_conflicts() {
         ("v50", STRONG_PREF),
         ("v60", STRONG_PREF),
         ("v70", STRONG_PREF),
+        ("v80", STRONG_PREF),
+        ("v90", STRONG_PREF),
     ]);
 
     // Award chits to everything except
@@ -192,6 +196,8 @@ fn small_chain_with_conflicts() {
         ("v50", NO_PREF),
         ("v60", NO_PREF),
         ("v70", NO_PREF),
+        ("v80", NO_PREF),
+        ("v90", NO_PREF),
     ]);
     assert!(tg.record_query("v20", false).is_err()); // waiting on a10
     tg.record_query("a10", false).unwrap();
@@ -207,6 +213,8 @@ fn small_chain_with_conflicts() {
         ("v50", STRONG_PREF),
         ("v60", STRONG_PREF),
         ("v70", STRONG_PREF),
+        ("v80", STRONG_PREF),
+        ("v90", STRONG_PREF),
     ]);
 
     // Vertices v00 & v01 should become accepted at safe early committment criteria
@@ -226,6 +234,24 @@ fn small_chain_with_conflicts() {
     tg.check_state_with_updates(vec![]);
     tg.record_query("v70", true).unwrap();
     tg.check_state_with_updates(vec![]);
+    tg.record_query("v80", true).unwrap();
+    tg.check_state_with_updates(vec![]);
+
+    // Should reach acceptance threshold for conflicts a10/b10. A few after should become accepted
+    // under SE criteria
+    tg.record_query("v90", true).unwrap();
+    tg.check_state_with_updates(vec![
+        ("a10", ACCEPTED),
+        ("b10", REJECTED),
+        ("v20", ACCEPTED),
+        ("v30", ACCEPTED),
+        ("v40", ACCEPTED),
+        ("v50", ACCEPTED),
+        ("v60", ACCEPTED),
+        ("v70", STRONG_PREF),
+        ("v80", STRONG_PREF),
+        ("v90", STRONG_PREF),
+    ]);
 }
 
 // TODO: Confirm chit is cleared on color flip

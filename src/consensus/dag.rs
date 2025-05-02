@@ -445,7 +445,7 @@ impl DAG {
                             || (c_parents.iter().all(|p| {
                                 self.state[&p.conflict_set_key()].decision.get(p) == Some(&true)
                             }) && !has_conflict
-                                && c_conf >= self.config.thresh_safe_early_commit)
+                                && c_count >= self.config.thresh_safe_early_commit)
                         {
                             let c_state = self.state.get_mut(&c.conflict_set_key()).unwrap();
                             c_state.decision.insert(c, true); // accepted the constraint
