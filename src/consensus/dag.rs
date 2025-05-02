@@ -332,14 +332,14 @@ impl DAG {
     ) -> Result<()> {
         // Helper to lookup every constraint which has a chit in the progeny of the given
         // constraint. Warning: may contain duplicate entries.
-        fn chits_in_progeny(dag: &mut DAG, c: &Constraint) -> Vec<Constraint> {
+        fn progeny_with_chits(dag: &mut DAG, c: &Constraint) -> Vec<Constraint> {
             // TODO: this is inefficient, especially since this is called repeatedly to look up
             // constraints in the progeny which are 99% unchanged.
             let state = dag.state[&c.conflict_set_key()].clone();
             let mut set = state.children[c]
                 .clone()
                 .into_iter()
-                .flat_map(|d| chits_in_progeny(dag, &d).into_iter())
+                .flat_map(|d| progeny_with_chits(dag, &d).into_iter())
                 .collect::<Vec<_>>();
             if state.chit[c] {
                 set.push(*c);
@@ -372,14 +372,31 @@ impl DAG {
                     .chit
                     .insert(unity, true);
 
-                // Look up ancestors and increment their counters
-                for c in self.get_ancestors(&unity).unwrap() {
+                {
+                    let c = unity;
+                    let c_state = &self.state[&c.conflict_set_key()];
+                    println!(
+                        ":::: record({c}).award_chit(): count = {}, conf = {}, decision? = {:?}",
+                        c_state.count[&c],
+                        c_state.confidence[&c],
+                        c_state.decision.get(&c)
+                    );
+                }
+
+                // Update the state of this vertex's unity constraint as well as all of its
+                // ancestors
+                for c in self
+                    .get_ancestors(&unity)
+                    .unwrap()
+                    .into_iter()
+                    .chain(once(unity))
+                {
                     if strongly_preferred {
                         // Compute the confidence of this constraint and its conflict (if any)
-                        let c_conf = chits_in_progeny(self, &c).into_iter().unique().count();
+                        let c_conf = progeny_with_chits(self, &c).into_iter().unique().count();
                         let opp_conf = c
                             .opposite()
-                            .map(|opp| chits_in_progeny(self, &opp).into_iter().unique().count())
+                            .map(|opp| progeny_with_chits(self, &opp).into_iter().unique().count())
                             .unwrap_or(0);
 
                         // Update state variables
@@ -407,6 +424,12 @@ impl DAG {
                             } else {
                                 *c_state.count.get_mut(&c).unwrap() += 1;
                             }
+
+                            println!(
+                                ":::: record({c}).update(): count = {}, conf = {}",
+                                c_state.count[&c], c_state.confidence[&c]
+                            );
+
                             (c_state.count[&c], c_state.parents[&c].clone())
                         };
 
@@ -478,6 +501,14 @@ impl DAG {
             .get(&unity.conflict_set_key())
             .and_then(|s| s.decision.get(&unity))
         {
+            let c = unity;
+            let c_state = self.state.get(&c.conflict_set_key()).unwrap();
+            println!(
+                ":::: query({c}): count = {}, conf = {}, decision? = {:?}",
+                c_state.count[&c],
+                c_state.confidence[&c],
+                c_state.decision.get(&c)
+            );
             Ok(match decision {
                 true => (true, true),   // accepted
                 false => (false, true), // rejected
@@ -488,6 +519,12 @@ impl DAG {
                 .into_iter()
                 .map(|c| {
                     let c_state = self.state.get(&c.conflict_set_key()).unwrap();
+                    println!(
+                        ":::: query({c}): count = {}, conf = {}, decision? = {:?}",
+                        c_state.count[&c],
+                        c_state.confidence[&c],
+                        c_state.decision.get(&c)
+                    );
                     match c_state.decision.get(&c) {
                         Some(true) => (true, true),   // accepted
                         Some(false) => (false, true), // rejected
