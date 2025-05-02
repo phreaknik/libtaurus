@@ -494,20 +494,24 @@ impl DAG {
                 .into_iter()
                 .map(|c| {
                     let c_state = self.state.get(&c.conflict_set_key()).unwrap();
-                    match c_state.decision.get(&c) {
-                        Some(true) => (true, true),   // accepted
-                        Some(false) => (false, true), // rejected
-                        None => (c_state.preferred == c, false),
-                    }
+                    (
+                        c,
+                        match c_state.decision.get(&c) {
+                            Some(true) => (true, true),   // accepted
+                            Some(false) => (false, true), // rejected
+                            None => (c_state.preferred == c, false),
+                        },
+                    )
                 })
-                .inspect(|s| {
-                    // It should be impossible for a rejected vertex to make it here if the vertex
-                    // is rejected
+                .inspect(|(c, s)| {
+                    // It should be impossible for a rejected ancestor constraint to make it here if
+                    // the queried vertex is not rejected
                     debug_assert!(
-                        s.0 == false && s.1 == true,
+                        s.0 || !s.1, // only assert if rejected
                         "found non-rejected vertex with rejected ancestors"
                     );
                 })
+                .map(|(_, s)| s)
                 .collect::<Vec<_>>();
             Ok((states.into_iter().all(|s| s.0), false))
         }
@@ -630,7 +634,6 @@ mod test {
         let v1 = make_rand_vertex([&gen]);
         let v2 = make_rand_vertex([&gen]);
         let v3 = make_rand_vertex([&v1, &v2]);
-        let x3 = make_rand_vertex([&v2, &v1]); // conflicts with v3
         let v4 = make_rand_vertex([&v3]);
 
         // Basic test -- genesis vertex should be accepted
@@ -649,11 +652,11 @@ mod test {
         )
         .unwrap();
         assert!(dag.pending_query.is_empty());
-        assert_eq!(dag.query(&gen.hash()).unwrap(), (true, true));
-        assert_eq!(dag.query(&v0.hash()).unwrap(), (true, true));
-        assert_eq!(dag.query(&v1.hash()).unwrap(), (true, true));
-        assert_eq!(dag.query(&v2.hash()).unwrap(), (true, true));
-        assert_eq!(dag.query(&v3.hash()).unwrap(), (true, true));
+        assert_matches!(dag.query(&gen.hash()), Ok((true, true)));
+        assert_matches!(dag.query(&v0.hash()), Ok((true, true)));
+        assert_matches!(dag.query(&v1.hash()), Ok((true, true)));
+        assert_matches!(dag.query(&v2.hash()), Ok((true, true)));
+        assert_matches!(dag.query(&v3.hash()), Ok((true, true)));
 
         // Check that we are able to insert a vertex which extends the initial set
         assert_matches!(dag.query(&v4.hash()), Err(dag::Error::NotFound));
@@ -890,7 +893,93 @@ mod test {
 
     #[test]
     fn query() {
-        todo!()
+        let gen = Arc::new(Vertex::empty());
+        let v0 = make_rand_vertex([&gen]);
+        let v1 = make_rand_vertex([&gen]);
+        let v2 = make_rand_vertex([&v0, &v1]);
+        let mut dag = DAG::with_initial_vertices(Config::default(), [&gen]).unwrap();
+        dag.try_insert(&v0).unwrap();
+        dag.try_insert(&v1).unwrap();
+        assert_matches!(dag.query(&v2.hash()), Err(dag::Error::NotFound));
+
+        dag.try_insert(&v2).unwrap();
+
+        // Test initial state of the dag after all inserted
+        assert_matches!(dag.query(&gen.hash()), Ok((true, true)));
+        assert_matches!(dag.query(&v0.hash()), Ok((true, false)));
+        assert_matches!(dag.query(&v1.hash()), Ok((true, false)));
+        assert_matches!(dag.query(&v2.hash()), Ok((true, false)));
+
+        let c_v0v0 = Constraint(v0.hash(), v0.hash());
+        let c_v1v1 = Constraint(v1.hash(), v1.hash());
+        let c_v0v1 = Constraint(v0.hash(), v1.hash());
+        let c_v2v2 = Constraint(v2.hash(), v2.hash());
+
+        // helpers to set the state of a constraint
+        let set_decision = |dag: &mut DAG, c: Constraint, d: Option<bool>| {
+            let c_state = dag.state.get_mut(&c.conflict_set_key()).unwrap();
+            if let Some(decision) = d {
+                c_state.decision.insert(c, decision);
+            } else {
+                c_state.decision.remove(&c);
+            }
+        };
+        let set_preferred = |dag: &mut DAG, c: Constraint, p: bool| {
+            dag.state.get_mut(&c.conflict_set_key()).unwrap().preferred =
+                if p { c } else { c.opposite().unwrap() };
+        };
+
+        // Test with all "accepted"
+        set_decision(&mut dag, c_v0v0, Some(true));
+        set_decision(&mut dag, c_v1v1, Some(true));
+        set_decision(&mut dag, c_v0v1, Some(true));
+        set_decision(&mut dag, c_v2v2, Some(true));
+        assert_matches!(dag.query(&v2.hash()), Ok((true, true)));
+
+        // Should still be "accepted" even if all others are rejected or undecided
+        set_decision(&mut dag, c_v0v0, Some(false));
+        set_decision(&mut dag, c_v1v1, Some(false));
+        set_decision(&mut dag, c_v0v1, Some(false));
+        set_decision(&mut dag, c_v2v2, Some(true));
+        assert_matches!(dag.query(&v2.hash()), Ok((true, true)));
+        set_decision(&mut dag, c_v0v0, None);
+        set_decision(&mut dag, c_v1v1, Some(false));
+        set_decision(&mut dag, c_v0v1, None);
+        set_preferred(&mut dag, c_v0v1, false);
+        set_decision(&mut dag, c_v2v2, Some(true));
+        assert_matches!(dag.query(&v2.hash()), Ok((true, true)));
+
+        // Should be rejected even if all others are accepted or undecided
+        set_decision(&mut dag, c_v0v0, Some(true));
+        set_decision(&mut dag, c_v1v1, Some(true));
+        set_decision(&mut dag, c_v0v1, Some(true));
+        set_decision(&mut dag, c_v2v2, Some(false));
+        assert_matches!(dag.query(&v2.hash()), Ok((false, true)));
+        set_decision(&mut dag, c_v0v0, Some(true));
+        set_decision(&mut dag, c_v1v1, None);
+        set_decision(&mut dag, c_v0v1, Some(true));
+        set_decision(&mut dag, c_v2v2, Some(false));
+        assert_matches!(dag.query(&v2.hash()), Ok((false, true)));
+
+        // Should be undecided, but strongly preferred, if all ancesters are preferred
+        set_decision(&mut dag, c_v0v0, Some(true));
+        set_decision(&mut dag, c_v1v1, Some(true));
+        set_decision(&mut dag, c_v0v1, Some(true));
+        set_preferred(&mut dag, c_v0v1, true);
+        set_decision(&mut dag, c_v2v2, None);
+        assert_matches!(dag.query(&v2.hash()), Ok((true, false)));
+        set_decision(&mut dag, c_v0v0, None);
+        set_decision(&mut dag, c_v1v1, None);
+        set_decision(&mut dag, c_v0v1, None);
+        set_preferred(&mut dag, c_v0v1, true);
+        set_decision(&mut dag, c_v2v2, None);
+        assert_matches!(dag.query(&v2.hash()), Ok((true, false)));
+        set_decision(&mut dag, c_v0v0, None);
+        set_decision(&mut dag, c_v1v1, None);
+        set_decision(&mut dag, c_v0v1, None);
+        set_preferred(&mut dag, c_v0v1, false);
+        set_decision(&mut dag, c_v2v2, None);
+        assert_matches!(dag.query(&v2.hash()), Ok((false, false)));
     }
 
     #[test]
