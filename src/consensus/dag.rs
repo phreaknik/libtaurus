@@ -315,7 +315,11 @@ impl DAG {
         if !self.state.contains_key(&c.conflict_set_key()) {
             Err(Error::NotFound)
         } else {
-            Ok(walk_ancestors(self, c).into_iter().unique().collect())
+            Ok(walk_ancestors(self, c)
+                .into_iter()
+                .unique()
+                .sorted_by(|a, b| Ord::cmp(&self.vertex[&a.0].height, &self.vertex[&b.0].height))
+                .collect())
         }
     }
 
@@ -346,6 +350,18 @@ impl DAG {
                 set.push(*c);
             }
             set
+        }
+
+        // Helper to mark a constraint and its progeny as rejected
+        fn reject_progeny(dag: &mut DAG, c: &Constraint) {
+            let children = {
+                let c_state = dag.state.get_mut(&c.conflict_set_key()).unwrap();
+                c_state.decision.insert(*c, false);
+                c_state.children[&c].clone()
+            };
+            for child in children {
+                reject_progeny(dag, &child);
+            }
         }
 
         // Check that we have the vertex, and that we are able to record a query for it.
@@ -452,7 +468,7 @@ impl DAG {
                             c_state.decision.insert(c, true); // accepted the constraint
                             c_state.preferred = c;
                             if let Some(opp) = c.opposite() {
-                                c_state.decision.insert(opp, false); // rejected its conflict
+                                reject_progeny(self, &opp);
                             }
                         }
                     } else {
@@ -868,12 +884,20 @@ mod test {
         let c_v0v1 = Constraint(v0.hash(), v1.hash());
         let c_v2v2 = Constraint(v2.hash(), v2.hash());
         let c_v3v3 = Constraint(v3.hash(), v3.hash());
-        let expected_ancestors = Vec::from([c_gengen, c_v0v0, c_v1v1, c_v0v1, c_v2v2]);
 
         assert_matches!(dag.get_ancestors(&c_v3v3), Err(dag::Error::NotFound));
 
         dag.try_insert(&v3).unwrap();
-        assert_eq!(dag.get_ancestors(&c_v3v3).unwrap(), expected_ancestors);
+        let expected = Vec::from([c_gengen, c_v0v0, c_v1v1, c_v0v1, c_v2v2]);
+        let actual = dag.get_ancestors(&c_v3v3).unwrap();
+        assert_eq!(actual[0], expected[0]);
+        assert_eq!(actual.last(), expected.last());
+        // There are a few permutations of expected ancestors, because constraints at same height
+        // may appear in any order
+        assert!(actual[1..4]
+            .iter()
+            .sorted()
+            .eq(expected[1..4].iter().sorted()));
 
         // Should stop fetching ancestors at the first decided one
         dag.state
