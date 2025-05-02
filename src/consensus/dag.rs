@@ -16,8 +16,8 @@ use tracing::error;
 pub enum Error {
     #[error("already inserted")]
     AlreadyInserted,
-    #[error("already queried")]
-    AlreadyQueried,
+    #[error("already recorded")]
+    AlreadyRecorded,
     #[error("bad height")]
     BadHeight(u64, u64),
     #[error("bad parent height")]
@@ -380,7 +380,7 @@ impl DAG {
             } else if !self.graph.contains(vhash) {
                 Err(Error::WaitingOnVertex)
             } else if self.pending_query.take(vhash).is_none() {
-                Err(Error::AlreadyQueried)
+                Err(Error::AlreadyRecorded)
             } else {
                 // Award a chit to the unity constraint representing this vertex
                 let unity = Constraint(*vhash, *vhash);
@@ -947,7 +947,7 @@ mod test {
         // Error cases
         assert_matches!(
             dag.record_query_result(&v0.hash(), true),
-            Err(dag::Error::AlreadyQueried)
+            Err(dag::Error::AlreadyRecorded)
         );
         assert_matches!(
             dag.record_query_result(&v3.hash(), true),

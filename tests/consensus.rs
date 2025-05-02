@@ -335,3 +335,128 @@ fn tower_1222() {
     tg.record_query("v21", true).unwrap();
     tg.check_state_with_updates(vec![]);
 }
+
+#[test]
+fn overtaker() {
+    let mut tg = TestGraph::new(edges!([
+        "gen ->         ", //      gen
+        "v00 -> gen     ", //      /  \
+        "v01 -> gen     ", //    v00  v01
+        "a1 -> v00, v01 ", //    |  X  |
+        "b1 -> v01, v00 ", //    a1   b1 <--- conflict
+        "b2 -> b1       ", //         b2
+        "b3 -> b2       ", //         b3
+        "b4 -> b3       ", //         b4
+        "b5 -> b4       ", //         b5
+        "b6 -> b5       ", //         b6
+        "b7 -> b6       ", //         b7
+        "b8 -> b7       "  //         b8
+    ]));
+    // Assert the initial state
+    tg.check_state_with_updates(vec![
+        ("gen", ACCEPTED),
+        ("v00", STRONG_PREF),
+        ("v01", STRONG_PREF),
+        ("a1", STRONG_PREF),
+        ("b1", NO_PREF),
+        ("b2", NO_PREF),
+        ("b3", NO_PREF),
+        ("b4", NO_PREF),
+        ("b5", NO_PREF),
+        ("b6", NO_PREF),
+        ("b7", NO_PREF),
+        ("b8", NO_PREF),
+    ]);
+
+    // Strengthen a1 with chits
+    tg.record_query("v00", true).unwrap();
+    tg.record_query("v01", true).unwrap();
+    tg.record_query("a1", true).unwrap();
+    tg.record_query("b1", true).unwrap();
+    tg.check_state_with_updates(vec![]); // No change
+    tg.record_query("b2", true).unwrap(); // Should overtake a1
+    tg.check_state_with_updates(vec![
+        ("v00", ACCEPTED),
+        ("v01", ACCEPTED),
+        ("a1", NO_PREF),
+        ("b1", STRONG_PREF),
+        ("b2", STRONG_PREF),
+        ("b3", STRONG_PREF),
+        ("b4", STRONG_PREF),
+        ("b5", STRONG_PREF),
+        ("b6", STRONG_PREF),
+        ("b7", STRONG_PREF),
+        ("b8", STRONG_PREF),
+    ]);
+    tg.record_query("b3", true).unwrap();
+    tg.record_query("b4", true).unwrap();
+    tg.record_query("b5", true).unwrap();
+    tg.record_query("b6", true).unwrap();
+    tg.record_query("b7", true).unwrap();
+    tg.check_state_with_updates(vec![]); // No change
+
+    // After inserting b8, b1 and several descendents should become accepted
+    tg.record_query("b8", true).unwrap();
+    tg.check_state_with_updates(vec![
+        ("v00", ACCEPTED),
+        ("v01", ACCEPTED),
+        ("a1", REJECTED),
+        ("b1", ACCEPTED),
+        ("b2", ACCEPTED),
+        ("b3", ACCEPTED),
+        ("b4", ACCEPTED),
+        ("b5", ACCEPTED),
+        ("b6", STRONG_PREF),
+        ("b7", STRONG_PREF),
+        ("b8", STRONG_PREF),
+    ]);
+}
+
+#[test]
+fn resetter() {
+    let mut tg = TestGraph::new(edges!([
+        "gen ->         ",
+        "v0 -> gen      ",
+        "v1 -> v0       ",
+        "v2 -> v1       ",
+        "v3 -> v2       ", // <- vote against to reset count
+        "v4 -> v3       ",
+        "v5 -> v4       ",
+        "v6 -> v5       ",
+        "v7 -> v6       "
+    ]));
+    // Assert the initial state
+    tg.check_state_with_updates(vec![
+        ("gen", ACCEPTED),
+        ("v0", STRONG_PREF),
+        ("v1", STRONG_PREF),
+        ("v2", STRONG_PREF),
+        ("v3", STRONG_PREF),
+        ("v4", STRONG_PREF),
+        ("v5", STRONG_PREF),
+        ("v6", STRONG_PREF),
+        ("v7", STRONG_PREF),
+    ]);
+    tg.record_query("v0", true).unwrap();
+    tg.record_query("v1", true).unwrap();
+    tg.record_query("v2", true).unwrap();
+    tg.check_state_with_updates(vec![]); // No change
+    tg.record_query("v3", false).unwrap(); // vote against v3 to reset count
+    tg.check_state_with_updates(vec![]); // No change
+    tg.record_query("v4", true).unwrap();
+    tg.check_state_with_updates(vec![]); // No change
+    tg.record_query("v5", true).unwrap();
+    tg.check_state_with_updates(vec![]); // No change
+    tg.record_query("v6", true).unwrap();
+    tg.check_state_with_updates(vec![]); // No change
+
+    // After v7, v0-v4 should become accepted
+    tg.record_query("v7", true).unwrap();
+    tg.check_state_with_updates(vec![
+        ("v0", ACCEPTED),
+        ("v1", ACCEPTED),
+        ("v2", ACCEPTED),
+        ("v3", ACCEPTED),
+        ("v4", ACCEPTED),
+    ]);
+}
