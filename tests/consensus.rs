@@ -11,8 +11,8 @@ const NO_PREF: (bool, bool) = (false, false);
 const STRONG_PREF: (bool, bool) = (true, false);
 const ACCEPTED: (bool, bool) = (true, true);
 
-const MAX_CONF: usize = 8;
-const MAX_COUNT: usize = 4;
+const THRESH_ACCEPT: usize = 8;
+const THRESH_SE_ACCEPT: usize = 4;
 
 macro_rules! test_graph {
     ([$($input:expr),*]) => {
@@ -57,8 +57,8 @@ impl<'a> TestGraph<'a> {
         let mut dag = DAG::with_initial_vertices(
             dag::Config {
                 genesis: vertices[edges[0].0].hash(),
-                max_confidence: MAX_CONF,
-                max_count: MAX_COUNT,
+                thresh_safe_early_commit: THRESH_SE_ACCEPT,
+                thresh_accepted: THRESH_ACCEPT,
             },
             iter::once(&vertices[edges[0].0]),
         )
@@ -81,12 +81,14 @@ impl<'a> TestGraph<'a> {
     /// change is expected, calling this function with an empty list of changes, will re-assert the
     /// prior state.
     fn check_state_with_updates(&mut self, changes: Vec<(&'a str, (bool, bool))>) {
+        println!(">>>> check states");
         // Update the expected state
         for (label, state) in &changes {
             self.expected_state.insert(label, *state);
         }
         // Check all the states against expected
         for (label, expected) in &self.expected_state {
+            println!(">>>> query({label})");
             let actual = self
                 .dag
                 .query(&self.vertex_by_label[label].hash())
@@ -97,6 +99,11 @@ impl<'a> TestGraph<'a> {
 
     /// Helper to record a query for the specified vertex
     fn record_query(&mut self, label: &'a str, pref: bool) -> Result<(), dag::Error> {
+        println!(
+            ">>>> vote {} {}",
+            if pref { "for" } else { "against" },
+            label
+        );
         self.dag
             .record_query_result(&self.vertex_by_label[label].hash(), pref)
     }
@@ -144,9 +151,15 @@ fn small_chain_with_conflicts() {
     let mut tg = test_graph!([
         "gen ->         ",
         "v00 -> gen     ",
-        "v01 -> v00     ",
-        "v02 -> v01     ",
-        "v03 -> v02     "
+        "v01 -> gen     ",
+        "a10 -> v00, v01",
+        "b10 -> v01, v00", // conflicts with a10
+        "v20 -> a10     ",
+        "v30 -> v20     ",
+        "v40 -> v30     ",
+        "v50 -> v40     ",
+        "v60 -> v50     ",
+        "v70 -> v60     "
     ]);
 
     // Assert the initial state
@@ -154,22 +167,68 @@ fn small_chain_with_conflicts() {
         ("gen", ACCEPTED),
         ("v00", STRONG_PREF),
         ("v01", STRONG_PREF),
-        ("v02", STRONG_PREF),
-        ("v03", STRONG_PREF),
+        ("a10", STRONG_PREF),
+        ("b10", NO_PREF),
+        ("v20", STRONG_PREF),
+        ("v30", STRONG_PREF),
+        ("v40", STRONG_PREF),
+        ("v50", STRONG_PREF),
+        ("v60", STRONG_PREF),
+        ("v70", STRONG_PREF),
     ]);
 
     // Award chits to everything except
     tg.record_query("v00", true).unwrap();
     tg.record_query("v01", true).unwrap();
-    tg.record_query("v02", true).unwrap();
+    tg.check_state_with_updates(vec![]); // expect no changes so far
 
-    // Confirm no preferences have changed since last check
+    tg.record_query("b10", true).unwrap(); // vote for b10 initially
+    tg.check_state_with_updates(vec![
+        ("a10", NO_PREF),
+        ("b10", STRONG_PREF),
+        ("v20", NO_PREF),
+        ("v30", NO_PREF),
+        ("v40", NO_PREF),
+        ("v50", NO_PREF),
+        ("v60", NO_PREF),
+        ("v70", NO_PREF),
+    ]);
+    assert!(tg.record_query("v20", false).is_err()); // waiting on a10
+    tg.record_query("a10", false).unwrap();
+    tg.check_state_with_updates(vec![]); // should not change state
+
+    tg.record_query("v20", true).unwrap(); // vote for v20 supports a10 in lieu of b10
+    tg.check_state_with_updates(vec![
+        ("a10", STRONG_PREF),
+        ("b10", NO_PREF),
+        ("v20", STRONG_PREF),
+        ("v30", STRONG_PREF),
+        ("v40", STRONG_PREF),
+        ("v50", STRONG_PREF),
+        ("v60", STRONG_PREF),
+        ("v70", STRONG_PREF),
+    ]);
+
+    // Vertices v00 & v01 should become accepted at safe early committment criteria
+    tg.record_query("v30", true).unwrap();
     tg.check_state_with_updates(vec![]);
+    tg.record_query("v40", true).unwrap();
+    tg.check_state_with_updates(vec![]);
+    tg.record_query("v50", true).unwrap();
 
-    // v00 should be accepted now
-    tg.record_query("v03", true).unwrap();
-    tg.check_state_with_updates(vec![("v00", ACCEPTED)]);
+    // v00 & v01 should have reached safe early committment
+    tg.check_state_with_updates(vec![("v00", ACCEPTED), ("v01", ACCEPTED)]);
+
+    // Since there is a conflict at a10/b10, and b10 received a vote, no vertices at or after that
+    // point may be accepte according to the "safe early committment rule". They must wait until
+    // reaching ful confidence.
+    tg.record_query("v60", true).unwrap();
+    tg.check_state_with_updates(vec![]);
+    tg.record_query("v70", true).unwrap();
+    tg.check_state_with_updates(vec![]);
 }
+
+// TODO: Confirm chit is cleared on color flip
 
 #[test]
 fn tower_1222() {

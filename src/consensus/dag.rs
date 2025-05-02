@@ -52,19 +52,19 @@ pub struct Config {
     pub genesis: VertexHash,
 
     /// Counter value at which a constraint will be accepted, according to Avalanche consensus
-    pub max_count: usize,
+    pub thresh_accepted: usize,
 
-    /// Confidence value at which a constraint will be accepted under the "safe early commitment"
-    /// criteria in the Avalanche specification
-    pub max_confidence: usize,
+    /// Counter value at which a constraint will be accepted, according to the Avalanche "safe
+    /// early committment" criteria
+    pub thresh_safe_early_commit: usize,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Config {
             genesis: params::DEFAULT_GENESIS_HASH,
-            max_count: params::AVALANCHE_COUNTER_THRESHOLD,
-            max_confidence: params::AVALANCHE_CONFIDENCE_THRESHOLD,
+            thresh_accepted: params::AVALANCHE_COUNTER_THRESHOLD,
+            thresh_safe_early_commit: params::AVALANCHE_CONFIDENCE_THRESHOLD,
         }
     }
 }
@@ -394,6 +394,10 @@ impl DAG {
                     if strongly_preferred {
                         // Compute the confidence of this constraint and its conflict (if any)
                         let c_conf = progeny_with_chits(self, &c).into_iter().unique().count();
+                        let has_conflict = c
+                            .opposite()
+                            .map(|opp| self.state.contains_key(&opp.conflict_set_key()))
+                            .unwrap_or(false);
                         let opp_conf = c
                             .opposite()
                             .map(|opp| progeny_with_chits(self, &opp).into_iter().unique().count())
@@ -434,12 +438,14 @@ impl DAG {
                         };
 
                         // See if a decision can be made. A decision can be made if the vote count
-                        // reaches the protocol defined threshold, or if all parents are accepted
-                        // AND the confidence reaches the protocol defined threshold.
-                        if c_count >= self.config.max_count
+                        // reaches the acceptance threshold, or if the "safe early committment"
+                        // criteria are met: parents accepted, and no conflicts, and the count
+                        // reaches the safe early committment threshold
+                        if c_count >= self.config.thresh_accepted
                             || (c_parents.iter().all(|p| {
                                 self.state[&p.conflict_set_key()].decision.get(p) == Some(&true)
-                            }) && c_conf > self.config.max_confidence)
+                            }) && !has_conflict
+                                && c_conf >= self.config.thresh_safe_early_commit)
                         {
                             let c_state = self.state.get_mut(&c.conflict_set_key()).unwrap();
                             c_state.decision.insert(c, true); // accepted the constraint
@@ -638,8 +644,11 @@ mod test {
     #[test]
     fn default_config() {
         let dflt = Config::default();
-        assert_eq!(dflt.max_count, params::AVALANCHE_COUNTER_THRESHOLD);
-        assert_eq!(dflt.max_confidence, params::AVALANCHE_CONFIDENCE_THRESHOLD);
+        assert_eq!(dflt.thresh_accepted, params::AVALANCHE_COUNTER_THRESHOLD);
+        assert_eq!(
+            dflt.thresh_safe_early_commit,
+            params::AVALANCHE_CONFIDENCE_THRESHOLD
+        );
     }
 
     #[test]
