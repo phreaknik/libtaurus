@@ -298,21 +298,15 @@ impl DAG {
             // TODO: this is inefficient. Lots of allocs for each collect() and clone()
             let state = &dag.state[&c.conflict_set_key()];
 
-            // Stop gathering ancestors once they've been accepted according to Avalanche.
-            // Avalanche acceptance criteria are:
-            //     counter > max count
-            // or
-            //     !conflict && (confidence > max_confidence) // "safe early commitment"
-            if state.count[c] < dag.config.max_count
-                || (c.opposite().is_none() && state.confidence[c] < dag.config.max_confidence)
-            {
+            // Stop gathering ancestors once they've been decided according to Avalanche.
+            if state.decision.contains_key(c) {
+                Vec::new()
+            } else {
                 state.parents[c]
                     .clone()
                     .into_iter()
                     .flat_map(|p| once(p).chain(walk_ancestors(dag, &p).into_iter()))
                     .collect()
-            } else {
-                Vec::new()
             }
         }
 
@@ -494,16 +488,13 @@ impl DAG {
                 .into_iter()
                 .map(|c| {
                     let c_state = self.state.get(&c.conflict_set_key()).unwrap();
-                    (
-                        c,
-                        match c_state.decision.get(&c) {
-                            Some(true) => (true, true),   // accepted
-                            Some(false) => (false, true), // rejected
-                            None => (c_state.preferred == c, false),
-                        },
-                    )
+                    match c_state.decision.get(&c) {
+                        Some(true) => (true, true),   // accepted
+                        Some(false) => (false, true), // rejected
+                        None => (c_state.preferred == c, false),
+                    }
                 })
-                .inspect(|(c, s)| {
+                .inspect(|s| {
                     // It should be impossible for a rejected ancestor constraint to make it here if
                     // the queried vertex is not rejected
                     debug_assert!(
@@ -511,7 +502,6 @@ impl DAG {
                         "found non-rejected vertex with rejected ancestors"
                     );
                 })
-                .map(|(_, s)| s)
                 .collect::<Vec<_>>();
             Ok((states.into_iter().all(|s| s.0), false))
         }
@@ -815,7 +805,60 @@ mod test {
 
     #[test]
     fn get_ancestors() {
-        todo!()
+        let gen = Arc::new(Vertex::empty());
+        let v0 = make_rand_vertex([&gen]);
+        let v1 = make_rand_vertex([&gen]);
+        let v2 = make_rand_vertex([&v0, &v1]);
+        let v3 = make_rand_vertex([&v2]);
+        let mut dag = DAG::with_initial_vertices(Config::default(), [&gen]).unwrap();
+        dag.try_insert(&v0).unwrap();
+        dag.try_insert(&v1).unwrap();
+        dag.try_insert(&v2).unwrap();
+
+        let c_gengen = Constraint(gen.hash(), gen.hash());
+        let c_v0v0 = Constraint(v0.hash(), v0.hash());
+        let c_v1v1 = Constraint(v1.hash(), v1.hash());
+        let c_v0v1 = Constraint(v0.hash(), v1.hash());
+        let c_v2v2 = Constraint(v2.hash(), v2.hash());
+        let c_v3v3 = Constraint(v3.hash(), v3.hash());
+        let expected_ancestors = HashSet::from([c_gengen, c_v0v0, c_v1v1, c_v0v1, c_v2v2]);
+
+        assert_matches!(dag.get_ancestors(&c_v3v3), Err(dag::Error::NotFound));
+
+        dag.try_insert(&v3).unwrap();
+        assert_eq!(
+            dag.get_ancestors(&c_v3v3)
+                .unwrap()
+                .difference(&expected_ancestors)
+                .count(),
+            0
+        );
+
+        // Should stop fetching ancestors at the first decided one
+        dag.state
+            .get_mut(&c_v2v2.conflict_set_key())
+            .unwrap()
+            .decision
+            .insert(c_v2v2, true);
+        assert_eq!(
+            dag.get_ancestors(&c_v3v3)
+                .unwrap()
+                .into_iter()
+                .collect::<Vec<_>>(),
+            [c_v2v2]
+        );
+        dag.state
+            .get_mut(&c_v2v2.conflict_set_key())
+            .unwrap()
+            .decision
+            .insert(c_v2v2, false);
+        assert_eq!(
+            dag.get_ancestors(&c_v3v3)
+                .unwrap()
+                .into_iter()
+                .collect::<Vec<_>>(),
+            [c_v2v2]
+        );
     }
 
     #[test]
