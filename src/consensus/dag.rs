@@ -580,7 +580,7 @@ impl DAG {
             })
         } else {
             let states = self
-                .get_active_ancestor_constraints(&self.vertex[vhash])?
+                .get_active_ancestor_constraints(self.vertex.get(vhash).ok_or(Error::NotFound)?)?
                 .into_iter()
                 .map(|c| {
                     let c_state = self.state.get(&c.conflict_set_key()).unwrap();
@@ -1042,10 +1042,7 @@ mod test {
         let x2 = make_rand_vertex([&v1, &v0]); // conflicts with v2
         let v3 = make_rand_vertex([&v2]);
         let b3 = make_rand_vertex([&v2, &x2]); // illegal to reference conflicting parents
-        let mut dag = DAG::new(Config::default());
-
-        // Initialize graph with genesis vertex
-        dag.insert(&gen);
+        let mut dag = DAG::with_initial_vertices(Config::default(), [&gen]).unwrap();
 
         // Test for missing parents, waiting parents, and preference after insertions
         match dag.try_insert(&v2) {
