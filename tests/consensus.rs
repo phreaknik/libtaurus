@@ -283,6 +283,33 @@ fn small_chain_with_conflicts() {
     tg.check_state_with_updates(vec![]);
     tg.check_frontier(["a90"]);
 
+    // Create large subtree after b10
+    tg.extend(edges!([
+        "b20 -> b10     ",
+        "b21 -> b10     ",
+        "b30 -> b20, b21",
+        "b40 -> b30     ",
+        "b50 -> b40     ",
+        "b60 -> b50     ",
+        "b70 -> b60     ",
+        "b80 -> b70     ",
+        "b90 -> b80     ",
+        "b100 -> b90    "
+    ]));
+    tg.check_state_with_updates(vec![
+        ("b20", NO_PREF),
+        ("b21", NO_PREF),
+        ("b30", NO_PREF),
+        ("b40", NO_PREF),
+        ("b50", NO_PREF),
+        ("b60", NO_PREF),
+        ("b70", NO_PREF),
+        ("b80", NO_PREF),
+        ("b90", NO_PREF),
+        ("b100", NO_PREF),
+    ]);
+    tg.check_frontier(["a90"]);
+
     // Should reach acceptance threshold for conflicts a10/b10. A few after should become accepted
     // under SE criteria
     tg.record_query("a90", true).unwrap();
@@ -297,23 +324,6 @@ fn small_chain_with_conflicts() {
         ("a70", STRONG_PREF),
         ("a80", STRONG_PREF),
         ("a90", STRONG_PREF),
-    ]);
-    tg.check_frontier(["a90"]);
-
-    // Children of b10 should automatically be rejected now
-    tg.extend(edges!([
-        "b20 -> b10     ",
-        "b21 -> b10     ",
-        "b30 -> b20, b21",
-        "b40 -> b30     ",
-        "b50 -> b40     ",
-        "b60 -> b50     ",
-        "b70 -> b60     ",
-        "b80 -> b70     ",
-        "b90 -> b80     ",
-        "b100 -> b90    "
-    ]));
-    tg.check_state_with_updates(vec![
         ("b20", REJECTED),
         ("b21", REJECTED),
         ("b30", REJECTED),
