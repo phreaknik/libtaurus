@@ -219,7 +219,7 @@ impl Constraint {
 
     /// Return a [`Constraint`] for the opposite [`Vertex`] ordering, if any. In the case of a
     /// unity constraint, there is no opposite.
-    pub fn opposite(&self) -> Option<Constraint> {
+    pub fn conflict(&self) -> Option<Constraint> {
         if !self.is_unity() {
             Some(Constraint(self.1, self.0))
         } else {
@@ -495,12 +495,12 @@ mod test {
     }
 
     #[test]
-    fn opposite_constraint() {
+    fn constraint_conflict() {
         assert_eq!(Constraint(H1, H2), Constraint(H1, H2));
         assert_ne!(Constraint(H1, H2), Constraint(H2, H1));
-        assert_eq!(Constraint(H1, H1).opposite(), None);
-        assert_eq!(Constraint(H1, H2).opposite(), Some(Constraint(H2, H1)));
-        assert_eq!(Constraint(H3, H4).opposite(), Some(Constraint(H4, H3)));
+        assert_eq!(Constraint(H1, H1).conflict(), None);
+        assert_eq!(Constraint(H1, H2).conflict(), Some(Constraint(H2, H1)));
+        assert_eq!(Constraint(H3, H4).conflict(), Some(Constraint(H4, H3)));
     }
 
     #[test]

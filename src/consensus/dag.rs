@@ -20,10 +20,8 @@ pub enum Error {
     AlreadyRecorded,
     #[error("bad height")]
     BadHeight(u64, u64),
-    #[error("bad parent height")]
-    BadParentHeight,
-    #[error("parents conflict")]
-    ConflictingParents,
+    #[error("ancestors conflict")]
+    ConflictingAncestors,
     #[error(transparent)]
     Hash(#[from] crate::hash::Error),
     #[error("missing parents")]
@@ -36,6 +34,10 @@ pub enum Error {
     ProstDecode(#[from] prost::DecodeError),
     #[error(transparent)]
     ProstEncode(#[from] prost::EncodeError),
+    #[error("ancestor has been rejected")]
+    RejectedAncestor,
+    #[error("self referential parent")]
+    SelfReferentialParent,
     #[error(transparent)]
     Vertex(#[from] vertex::Error),
     #[error("waiting on vertex")]
@@ -115,7 +117,7 @@ impl DAG {
 
         // Add each vertex to the event graph, and finalize each constraint in the constraint graph
         for vx in vertices {
-            dag.insert_unchecked(vx);
+            dag.insert(vx);
             dag.pending_query.remove(&vx.hash());
             for c in vx
                 .parent_constraints()
@@ -132,7 +134,100 @@ impl DAG {
         Ok(dag)
     }
 
-    /// Before inserting a vertex into the [`DAG`] it must pass these checks
+    // Get the list of ancestors back to the point where all ancestors have been accepted. Results
+    // will be sorted according to ascending height.
+    fn get_active_ancestors(&self, vx: &Vertex) -> Result<Vec<VertexHash>> {
+        // Helper function to find the maximum height at which all ancestors have been decided.
+        fn decided_height(dag: &DAG, vhash: &VertexHash) -> Result<u64> {
+            let unity = Constraint(*vhash, *vhash);
+            let state = &dag.state[&unity.conflict_set_key()];
+            match state.decision.get(&unity) {
+                // Vertex must not map to a rejected ancestor
+                Some(false) => Err(Error::RejectedAncestor),
+
+                // Stop recursing once we find an accepted ancestor at this branch
+                Some(true) => Ok(dag.vertex[vhash].height),
+
+                // Otherwise, branch out to each parent and find the minimum decided_height of
+                // their ancestors
+                None => {
+                    let heights: Vec<_> = dag.vertex[vhash]
+                        .parents
+                        .iter()
+                        .map(|p| decided_height(dag, p))
+                        .try_collect()?;
+                    Ok(itertools::min(heights).unwrap())
+                }
+            }
+        }
+
+        // Helper function to gather ancestors of the given vertex back to the specified height.
+        fn gather_ancestors(dag: &DAG, vhash: &VertexHash, to_height: u64) -> HashSet<VertexHash> {
+            let vx = &dag.vertex[vhash];
+            if vx.height > to_height {
+                vx.parents
+                    .iter()
+                    .copied()
+                    .chain(
+                        vx.parents
+                            .iter()
+                            .flat_map(|p| gather_ancestors(dag, &p, to_height).into_iter()),
+                    )
+                    .collect()
+            } else {
+                HashSet::new()
+            }
+        }
+
+        if vx.parents.iter().any(|p| !self.vertex.contains_key(p)) {
+            return Err(Error::NotFound);
+        }
+
+        let min_heights: Vec<_> = vx
+            .parents
+            .iter()
+            .map(|p| decided_height(self, p))
+            .try_collect()?;
+        let to_height = itertools::min(min_heights).unwrap();
+        let ancestors_of_parents: HashSet<_> = vx
+            .parents
+            .iter()
+            .flat_map(|p| gather_ancestors(self, p, to_height).into_iter())
+            .collect();
+        if vx.parents.iter().any(|p| ancestors_of_parents.contains(p)) {
+            Err(Error::SelfReferentialParent)
+        } else {
+            Ok(ancestors_of_parents
+                .into_iter()
+                .chain(vx.parents.iter().copied())
+                .filter(|&vhash| {
+                    // TODO: this kills performance
+                    let unity = Constraint(vhash, vhash);
+                    !self.state[&unity.conflict_set_key()]
+                        .decision
+                        .contains_key(&unity)
+                })
+                .sorted_by(|a, b| Ord::cmp(&self.vertex[a].height, &self.vertex[b].height))
+                .collect())
+        }
+    }
+
+    // Get the list of constraints for every ancestor back to the point where all ancestors have
+    // been accepted. Results will be sorted according to ascending height.
+    fn get_active_ancestor_constraints(&self, vx: &Vertex) -> Result<Vec<Constraint>> {
+        Ok(self
+            .get_active_ancestors(vx)?
+            .iter()
+            .flat_map(|vhash| self.vertex[vhash].parent_constraints())
+            .unique() // TODO: this eats performance
+            .chain(vx.parents.iter().map(|&p| Constraint(p, p)))
+            .filter(|c| !self.state[&c.conflict_set_key()].decision.contains_key(&c)) // TODO: perf
+            .collect::<Vec<_>>())
+    }
+
+    /// Before inserting a vertex into the [`DAG`] it must pass these checks. Will collect
+    /// ancestors (vertices and constraints), confirm that this vertex is a legal extension of the
+    /// graph, and return the ancestor sets if so.
     fn check_vertex(&self, vx: &Vertex) -> Result<()> {
         // Rule out any obviously insane vertices
         vx.sanity_checks()?;
@@ -160,35 +255,25 @@ impl DAG {
             return Err(Error::WaitingOnParents(waiting));
         }
 
-        // Confirm the heights of each parent match
-        let parent_height = self.vertex[vx.parents.first().unwrap()].height;
-        if !vx
+        // Confirm vertex height is 1 + parent height
+        let expected_height = 1 + vx
             .parents
             .iter()
-            .all(|p| self.vertex[p].height == parent_height)
-        {
-            return Err(Error::BadParentHeight);
-        }
-
-        // Confirm vertex height is 1 + parent height
-        let expected_height = parent_height + 1;
+            .map(|p| self.vertex[p].height)
+            .max()
+            .unwrap();
         if expected_height != vx.height {
             return Err(Error::BadHeight(vx.height, expected_height));
         }
 
-        // Confirm parents do not have conflicting constraints
-        let constraints_of_parents = vx
-            .parents
-            .iter()
-            .map(|vhash| self.vertex[vhash].parent_constraints())
-            .flatten()
-            .collect::<HashSet<_>>();
-        if constraints_of_parents
-            .iter()
-            .filter_map(|c| c.opposite())
-            .any(|opp| constraints_of_parents.contains(&opp))
-        {
-            return Err(Error::ConflictingParents);
+        // Search for constraint conflicts in the ancestry
+        let ancestor_constraints = self.get_active_ancestor_constraints(vx)?;
+        for c in &ancestor_constraints {
+            if let Some(cflct) = c.conflict() {
+                if ancestor_constraints.contains(&cflct) {
+                    return Err(Error::ConflictingAncestors);
+                }
+            }
         }
 
         Ok(())
@@ -207,7 +292,7 @@ impl DAG {
 
     /// Insert a [`Vertex`] without checking DAG constraints. Will panic if parents have not
     /// already been inserted.
-    fn insert_unchecked(&mut self, vx: &Arc<Vertex>) {
+    fn insert(&mut self, vx: &Arc<Vertex>) {
         // Add vertex to list of inserted vertices
         self.vertex.insert(vx.hash(), vx.clone());
 
@@ -278,7 +363,7 @@ impl DAG {
         })?;
 
         // Insert the vertex into the graph
-        self.insert_unchecked(vx);
+        self.insert(vx);
 
         // Return any waiting children
         Ok(self
@@ -286,39 +371,6 @@ impl DAG {
             .into_iter()
             .filter(|vhash| !self.graph.contains(vhash))
             .collect())
-    }
-
-    /// Helper method to look up all undecided ancestors of the given constraint. Ancestors will be
-    /// ordered from oldest to youngest.
-    fn get_ancestors(&self, c: &Constraint) -> Result<Vec<Constraint>> {
-        // Helper to lookup ancestors of the given constraint, which have not yet been accepted by
-        // the Avalanche consensus protocol. Warning: may contain duplicate entries.
-        fn walk_ancestors(dag: &DAG, c: &Constraint) -> Vec<Constraint> {
-            // TODO: this is inefficient. Lots of allocs for each collect() and clone()
-            let state = &dag.state[&c.conflict_set_key()];
-
-            // Stop gathering ancestors once they've been decided according to Avalanche.
-            if state.decision.contains_key(c) {
-                Vec::new()
-            } else {
-                state.parents[c]
-                    .clone()
-                    .into_iter()
-                    .flat_map(|p| walk_ancestors(dag, &p).into_iter().chain(once(p)))
-                    .collect()
-            }
-        }
-
-        // Walk ancestors and convert the list to a HashSet to remove duplicates
-        if !self.state.contains_key(&c.conflict_set_key()) {
-            Err(Error::NotFound)
-        } else {
-            Ok(walk_ancestors(self, c)
-                .into_iter()
-                .unique()
-                .sorted_by(|a, b| Ord::cmp(&self.vertex[&a.0].height, &self.vertex[&b.0].height))
-                .collect())
-        }
     }
 
     /// Record the result of an Avalanche preference query for the specified [`Vertex`]. Query
@@ -401,7 +453,7 @@ impl DAG {
                 // Update the state of this vertex's unity constraint as well as all of its
                 // ancestors
                 for c in self
-                    .get_ancestors(&unity)
+                    .get_active_ancestor_constraints(&vx)
                     .unwrap()
                     .into_iter()
                     .chain(once(unity))
@@ -410,11 +462,11 @@ impl DAG {
                         // Compute the confidence of this constraint and its conflict (if any)
                         let c_conf = progeny_with_chits(self, &c).into_iter().unique().count();
                         let has_conflict = c
-                            .opposite()
+                            .conflict()
                             .map(|opp| self.state.contains_key(&opp.conflict_set_key()))
                             .unwrap_or(false);
                         let opp_conf = c
-                            .opposite()
+                            .conflict()
                             .map(|opp| progeny_with_chits(self, &opp).into_iter().unique().count())
                             .unwrap_or(0);
 
@@ -465,7 +517,7 @@ impl DAG {
                             let c_state = self.state.get_mut(&c.conflict_set_key()).unwrap();
                             c_state.decision.insert(c, true); // accepted the constraint
                             c_state.preferred = c;
-                            if let Some(opp) = c.opposite() {
+                            if let Some(opp) = c.conflict() {
                                 reject_progeny(self, &opp);
                             }
                         }
@@ -522,30 +574,16 @@ impl DAG {
             .get(&unity.conflict_set_key())
             .and_then(|s| s.decision.get(&unity))
         {
-            let c = unity;
-            let c_state = self.state.get(&c.conflict_set_key()).unwrap();
-            println!(
-                ":::: query({c}): count = {}, conf = {}, decision? = {:?}",
-                c_state.count[&c],
-                c_state.confidence[&c],
-                c_state.decision.get(&c)
-            );
             Ok(match decision {
                 true => (true, true),   // accepted
                 false => (false, true), // rejected
             })
         } else {
             let states = self
-                .get_ancestors(&unity)?
+                .get_active_ancestor_constraints(&self.vertex[vhash])?
                 .into_iter()
                 .map(|c| {
                     let c_state = self.state.get(&c.conflict_set_key()).unwrap();
-                    println!(
-                        ":::: query({c}): count = {}, conf = {}, decision? = {:?}",
-                        c_state.count[&c],
-                        c_state.confidence[&c],
-                        c_state.decision.get(&c)
-                    );
                     match c_state.decision.get(&c) {
                         Some(true) => (true, true),   // accepted
                         Some(false) => (false, true), // rejected
@@ -642,7 +680,7 @@ struct ConflictSet {
 impl ConflictSet {
     /// Assign constraint parents to the constraint state
     fn new(initial: Constraint, parents: HashSet<Constraint>) -> ConflictSet {
-        let keys = match initial.opposite() {
+        let keys = match initial.conflict() {
             None => vec![initial],
             Some(opposite) => vec![initial, opposite],
         };
@@ -741,57 +779,208 @@ mod test {
     }
 
     #[test]
-    fn check_vertex() {
+    fn get_active_ancestors() {
+        fn sort_range<T: Ord + Copy>(v: &mut Vec<T>, range: std::ops::Range<usize>) {
+            v.splice(range.clone(), {
+                let mut tmp = v[range].to_vec();
+                tmp.sort();
+                tmp
+            });
+        }
+
         let gen = Arc::new(Vertex::empty());
-        let v0 = make_rand_vertex([&gen]);
-        let v1 = make_rand_vertex([&gen]);
-        let v2 = make_rand_vertex([&gen]);
-        let v3 = make_rand_vertex([&v1, &v2]);
-        let x3 = make_rand_vertex([&v2, &v1]); // conflicts with v3
-        let b4 = make_rand_vertex([&v3, &x3]); // illegal! references conflicting parents
+        let v00 = make_rand_vertex([&gen]);
+        let v01 = make_rand_vertex([&gen]);
+        let v02 = make_rand_vertex([&gen]);
+        let v10 = make_rand_vertex([&v00, &v01]);
+        let v20 = make_rand_vertex([&v10]);
+        let v30 = make_rand_vertex([&v20]);
+        let mut dag = DAG::with_initial_vertices(Config::default(), [&gen]).unwrap();
+        dag.try_insert(&v00).unwrap();
+        dag.try_insert(&v01).unwrap();
+        dag.try_insert(&v02).unwrap();
+        dag.try_insert(&v10).unwrap();
+        dag.try_insert(&v20).unwrap();
+
+        // Get ancestors of non-inserted vertex
+        let mut actual = dag.get_active_ancestors(&v30).unwrap();
+        let mut expected = vec![v00.hash(), v01.hash(), v10.hash(), v20.hash()];
+        sort_range(&mut actual, 0..2);
+        sort_range(&mut expected, 0..2);
+        assert_eq!(actual, expected);
+
+        // Insert the vertex and confirm the answer doesn't change
+        dag.try_insert(&v30).unwrap();
+        let mut actual = dag.get_active_ancestors(&v30).unwrap();
+        let mut expected = vec![v00.hash(), v01.hash(), v10.hash(), v20.hash()];
+        sort_range(&mut actual, 0..2);
+        sort_range(&mut expected, 0..2);
+        assert_eq!(actual, expected);
+
+        // mark v10 as rejected
+        let c_v10v10 = Constraint(v10.hash(), v10.hash());
+        dag.state
+            .get_mut(&c_v10v10.conflict_set_key())
+            .unwrap()
+            .decision
+            .insert(c_v10v10, false);
+        assert_matches!(
+            dag.get_active_ancestors(&v30),
+            Err(dag::Error::RejectedAncestor)
+        );
+        // mark v10 as accepted
+        dag.state
+            .get_mut(&c_v10v10.conflict_set_key())
+            .unwrap()
+            .decision
+            .insert(c_v10v10, true);
+        assert_eq!(dag.get_active_ancestors(&v30).unwrap(), [v20.hash()]);
+    }
+
+    #[test]
+    fn get_active_ancestor_constraints() {
+        fn sort_range<T: Ord + Copy>(v: &mut Vec<T>, range: std::ops::Range<usize>) {
+            v.splice(range.clone(), {
+                let mut tmp = v[range].to_vec();
+                tmp.sort();
+                tmp
+            });
+        }
+        let gen = Arc::new(Vertex::empty());
+        let v00 = make_rand_vertex([&gen]);
+        let v01 = make_rand_vertex([&gen]);
+        let v10 = make_rand_vertex([&v00, &v01]);
+        let v20 = make_rand_vertex([&v10]);
+        let mut dag = DAG::with_initial_vertices(Config::default(), [&gen]).unwrap();
+        dag.try_insert(&v00).unwrap();
+        dag.try_insert(&v01).unwrap();
+
+        let c_gengen = Constraint(gen.hash(), gen.hash());
+        let c_v00v00 = Constraint(v00.hash(), v00.hash());
+        let c_v01v01 = Constraint(v01.hash(), v01.hash());
+        let c_v00v01 = Constraint(v00.hash(), v01.hash());
+        let c_v10v10 = Constraint(v10.hash(), v10.hash());
+        let c_v20v20 = Constraint(v20.hash(), v20.hash());
+
+        // one of the parents (v10) has not been inserted yet
+        assert_matches!(
+            dag.get_active_ancestor_constraints(&v20),
+            Err(dag::Error::NotFound)
+        );
+
+        dag.try_insert(&v10).unwrap();
+        let mut expected = Vec::from([c_v00v00, c_v01v01, c_v00v01, c_v10v10]);
+        let mut actual = dag.get_active_ancestor_constraints(&v20).unwrap();
+        // There are a few permutations of expected ancestors, because constraints at same height
+        // may appear in any order
+        sort_range(&mut expected, 0..3);
+        sort_range(&mut actual, 0..3);
+        assert_eq!(actual, expected);
+
+        // Should stop fetching ancestors at the first decided one
+        dag.state
+            .get_mut(&c_v10v10.conflict_set_key())
+            .unwrap()
+            .decision
+            .insert(c_v10v10, true);
+        assert_eq!(
+            dag.get_active_ancestor_constraints(&v20)
+                .unwrap()
+                .into_iter()
+                .collect::<Vec<_>>(),
+            []
+        );
+        // Should error if ancestor is rejected
+        dag.state
+            .get_mut(&c_v10v10.conflict_set_key())
+            .unwrap()
+            .decision
+            .insert(c_v10v10, false);
+        assert_matches!(
+            dag.get_active_ancestor_constraints(&v20),
+            Err(dag::Error::RejectedAncestor)
+        );
+
+        // Clear the decision for the next tests
+        dag.state
+            .get_mut(&c_v10v10.conflict_set_key())
+            .unwrap()
+            .decision
+            .remove(&c_v10v10);
+
+        // Test constraints for vertices of different heights. Should get all ancestors even if
+        // some are already decided.
+        let v02 = make_rand_vertex([&gen]);
+        let v21 = make_rand_vertex([&v20, &v02]);
+        dag.try_insert(&v02).unwrap();
+        dag.try_insert(&v20).unwrap();
+        dag.try_insert(&v21).unwrap();
+        assert_eq!(
+            dag.get_active_ancestor_constraints(&v02)
+                .unwrap()
+                .into_iter()
+                .collect::<Vec<_>>(),
+            []
+        );
+    }
+
+    #[test]
+    fn check_vertex() {
+        todo!("completely redo this test");
+        let gen = Arc::new(Vertex::empty());
+        let v00 = make_rand_vertex([&gen]);
+        let v01 = make_rand_vertex([&gen]);
+        let v02 = make_rand_vertex([&gen]);
+        let v10 = make_rand_vertex([&v01, &v02]);
+        let x10 = make_rand_vertex([&v02, &v01]); // conflicts with v3
         let mut dag = DAG::new(Config::default());
 
         // Test for missing/waiting parents
-        dag.insert_unchecked(&gen);
-        dag.insert_unchecked(&v0);
-        assert_matches!(dag.check_vertex(&v0), Err(dag::Error::AlreadyInserted));
-        match dag.check_vertex(&v3) {
+        dag.insert(&gen);
+        dag.insert(&v00);
+        assert_matches!(dag.check_vertex(&v00), Err(dag::Error::AlreadyInserted));
+        match dag.check_vertex(&v10) {
             Err(dag::Error::MissingParents(missing)) => {
-                assert_eq!(missing, [v1.hash(), v2.hash()])
+                assert_eq!(missing, [v01.hash(), v02.hash()])
             }
             _ => panic!("Expected Error::MissingParents"),
         }
-        dag.vertex.insert(v1.hash(), v1.clone()); // v1 is known but not processed
-        match dag.check_vertex(&v3) {
+        dag.vertex.insert(v01.hash(), v01.clone()); // v1 is known but not processed
+        match dag.check_vertex(&v10) {
             Err(dag::Error::MissingParents(missing)) => {
-                assert_eq!(missing, [v2.hash()])
+                assert_eq!(missing, [v02.hash()])
             }
             _ => panic!("Expected Error::MissingParents"),
         }
-        dag.vertex.insert(v2.hash(), v2.clone()); // v2 is known but not processed
-        match dag.check_vertex(&v3) {
+        dag.vertex.insert(v02.hash(), v02.clone()); // v2 is known but not processed
+        match dag.check_vertex(&v10) {
             Err(dag::Error::WaitingOnParents(waiting)) => {
-                assert_eq!(waiting, [v1.hash(), v2.hash()])
+                assert_eq!(waiting, [v01.hash(), v02.hash()])
             }
             _ => panic!("Expected Error::WaitingOnParents"),
         }
-        dag.insert_unchecked(&v1); // v1 is "processed"
-        match dag.check_vertex(&v3) {
+        dag.insert(&v01);
+        match dag.check_vertex(&v10) {
             Err(dag::Error::WaitingOnParents(waiting)) => {
-                assert_eq!(waiting, [v2.hash()])
+                assert_eq!(waiting, [v02.hash()])
             }
             _ => panic!("Expected Error::WaitingOnParents"),
         }
-        dag.insert_unchecked(&v2); // v2 is "processed"
-        assert_matches!(dag.check_vertex(&v3), Ok(()));
+        dag.insert(&v02);
+        assert_matches!(dag.check_vertex(&v10), Ok(()));
 
-        // Test parent heights
-        let c4 = make_rand_vertex([&gen, &v1]); // Parents have mismatched height
-        assert_matches!(dag.check_vertex(&c4), Err(dag::Error::BadParentHeight));
-        dag.insert_unchecked(&v3); // v3 is "processed"
-        let mut c5 = Vertex::empty().with_parents([&v3]).unwrap();
-        c5.height = 2; // Should have height 3
-        match dag.check_vertex(&Arc::new(c5)) {
+        // Test doubly referenced parent
+        let y10 = make_rand_vertex([&gen, &v01]); // illegal! gen is also parent of v1
+        assert_matches!(
+            dag.check_vertex(&y10),
+            Err(dag::Error::SelfReferentialParent)
+        );
+        dag.insert(&v10);
+
+        // Test incorrect height
+        let mut x20 = Vertex::empty().with_parents([&v10]).unwrap();
+        x20.height = 2; // Should have height 3
+        match dag.check_vertex(&Arc::new(x20)) {
             Err(dag::Error::BadHeight(actual, expected)) => {
                 assert_eq!(actual, 2);
                 assert_eq!(expected, 3);
@@ -800,8 +989,16 @@ mod test {
         }
 
         // Catch conflicting parents
-        dag.insert_unchecked(&x3); // x3 is "processed"
-        assert_matches!(dag.check_vertex(&b4), Err(dag::Error::ConflictingParents));
+        dag.insert(&x10);
+        let y20 = make_rand_vertex([&v10, &x10]); // illegal! references conflicting parents
+        assert_matches!(
+            dag.check_vertex(&y20),
+            Err(dag::Error::ConflictingAncestors)
+        );
+
+        // Test OK with varying parent heights
+        let v20 = make_rand_vertex([&v00, &v10]); // Ties v0 back into the graph
+        assert_matches!(dag.check_vertex(&v20), Ok(()));
     }
 
     #[test]
@@ -848,7 +1045,7 @@ mod test {
         let mut dag = DAG::new(Config::default());
 
         // Initialize graph with genesis vertex
-        dag.insert_unchecked(&gen);
+        dag.insert(&gen);
 
         // Test for missing parents, waiting parents, and preference after insertions
         match dag.try_insert(&v2) {
@@ -887,67 +1084,7 @@ mod test {
         // x2 should not be preferred, due to conflict
         assert!(dag.is_preferred(&x2.hash()).unwrap() == false);
         // b3 should fail due to illegal parent combination
-        assert_matches!(dag.try_insert(&b3), Err(dag::Error::ConflictingParents));
-    }
-
-    #[test]
-    fn get_ancestors() {
-        let gen = Arc::new(Vertex::empty());
-        let v0 = make_rand_vertex([&gen]);
-        let v1 = make_rand_vertex([&gen]);
-        let v2 = make_rand_vertex([&v0, &v1]);
-        let v3 = make_rand_vertex([&v2]);
-        let mut dag = DAG::with_initial_vertices(Config::default(), [&gen]).unwrap();
-        dag.try_insert(&v0).unwrap();
-        dag.try_insert(&v1).unwrap();
-        dag.try_insert(&v2).unwrap();
-
-        let c_gengen = Constraint(gen.hash(), gen.hash());
-        let c_v0v0 = Constraint(v0.hash(), v0.hash());
-        let c_v1v1 = Constraint(v1.hash(), v1.hash());
-        let c_v0v1 = Constraint(v0.hash(), v1.hash());
-        let c_v2v2 = Constraint(v2.hash(), v2.hash());
-        let c_v3v3 = Constraint(v3.hash(), v3.hash());
-
-        assert_matches!(dag.get_ancestors(&c_v3v3), Err(dag::Error::NotFound));
-
-        dag.try_insert(&v3).unwrap();
-        let expected = Vec::from([c_gengen, c_v0v0, c_v1v1, c_v0v1, c_v2v2]);
-        let actual = dag.get_ancestors(&c_v3v3).unwrap();
-        assert_eq!(actual[0], expected[0]);
-        assert_eq!(actual.last(), expected.last());
-        // There are a few permutations of expected ancestors, because constraints at same height
-        // may appear in any order
-        assert!(actual[1..4]
-            .iter()
-            .sorted()
-            .eq(expected[1..4].iter().sorted()));
-
-        // Should stop fetching ancestors at the first decided one
-        dag.state
-            .get_mut(&c_v2v2.conflict_set_key())
-            .unwrap()
-            .decision
-            .insert(c_v2v2, true);
-        assert_eq!(
-            dag.get_ancestors(&c_v3v3)
-                .unwrap()
-                .into_iter()
-                .collect::<Vec<_>>(),
-            [c_v2v2]
-        );
-        dag.state
-            .get_mut(&c_v2v2.conflict_set_key())
-            .unwrap()
-            .decision
-            .insert(c_v2v2, false);
-        assert_eq!(
-            dag.get_ancestors(&c_v3v3)
-                .unwrap()
-                .into_iter()
-                .collect::<Vec<_>>(),
-            [c_v2v2]
-        );
+        assert_matches!(dag.try_insert(&b3), Err(dag::Error::ConflictingAncestors));
     }
 
     #[test]
@@ -1013,13 +1150,13 @@ mod test {
         );
 
         // Insert all parents of v2 and x2, so they will insert successfully now
-        dag.insert_unchecked(&gen);
-        dag.insert_unchecked(&v0);
-        dag.insert_unchecked(&v1);
+        dag.insert(&gen);
+        dag.insert(&v0);
+        dag.insert(&v1);
 
-        dag.insert_unchecked(&v2);
+        dag.insert(&v2);
         assert_matches!(dag.is_preferred(&v2.hash()), Ok(true));
-        dag.insert_unchecked(&x2);
+        dag.insert(&x2);
         assert_matches!(dag.is_preferred(&x2.hash()), Ok(false));
     }
 
@@ -1058,7 +1195,7 @@ mod test {
         };
         let set_preferred = |dag: &mut DAG, c: Constraint, p: bool| {
             dag.state.get_mut(&c.conflict_set_key()).unwrap().preferred =
-                if p { c } else { c.opposite().unwrap() };
+                if p { c } else { c.conflict().unwrap() };
         };
 
         // Test with all "accepted"
@@ -1124,15 +1261,15 @@ mod test {
             dag.get_known_children(&gen.hash()),
             Err(dag::Error::NotFound)
         );
-        dag.insert_unchecked(&gen);
+        dag.insert(&gen);
         assert_eq!(dag.get_known_children(&gen.hash()).unwrap(), HashSet::new());
-        dag.insert_unchecked(&v10);
+        dag.insert(&v10);
         assert!(dag
             .get_known_children(&gen.hash())
             .unwrap()
             .into_iter()
             .eq([v10.hash()]));
-        dag.insert_unchecked(&v11);
+        dag.insert(&v11);
         assert!(dag
             .get_known_children(&gen.hash())
             .unwrap()
@@ -1156,22 +1293,22 @@ mod test {
         assert_eq!(cs.last, constraint);
         assert_eq!(cs.chit.len(), 2);
         assert_eq!(cs.chit[&constraint], false);
-        assert_eq!(cs.chit[&constraint.opposite().unwrap()], false);
+        assert_eq!(cs.chit[&constraint.conflict().unwrap()], false);
         assert_eq!(cs.confidence.len(), 2);
         assert_eq!(cs.confidence[&constraint], 0);
-        assert_eq!(cs.confidence[&constraint.opposite().unwrap()], 0);
+        assert_eq!(cs.confidence[&constraint.conflict().unwrap()], 0);
         assert_eq!(cs.count.len(), 2);
         assert_eq!(cs.count[&constraint], 0);
-        assert_eq!(cs.count[&constraint.opposite().unwrap()], 0);
+        assert_eq!(cs.count[&constraint.conflict().unwrap()], 0);
         assert_eq!(cs.parents.len(), 2);
         assert!(cs.parents[&constraint]
             .iter()
             .sorted()
             .eq(v20.parent_constraints().sorted().as_ref()));
-        assert_eq!(cs.parents[&constraint.opposite().unwrap()].len(), 0);
+        assert_eq!(cs.parents[&constraint.conflict().unwrap()].len(), 0);
         assert_eq!(cs.children.len(), 2);
         assert_eq!(cs.children[&constraint].len(), 0);
-        assert_eq!(cs.children[&constraint.opposite().unwrap()].len(), 0);
+        assert_eq!(cs.children[&constraint.conflict().unwrap()].len(), 0);
         assert_eq!(cs.decision.len(), 0); // Decision is intentionally empty
 
         // New conflict set for unity constraint
