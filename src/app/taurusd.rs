@@ -7,10 +7,9 @@ pub use libtaurus::{
     http, p2p, params,
 };
 use std::{fs, path::PathBuf};
-use time::macros::format_description;
 use tokio::select;
-use tracing::{error, trace};
-use tracing_subscriber::{fmt::time::UtcTime, EnvFilter};
+use tracing::{error, info, trace};
+use tracing_subscriber::{fmt::time::UtcTime, EnvFilter, FmtSubscriber};
 
 /// File name of the stored identity_key
 const IDENTITY_KEY_FILE: &str = "identity_key";
@@ -96,7 +95,11 @@ fn parse_cli_args() -> ArgMatches {
                         .required(false)
                         .default_value("10"),
                 )
-                .arg(arg!(-v --verbosity ... "Increase verbosity level").required(false)),
+                .arg(
+                    arg!(--log_level <LEVEL> "Set log level (error, warn, info, debug, trace)")
+                        .required(false)
+                        .default_value("info"),
+                ),
         )
         .subcommand_required(true)
         .get_matches()
@@ -104,25 +107,11 @@ fn parse_cli_args() -> ArgMatches {
 
 /// Set up logger
 fn setup_logger<'a>(args: &'a ArgMatches) {
-    let debug_verbosity = args.get_count("verbosity") > 0;
-    let logger = tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env().add_directive(
-            match args.get_count("verbosity") {
-                1 => "taurus=debug".parse().unwrap(),
-                2 => "taurus=trace".parse().unwrap(),
-                _ => "taurus=info".parse().unwrap(),
-            },
-        ))
-        .with_target(debug_verbosity);
-    if debug_verbosity {
-        logger.with_timer(UtcTime::rfc_3339()).init();
-    } else {
-        logger
-            .with_timer(UtcTime::new(format_description!(
-                "[hour]:[minute]:[second]"
-            )))
-            .init();
-    }
+    let subscriber = FmtSubscriber::builder()
+        .with_env_filter(EnvFilter::new(args.get_one::<String>("log_level").unwrap()))
+        .with_timer(UtcTime::rfc_3339())
+        .finish();
+    tracing::subscriber::set_global_default(subscriber).expect("failed to start logger");
 }
 
 /// Determine system directories for the application to use
