@@ -438,11 +438,6 @@ impl DAG {
                     .chit
                     .insert(unity, true);
 
-                {
-                    let c = unity;
-                    let c_state = &self.state[&c.conflict_set_key()];
-                }
-
                 // Update the state of this vertex's unity constraint as well as all of its
                 // ancestors
                 for c in self
@@ -703,11 +698,7 @@ mod test {
         Vertex, WireFormat,
     };
     use itertools::Itertools;
-    use std::{
-        assert_matches::assert_matches,
-        collections::{HashMap, HashSet},
-        sync::Arc,
-    };
+    use std::{assert_matches::assert_matches, collections::HashSet, sync::Arc};
 
     #[test]
     fn default_config() {
@@ -1228,8 +1219,6 @@ mod test {
         set_decision(&mut dag, c_v10v10, None);
         println!(":::: PORBLAM CHALD");
         assert_matches!(dag.query(&v10.hash()), Ok((false, false)));
-
-        todo!("need test varying heights");
     }
 
     #[test]
