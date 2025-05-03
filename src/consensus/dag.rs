@@ -92,10 +92,6 @@ pub struct DAG {
 
     /// Map of each ordering constraint to its corresponding Avalanche state variables
     state: HashMap<ConflictSetKey, ConflictSet>,
-
-    /// Vertices which define the frontier of the graph.
-    /// The frontier is ordered according to latest ordering preference
-    frontier: HashSet<VertexHash>,
 }
 
 impl DAG {
@@ -108,7 +104,6 @@ impl DAG {
             pending_query: HashSet::new(),
             children: HashMap::new(),
             state: HashMap::new(),
-            frontier: HashSet::new(),
         }
     }
 
@@ -570,15 +565,43 @@ impl DAG {
         }
     }
 
-    /// Get the latest vertices which have no children, in the order we've observed them
-    pub fn get_frontier(&mut self) -> Vec<VertexHash> {
-        self.frontier
+    /// Get the latest vertices which have no children, in the order we've observed them. If
+    /// frontier vertices exist and different heights, will only return those at the lowest height;
+    /// i.e. those which need children in order to stay attached to the [`DAG`].
+    pub fn get_frontier(&mut self) -> Vec<Arc<Vertex>> {
+        // First, find every vertex in the DAG which is strongly preferred
+        let strong_pref_set: HashMap<_, _> = self
+            .vertex
             .iter()
-            .map(|vhash| (vhash, self.vertex[vhash].timestamp))
-            .sorted_by_key(|(_vhash, time)| *time)
-            .map(|(vhash, _time)| vhash)
-            .copied()
-            .collect()
+            .filter(|(vhash, _vx)| self.query(vhash).unwrap().0)
+            .collect();
+        let mut frontier = strong_pref_set
+            .iter()
+            .filter_map(|(vhash, &vx)| {
+                if self.children[vhash]
+                    .iter()
+                    .any(|child| strong_pref_set.contains_key(child))
+                {
+                    None
+                } else {
+                    Some(vx.clone())
+                }
+            })
+            .fold(
+                Vec::with_capacity(strong_pref_set.len()),
+                |mut frontier: Vec<Arc<Vertex>>, vx: Arc<Vertex>| {
+                    let frontier_height = frontier.first().map(|vx| vx.height).unwrap_or(u64::MAX);
+                    if vx.height < frontier_height {
+                        frontier.clear();
+                    }
+                    if frontier.is_empty() || vx.height == frontier_height {
+                        frontier.push(vx);
+                    }
+                    frontier
+                },
+            );
+        frontier.sort_by(|a, b| Ord::cmp(&a.timestamp, &b.timestamp));
+        frontier
     }
 
     /// Get the known children of the specified [`Vertex`]
@@ -658,7 +681,6 @@ mod test {
         assert_matches::assert_matches,
         collections::{HashMap, HashSet},
         sync::Arc,
-        thread, time,
     };
 
     #[test]
@@ -680,7 +702,6 @@ mod test {
         assert_eq!(dag.pending_query, HashSet::new());
         assert_eq!(dag.children, HashMap::new());
         assert_eq!(dag.state, HashMap::new());
-        assert_eq!(dag.frontier, HashSet::new());
     }
 
     #[test]
@@ -1094,31 +1115,6 @@ mod test {
     }
 
     #[test]
-    fn get_frontier() {
-        let ten_millis = time::Duration::from_millis(10);
-        let gen = Arc::new(Vertex::empty());
-        thread::sleep(ten_millis);
-        let v0 = make_rand_vertex([&gen]);
-        thread::sleep(ten_millis);
-        let v1 = make_rand_vertex([&gen]);
-        thread::sleep(ten_millis);
-        let v2 = make_rand_vertex([&v0, &v1]);
-        thread::sleep(ten_millis);
-        let mut dag = DAG::new(Config::default());
-        dag.vertex.insert(gen.hash(), gen.clone());
-        dag.vertex.insert(v0.hash(), v0.clone());
-        dag.vertex.insert(v1.hash(), v1.clone());
-        dag.vertex.insert(v2.hash(), v2.clone());
-
-        // Confirm that frontier is always sorted by timestamp
-        dag.frontier.insert(v0.hash());
-        dag.frontier.insert(v2.hash());
-        assert_eq!(dag.get_frontier(), vec![v0.hash(), v2.hash()]);
-        dag.frontier.insert(v1.hash()); // comes before v2
-        assert_eq!(dag.get_frontier(), vec![v0.hash(), v1.hash(), v2.hash()]);
-    }
-
-    #[test]
     fn get_known_children() {
         let gen = Arc::new(Vertex::empty());
         let v10 = make_rand_vertex([&gen]);
@@ -1148,13 +1144,13 @@ mod test {
     #[test]
     fn new_conflict_set() {
         let gen = Arc::new(Vertex::empty());
-        let v0 = make_rand_vertex([&gen]);
-        let v1 = make_rand_vertex([&gen]);
-        let v2 = make_rand_vertex([&v0, &v1]);
+        let v00 = make_rand_vertex([&gen]);
+        let v01 = make_rand_vertex([&gen]);
+        let v20 = make_rand_vertex([&v00, &v01]);
 
         // New conflict set for binary constraint
-        let constraint = Constraint(v2.hash(), v1.hash()); // Binary constraint between v2 & v1
-        let c_parents = v2.parent_constraints().collect::<HashSet<_>>();
+        let constraint = Constraint(v20.hash(), v01.hash()); // Binary constraint between v2 & v1
+        let c_parents = v20.parent_constraints().collect::<HashSet<_>>();
         let cs = ConflictSet::new(constraint, c_parents.clone());
         assert_eq!(cs.preferred, constraint);
         assert_eq!(cs.last, constraint);
@@ -1171,7 +1167,7 @@ mod test {
         assert!(cs.parents[&constraint]
             .iter()
             .sorted()
-            .eq(v2.parent_constraints().sorted().as_ref()));
+            .eq(v20.parent_constraints().sorted().as_ref()));
         assert_eq!(cs.parents[&constraint.opposite().unwrap()].len(), 0);
         assert_eq!(cs.children.len(), 2);
         assert_eq!(cs.children[&constraint].len(), 0);
@@ -1179,8 +1175,8 @@ mod test {
         assert_eq!(cs.decision.len(), 0); // Decision is intentionally empty
 
         // New conflict set for unity constraint
-        let constraint = Constraint(v2.hash(), v2.hash()); // Unity contraint on v2
-        let c_parents = v2.parent_constraints().collect::<HashSet<_>>();
+        let constraint = Constraint(v20.hash(), v20.hash()); // Unity contraint on v2
+        let c_parents = v20.parent_constraints().collect::<HashSet<_>>();
         let cs = ConflictSet::new(constraint, c_parents.clone());
         assert_eq!(cs.preferred, constraint);
         assert_eq!(cs.last, constraint);
@@ -1194,7 +1190,7 @@ mod test {
         assert!(cs.parents[&constraint]
             .iter()
             .sorted()
-            .eq(v2.parent_constraints().sorted().as_ref()));
+            .eq(v20.parent_constraints().sorted().as_ref()));
         assert_eq!(cs.children.len(), 1);
         assert_eq!(cs.children[&constraint].len(), 0);
         assert_eq!(cs.decision.len(), 0); // Decision is intentionally empty

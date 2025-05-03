@@ -117,6 +117,18 @@ impl<'a> TestGraph<'a> {
         }
     }
 
+    /// Helper to check the frontier matches the expected
+    fn check_frontier<L>(&mut self, expected: L)
+    where
+        L: IntoIterator<Item = &'a str>,
+    {
+        let f: Vec<Arc<Vertex>> = expected
+            .into_iter()
+            .map(|label| self.vertex_by_label[label].clone())
+            .collect();
+        assert_eq!(self.dag.get_frontier(), f);
+    }
+
     /// Helper to record a query for the specified vertex
     fn record_query(&mut self, label: &'a str, pref: bool) -> Result<(), dag::Error> {
         println!(
@@ -152,6 +164,7 @@ fn basic_chain() {
         ("v2", STRONG_PREF),
         ("v3", STRONG_PREF),
     ]);
+    tg.check_frontier(["v3"]);
 
     // Award chits to everything except
     tg.record_query("v0", true).unwrap();
@@ -160,10 +173,12 @@ fn basic_chain() {
 
     // Confirm no preferences have changed since last check
     tg.check_state_with_updates(vec![]);
+    tg.check_frontier(["v3"]);
 
     // v00 should be accepted now
     tg.record_query("v3", true).unwrap();
     tg.check_state_with_updates(vec![("v0", ACCEPTED)]);
+    tg.check_frontier(["v3"]);
 }
 
 #[test]
@@ -200,11 +215,13 @@ fn small_chain_with_conflicts() {
         ("a80", STRONG_PREF),
         ("a90", STRONG_PREF),
     ]);
+    tg.check_frontier(["a90"]);
 
     // Award chits to everything except
     tg.record_query("v00", true).unwrap();
     tg.record_query("v01", true).unwrap();
     tg.check_state_with_updates(vec![]); // expect no changes so far
+    tg.check_frontier(["a90"]);
 
     tg.record_query("b10", true).unwrap(); // vote for b10 initially
     tg.check_state_with_updates(vec![
@@ -219,9 +236,11 @@ fn small_chain_with_conflicts() {
         ("a80", NO_PREF),
         ("a90", NO_PREF),
     ]);
+    tg.check_frontier(["b10"]);
     assert!(tg.record_query("a20", false).is_err()); // waiting on a10
     tg.record_query("a10", false).unwrap();
     tg.check_state_with_updates(vec![]); // should not change state
+    tg.check_frontier(["b10"]);
 
     tg.record_query("a20", true).unwrap(); // vote for a20 supports a10 in lieu of b10
     tg.check_state_with_updates(vec![
@@ -236,26 +255,33 @@ fn small_chain_with_conflicts() {
         ("a80", STRONG_PREF),
         ("a90", STRONG_PREF),
     ]);
+    tg.check_frontier(["a90"]);
 
     // Vertices v00 & v01 should become accepted at safe early committment criteria
     tg.record_query("a30", true).unwrap();
     tg.check_state_with_updates(vec![]);
+    tg.check_frontier(["a90"]);
     tg.record_query("a40", true).unwrap();
     tg.check_state_with_updates(vec![]);
+    tg.check_frontier(["a90"]);
     tg.record_query("a50", true).unwrap();
 
     // v00 & v01 should have reached safe early committment
     tg.check_state_with_updates(vec![("v00", ACCEPTED), ("v01", ACCEPTED)]);
+    tg.check_frontier(["a90"]);
 
     // Since there is a conflict at a10/b10, and b10 received a vote, no vertices at or after that
     // point may be accepte according to the "safe early committment rule". They must wait until
     // reaching ful confidence.
     tg.record_query("a60", true).unwrap();
     tg.check_state_with_updates(vec![]);
+    tg.check_frontier(["a90"]);
     tg.record_query("a70", true).unwrap();
     tg.check_state_with_updates(vec![]);
+    tg.check_frontier(["a90"]);
     tg.record_query("a80", true).unwrap();
     tg.check_state_with_updates(vec![]);
+    tg.check_frontier(["a90"]);
 
     // Should reach acceptance threshold for conflicts a10/b10. A few after should become accepted
     // under SE criteria
@@ -272,6 +298,7 @@ fn small_chain_with_conflicts() {
         ("a80", STRONG_PREF),
         ("a90", STRONG_PREF),
     ]);
+    tg.check_frontier(["a90"]);
 
     // Children of b10 should automatically be rejected now
     tg.extend(edges!([
@@ -298,6 +325,7 @@ fn small_chain_with_conflicts() {
         ("b90", REJECTED),
         ("b100", REJECTED),
     ]);
+    tg.check_frontier(["a90"]);
 }
 
 #[test]
@@ -321,19 +349,26 @@ fn tower_1222() {
         ("v20", STRONG_PREF),
         ("v21", STRONG_PREF),
     ]);
+    tg.check_frontier(["v20", "v21"]);
 
     tg.record_query("v00", true).unwrap();
     tg.check_state_with_updates(vec![]);
+    tg.check_frontier(["v20", "v21"]);
     tg.record_query("v01", true).unwrap();
     tg.check_state_with_updates(vec![]);
+    tg.check_frontier(["v20", "v21"]);
     tg.record_query("v10", true).unwrap();
     tg.check_state_with_updates(vec![]);
+    tg.check_frontier(["v20", "v21"]);
     tg.record_query("v11", true).unwrap();
     tg.check_state_with_updates(vec![]);
+    tg.check_frontier(["v20", "v21"]);
     tg.record_query("v20", true).unwrap();
     tg.check_state_with_updates(vec![("v00", ACCEPTED), ("v01", ACCEPTED)]);
+    tg.check_frontier(["v20", "v21"]);
     tg.record_query("v21", true).unwrap();
     tg.check_state_with_updates(vec![]);
+    tg.check_frontier(["v20", "v21"]);
 }
 
 #[test]
@@ -367,6 +402,7 @@ fn overtaker() {
         ("b7", NO_PREF),
         ("b8", NO_PREF),
     ]);
+    tg.check_frontier(["a1"]);
 
     // Strengthen a1 with chits
     tg.record_query("v00", true).unwrap();
@@ -374,6 +410,7 @@ fn overtaker() {
     tg.record_query("a1", true).unwrap();
     tg.record_query("b1", true).unwrap();
     tg.check_state_with_updates(vec![]); // No change
+    tg.check_frontier(["a1"]);
     tg.record_query("b2", true).unwrap(); // Should overtake a1
     tg.check_state_with_updates(vec![
         ("v00", ACCEPTED),
@@ -388,12 +425,14 @@ fn overtaker() {
         ("b7", STRONG_PREF),
         ("b8", STRONG_PREF),
     ]);
+    tg.check_frontier(["b8"]);
     tg.record_query("b3", true).unwrap();
     tg.record_query("b4", true).unwrap();
     tg.record_query("b5", true).unwrap();
     tg.record_query("b6", true).unwrap();
     tg.record_query("b7", true).unwrap();
     tg.check_state_with_updates(vec![]); // No change
+    tg.check_frontier(["b8"]);
 
     // After inserting b8, b1 and several descendents should become accepted
     tg.record_query("b8", true).unwrap();
@@ -410,6 +449,7 @@ fn overtaker() {
         ("b7", STRONG_PREF),
         ("b8", STRONG_PREF),
     ]);
+    tg.check_frontier(["b8"]);
 }
 
 #[test]
@@ -437,18 +477,24 @@ fn resetter() {
         ("v6", STRONG_PREF),
         ("v7", STRONG_PREF),
     ]);
+    tg.check_frontier(["v7"]);
     tg.record_query("v0", true).unwrap();
     tg.record_query("v1", true).unwrap();
     tg.record_query("v2", true).unwrap();
     tg.check_state_with_updates(vec![]); // No change
+    tg.check_frontier(["v7"]);
     tg.record_query("v3", false).unwrap(); // vote against v3 to reset count
     tg.check_state_with_updates(vec![]); // No change
+    tg.check_frontier(["v7"]);
     tg.record_query("v4", true).unwrap();
     tg.check_state_with_updates(vec![]); // No change
+    tg.check_frontier(["v7"]);
     tg.record_query("v5", true).unwrap();
     tg.check_state_with_updates(vec![]); // No change
+    tg.check_frontier(["v7"]);
     tg.record_query("v6", true).unwrap();
     tg.check_state_with_updates(vec![]); // No change
+    tg.check_frontier(["v7"]);
 
     // After v7, v0-v4 should become accepted
     tg.record_query("v7", true).unwrap();
@@ -459,4 +505,5 @@ fn resetter() {
         ("v3", ACCEPTED),
         ("v4", ACCEPTED),
     ]);
+    tg.check_frontier(["v7"]);
 }

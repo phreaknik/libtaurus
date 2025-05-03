@@ -8,7 +8,7 @@ pub use libtaurus::{
 };
 use std::{fs, path::PathBuf};
 use tokio::select;
-use tracing::{error, info, trace};
+use tracing::{error, trace};
 use tracing_subscriber::{fmt::time::UtcTime, EnvFilter, FmtSubscriber};
 
 /// File name of the stored identity_key
