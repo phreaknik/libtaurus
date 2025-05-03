@@ -6,7 +6,7 @@ pub const NULLSPACE_ID: NamespaceId = NamespaceId::with_bytes([
 /// Unique identifier for a ['Namespace']
 pub type NamespaceId = crate::hash::Hash;
 
-/// Event namespace
+/// Namespace label for transaction categorization
 #[derive(Clone, Default, Debug)]
 pub struct Namespace(String);
 

@@ -71,10 +71,10 @@ impl Default for Config {
     }
 }
 
-/// Implementation of SESAME DAG. Each [`Vertex`] represents an event in the event graph. Each
-/// [`Vertex`] commits to a set of ordering [`Constraint`]s for each pair of parent vertices. We
-/// arrange these ordering constraints into an independent graph, and use Avalanche consensus to
-/// reach agreement on the total ordering of event vertices.
+/// Implementation of SESAME DAG. Each [`Vertex`] represents a batch of transactions in the graph.
+/// Each [`Vertex`] commits to a set of ordering [`Constraint`]s for each combination of parent
+/// vertices. We arrange these ordering constraints into an independent constraint graph, and use
+/// Avalanche consensus to reach agreement on the total ordering of vertices.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DAG {
     /// Configuration parameters
@@ -89,7 +89,7 @@ pub struct DAG {
     /// Set of vertices which are waiting for the results of a query
     pending_query: HashSet<VertexHash>,
 
-    /// Map of known children for each vertex in the event graph
+    /// Map of known children for each vertex in the graph
     children: HashMap<VertexHash, HashSet<VertexHash>>,
 
     /// Map of each ordering constraint to its corresponding Avalanche state variables
@@ -111,7 +111,7 @@ impl DAG {
             state: HashMap::new(),
         };
 
-        // Add each vertex to the event graph, and finalize each constraint in the constraint graph
+        // Add each vertex to the graph, and finalize each constraint in the constraint graph
         for vx in init {
             dag.insert(vx);
             dag.pending_query.remove(&vx.hash());
@@ -377,8 +377,7 @@ impl DAG {
     /// preferred by a majority of peers queried.
     ///
     /// Every vertex is represented by a unity constraint on its own ordering. Thus, recording a
-    /// qurey for event vertex ABCD is equivalent to recording a query for the constraint vertex
-    /// (ABCD, ABCD), i.e. the unity constraint for that vertex.
+    /// qurey for a vertex is equivalent to recording a query for its unity constraint.
     pub fn record_query_result(
         &mut self,
         vhash: &VertexHash,

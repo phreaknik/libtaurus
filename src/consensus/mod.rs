@@ -1,6 +1,6 @@
 pub mod dag;
-pub mod event;
 pub mod namespace;
+pub mod transaction;
 pub mod vertex;
 
 use crate::p2p;

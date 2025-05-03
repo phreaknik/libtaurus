@@ -1,6 +1,6 @@
 use super::{
-    event::EventRoot,
     namespace::{Namespace, NamespaceId},
+    transaction::TxRoot,
 };
 use crate::wire::{generated::proto, WireFormat};
 use chrono::{DateTime, Utc};
@@ -36,7 +36,7 @@ type Result<T> = result::Result<T, Error>;
 /// Type alias for vertex hashes
 pub type VertexHash = crate::hash::Hash;
 
-/// Event vertex, representing the relative position of some event data within the event graph
+/// Transaction vertex, representing a batch of transactions within the graph
 #[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub struct Vertex {
     /// Revision number of the vertex structure
@@ -45,16 +45,16 @@ pub struct Vertex {
     /// Height of this vertex in the DAG
     pub height: u64,
 
-    /// Vertex parents in ascending order of sequence (SESAME parent ordering)
+    /// Vertex parents ordered according to sequence of observation
     pub parents: Vec<VertexHash>,
 
-    /// ID of the event namespace this vertex belongs to
+    /// ID of the transaction namespace this vertex belongs to
     pub namespace_id: NamespaceId,
 
-    /// Root hash of the events contained in this vertex
-    pub root: EventRoot,
+    /// Root hash of the transactions contained in this vertex
+    pub root: TxRoot,
 
-    /// The time which we first observed this vertex
+    /// The time at which we first observed this vertex
     pub timestamp: DateTime<Utc>,
 }
 
@@ -66,7 +66,7 @@ impl Vertex {
             height: 0,
             parents: Vec::new(),
             namespace_id: NamespaceId::default(),
-            root: EventRoot::default(),
+            root: TxRoot::default(),
             timestamp: Utc::now(),
         }
     }
@@ -148,7 +148,7 @@ impl<'a> WireFormat<'a, proto::Vertex> for Vertex {
                 vertex.namespace_id.as_ref().ok_or(Error::NoNamespace)?,
                 check,
             )?,
-            root: EventRoot::from_protobuf(vertex.root.as_ref().ok_or(Error::NoRoot)?, check)?,
+            root: TxRoot::from_protobuf(vertex.root.as_ref().ok_or(Error::NoRoot)?, check)?,
             timestamp: Utc::now(),
         };
         // Optionally perform sanity checks
@@ -165,7 +165,7 @@ struct PrettyVertex {
     height: u64,
     parents: Vec<String>,
     namespace_id: String,
-    event_root: String,
+    tx_root: String,
     timestamp: DateTime<Utc>,
 }
 
@@ -176,7 +176,7 @@ impl From<&Vertex> for PrettyVertex {
             height: vertex.height,
             parents: vertex.parents.iter().map(|p| p.to_hex()).collect(),
             namespace_id: vertex.namespace_id.to_hex(),
-            event_root: vertex.root.to_hex(),
+            tx_root: vertex.root.to_hex(),
             timestamp: vertex.timestamp,
         }
     }
@@ -307,8 +307,8 @@ where
 mod test {
     use crate::{
         consensus::{
-            event::EventRoot,
             namespace::{self, Namespace, NamespaceId},
+            transaction::TxRoot,
         },
         vertex::{self, Constraint, Constraints, VERSION},
         Vertex, VertexHash, WireFormat,
@@ -348,8 +348,8 @@ mod test {
         );
         assert_eq!(
             Vertex::empty().root,
-            EventRoot::default(),
-            "unexpected event_root"
+            TxRoot::default(),
+            "unexpected tx_root"
         );
     }
 
