@@ -54,7 +54,7 @@ impl<'a> TestGraph<'a> {
                 .collect::<Vec<_>>();
             vertices.insert(label, make_rand_vertex(&parents));
         }
-        let mut dag = DAG::with_initial_vertices(
+        let mut dag = DAG::new(
             dag::Config {
                 genesis: vertices[edges[0].0].hash(),
                 thresh_safe_early_commit: THRESH_SE_ACCEPT,

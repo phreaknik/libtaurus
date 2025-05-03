@@ -97,26 +97,22 @@ pub struct DAG {
 }
 
 impl DAG {
-    /// Create a new [`DAG`] with the given [`Config`]
-    pub fn new(config: Config) -> DAG {
-        DAG {
+    /// Create a new [`DAG`] with the given [`Config`] and initial decided vertices
+    pub fn new<'a, V>(config: Config, init: V) -> Result<DAG>
+    where
+        V: IntoIterator<Item = &'a Arc<Vertex>>,
+    {
+        let mut dag = DAG {
             config,
             vertex: HashMap::new(),
             graph: HashSet::new(),
             pending_query: HashSet::new(),
             children: HashMap::new(),
             state: HashMap::new(),
-        }
-    }
-
-    pub fn with_initial_vertices<'a, V>(config: Config, vertices: V) -> Result<DAG>
-    where
-        V: IntoIterator<Item = &'a Arc<Vertex>>,
-    {
-        let mut dag = DAG::new(config);
+        };
 
         // Add each vertex to the event graph, and finalize each constraint in the constraint graph
-        for vx in vertices {
+        for vx in init {
             dag.insert(vx);
             dag.pending_query.remove(&vx.hash());
             for c in vx
@@ -219,9 +215,12 @@ impl DAG {
             .get_active_ancestors(vx)?
             .iter()
             .flat_map(|vhash| self.vertex[vhash].parent_constraints())
+            .chain(vx.parent_constraints())
             .unique() // TODO: this eats performance
-            .chain(vx.parents.iter().map(|&p| Constraint(p, p)))
-            .filter(|c| !self.state[&c.conflict_set_key()].decision.contains_key(&c)) // TODO: perf
+            .filter(|c| match self.state.get(&c.conflict_set_key()) {
+                Some(s) => !s.decision.contains_key(&c),
+                None => true,
+            }) // TODO: perf
             .collect::<Vec<_>>())
     }
 
@@ -442,12 +441,6 @@ impl DAG {
                 {
                     let c = unity;
                     let c_state = &self.state[&c.conflict_set_key()];
-                    println!(
-                        ":::: record({c}).award_chit(): count = {}, conf = {}, decision? = {:?}",
-                        c_state.count[&c],
-                        c_state.confidence[&c],
-                        c_state.decision.get(&c)
-                    );
                 }
 
                 // Update the state of this vertex's unity constraint as well as all of its
@@ -495,11 +488,6 @@ impl DAG {
                             } else {
                                 *c_state.count.get_mut(&c).unwrap() += 1;
                             }
-
-                            println!(
-                                ":::: record({c}).update(): count = {}, conf = {}",
-                                c_state.count[&c], c_state.confidence[&c]
-                            );
 
                             (c_state.count[&c], c_state.parents[&c].clone())
                         };
@@ -733,17 +721,6 @@ mod test {
 
     #[test]
     fn new_dag() {
-        let dag = DAG::new(Config::default());
-        assert_eq!(dag.config, Config::default());
-        assert_eq!(dag.vertex, HashMap::new());
-        assert_eq!(dag.graph, HashSet::new());
-        assert_eq!(dag.pending_query, HashSet::new());
-        assert_eq!(dag.children, HashMap::new());
-        assert_eq!(dag.state, HashMap::new());
-    }
-
-    #[test]
-    fn new_dag_with_init() {
         let gen = Arc::new(Vertex::empty());
         let v0 = make_rand_vertex([&gen]);
         let v1 = make_rand_vertex([&gen]);
@@ -752,12 +729,12 @@ mod test {
         let v4 = make_rand_vertex([&v3]);
 
         // Basic test -- genesis vertex should be accepted
-        let dag = DAG::with_initial_vertices(Config::default(), [&gen]).unwrap();
+        let dag = DAG::new(Config::default(), [&gen]).unwrap();
         assert!(dag.pending_query.is_empty());
         assert_eq!(dag.query(&gen.hash()).unwrap(), (true, true));
 
         // Confirm each initial vertex is recognized as preferred and decided
-        let mut dag = DAG::with_initial_vertices(
+        let mut dag = DAG::new(
             {
                 let mut cfg = Config::default();
                 cfg.genesis = gen.hash();
@@ -795,7 +772,7 @@ mod test {
         let v10 = make_rand_vertex([&v00, &v01]);
         let v20 = make_rand_vertex([&v10]);
         let v30 = make_rand_vertex([&v20]);
-        let mut dag = DAG::with_initial_vertices(Config::default(), [&gen]).unwrap();
+        let mut dag = DAG::new(Config::default(), [&gen]).unwrap();
         dag.try_insert(&v00).unwrap();
         dag.try_insert(&v01).unwrap();
         dag.try_insert(&v02).unwrap();
@@ -851,16 +828,18 @@ mod test {
         let v01 = make_rand_vertex([&gen]);
         let v10 = make_rand_vertex([&v00, &v01]);
         let v20 = make_rand_vertex([&v10]);
-        let mut dag = DAG::with_initial_vertices(Config::default(), [&gen]).unwrap();
+        let mut dag = DAG::new(Config::default(), [&gen]).unwrap();
         dag.try_insert(&v00).unwrap();
         dag.try_insert(&v01).unwrap();
 
-        let c_gengen = Constraint(gen.hash(), gen.hash());
         let c_v00v00 = Constraint(v00.hash(), v00.hash());
         let c_v01v01 = Constraint(v01.hash(), v01.hash());
         let c_v00v01 = Constraint(v00.hash(), v01.hash());
         let c_v10v10 = Constraint(v10.hash(), v10.hash());
-        let c_v20v20 = Constraint(v20.hash(), v20.hash());
+        println!(":::: c_v00v00 = {c_v00v00}");
+        println!(":::: c_v01v01 = {c_v01v01}");
+        println!(":::: c_v00v01 = {c_v00v01}");
+        println!(":::: c_v10v10 = {c_v10v10}");
 
         // one of the parents (v10) has not been inserted yet
         assert_matches!(
@@ -887,6 +866,7 @@ mod test {
             dag.get_active_ancestor_constraints(&v20)
                 .unwrap()
                 .into_iter()
+                .inspect(|c| println!(":::: got c = {c}"))
                 .collect::<Vec<_>>(),
             []
         );
@@ -926,17 +906,17 @@ mod test {
 
     #[test]
     fn check_vertex() {
-        todo!("completely redo this test");
         let gen = Arc::new(Vertex::empty());
         let v00 = make_rand_vertex([&gen]);
         let v01 = make_rand_vertex([&gen]);
         let v02 = make_rand_vertex([&gen]);
         let v10 = make_rand_vertex([&v01, &v02]);
         let x10 = make_rand_vertex([&v02, &v01]); // conflicts with v3
-        let mut dag = DAG::new(Config::default());
+        let v20 = make_rand_vertex([&v00, &v10]);
+        let b20 = make_rand_vertex([&v01, &v10]); // self referential parents
+        let mut dag = DAG::new(Config::default(), [&gen]).unwrap();
 
         // Test for missing/waiting parents
-        dag.insert(&gen);
         dag.insert(&v00);
         assert_matches!(dag.check_vertex(&v00), Err(dag::Error::AlreadyInserted));
         match dag.check_vertex(&v10) {
@@ -969,13 +949,16 @@ mod test {
         dag.insert(&v02);
         assert_matches!(dag.check_vertex(&v10), Ok(()));
 
-        // Test doubly referenced parent
-        let y10 = make_rand_vertex([&gen, &v01]); // illegal! gen is also parent of v1
+        dag.insert(&v10);
+
+        // Should be ok with parents of differnt heights
+        assert_matches!(dag.check_vertex(&v20), Ok(()));
+
+        // Test for self referential parents
         assert_matches!(
-            dag.check_vertex(&y10),
+            dag.check_vertex(&b20),
             Err(dag::Error::SelfReferentialParent)
         );
-        dag.insert(&v10);
 
         // Test incorrect height
         let mut x20 = Vertex::empty().with_parents([&v10]).unwrap();
@@ -1007,8 +990,7 @@ mod test {
         let v0 = make_rand_vertex([&gen]);
         let v1 = make_rand_vertex([&gen]);
         let v2 = make_rand_vertex([&v0, &v1]);
-        let mut dag = DAG::new(Config::default());
-        dag.children.insert(gen.hash(), HashSet::new());
+        let mut dag = DAG::new(Config::default(), [&gen]).unwrap();
         dag.children.insert(v0.hash(), HashSet::new());
         dag.children.insert(v1.hash(), HashSet::new());
         dag.children.insert(v2.hash(), HashSet::new());
@@ -1042,7 +1024,7 @@ mod test {
         let x2 = make_rand_vertex([&v1, &v0]); // conflicts with v2
         let v3 = make_rand_vertex([&v2]);
         let b3 = make_rand_vertex([&v2, &x2]); // illegal to reference conflicting parents
-        let mut dag = DAG::with_initial_vertices(Config::default(), [&gen]).unwrap();
+        let mut dag = DAG::new(Config::default(), [&gen]).unwrap();
 
         // Test for missing parents, waiting parents, and preference after insertions
         match dag.try_insert(&v2) {
@@ -1091,7 +1073,7 @@ mod test {
         let v1 = make_rand_vertex([&gen]);
         let v2 = make_rand_vertex([&v0, &v1]);
         let v3 = make_rand_vertex([&v2]);
-        let mut dag = DAG::with_initial_vertices(Config::default(), [&gen]).unwrap();
+        let mut dag = DAG::new(Config::default(), [&gen]).unwrap();
         dag.try_insert(&v0).unwrap();
         dag.try_insert(&v1).unwrap();
 
@@ -1137,7 +1119,7 @@ mod test {
         let v1 = make_rand_vertex([&gen]);
         let v2 = make_rand_vertex([&v0, &v1]);
         let x2 = make_rand_vertex([&v1, &v0]); // Conflicts with v2
-        let mut dag = DAG::new(Config::default());
+        let mut dag = DAG::new(Config::default(), [&gen]).unwrap();
 
         assert_matches!(dag.is_preferred(&v2.hash()), Err(dag::Error::NotFound));
         let _ = dag.try_insert(&v2); // V2 is known now, but still waiting on parents to process
@@ -1147,7 +1129,6 @@ mod test {
         );
 
         // Insert all parents of v2 and x2, so they will insert successfully now
-        dag.insert(&gen);
         dag.insert(&v0);
         dag.insert(&v1);
 
@@ -1158,28 +1139,28 @@ mod test {
     }
 
     #[test]
-    fn query() {
+    fn query_vertex() {
         let gen = Arc::new(Vertex::empty());
-        let v0 = make_rand_vertex([&gen]);
-        let v1 = make_rand_vertex([&gen]);
-        let v2 = make_rand_vertex([&v0, &v1]);
-        let mut dag = DAG::with_initial_vertices(Config::default(), [&gen]).unwrap();
-        dag.try_insert(&v0).unwrap();
-        dag.try_insert(&v1).unwrap();
-        assert_matches!(dag.query(&v2.hash()), Err(dag::Error::NotFound));
+        let v00 = make_rand_vertex([&gen]);
+        let v01 = make_rand_vertex([&gen]);
+        let v10 = make_rand_vertex([&v00, &v01]);
+        let mut dag = DAG::new(Config::default(), [&gen]).unwrap();
+        dag.try_insert(&v00).unwrap();
+        dag.try_insert(&v01).unwrap();
+        assert_matches!(dag.query(&v10.hash()), Err(dag::Error::NotFound));
 
-        dag.try_insert(&v2).unwrap();
+        dag.try_insert(&v10).unwrap();
 
         // Test initial state of the dag after all inserted
         assert_matches!(dag.query(&gen.hash()), Ok((true, true)));
-        assert_matches!(dag.query(&v0.hash()), Ok((true, false)));
-        assert_matches!(dag.query(&v1.hash()), Ok((true, false)));
-        assert_matches!(dag.query(&v2.hash()), Ok((true, false)));
+        assert_matches!(dag.query(&v00.hash()), Ok((true, false)));
+        assert_matches!(dag.query(&v01.hash()), Ok((true, false)));
+        assert_matches!(dag.query(&v10.hash()), Ok((true, false)));
 
-        let c_v0v0 = Constraint(v0.hash(), v0.hash());
-        let c_v1v1 = Constraint(v1.hash(), v1.hash());
-        let c_v0v1 = Constraint(v0.hash(), v1.hash());
-        let c_v2v2 = Constraint(v2.hash(), v2.hash());
+        let c_v00v00 = Constraint(v00.hash(), v00.hash());
+        let c_v01v01 = Constraint(v01.hash(), v01.hash());
+        let c_v00v01 = Constraint(v00.hash(), v01.hash());
+        let c_v10v10 = Constraint(v10.hash(), v10.hash());
 
         // helpers to set the state of a constraint
         let set_decision = |dag: &mut DAG, c: Constraint, d: Option<bool>| {
@@ -1196,56 +1177,59 @@ mod test {
         };
 
         // Test with all "accepted"
-        set_decision(&mut dag, c_v0v0, Some(true));
-        set_decision(&mut dag, c_v1v1, Some(true));
-        set_decision(&mut dag, c_v0v1, Some(true));
-        set_decision(&mut dag, c_v2v2, Some(true));
-        assert_matches!(dag.query(&v2.hash()), Ok((true, true)));
+        set_decision(&mut dag, c_v00v00, Some(true));
+        set_decision(&mut dag, c_v01v01, Some(true));
+        set_decision(&mut dag, c_v00v01, Some(true));
+        set_decision(&mut dag, c_v10v10, Some(true));
+        assert_matches!(dag.query(&v10.hash()), Ok((true, true)));
 
         // Should still be "accepted" even if all others are rejected or undecided
-        set_decision(&mut dag, c_v0v0, Some(false));
-        set_decision(&mut dag, c_v1v1, Some(false));
-        set_decision(&mut dag, c_v0v1, Some(false));
-        set_decision(&mut dag, c_v2v2, Some(true));
-        assert_matches!(dag.query(&v2.hash()), Ok((true, true)));
-        set_decision(&mut dag, c_v0v0, None);
-        set_decision(&mut dag, c_v1v1, Some(false));
-        set_decision(&mut dag, c_v0v1, None);
-        set_preferred(&mut dag, c_v0v1, false);
-        set_decision(&mut dag, c_v2v2, Some(true));
-        assert_matches!(dag.query(&v2.hash()), Ok((true, true)));
+        set_decision(&mut dag, c_v00v00, Some(false));
+        set_decision(&mut dag, c_v01v01, Some(false));
+        set_decision(&mut dag, c_v00v01, Some(false));
+        set_decision(&mut dag, c_v10v10, Some(true));
+        assert_matches!(dag.query(&v10.hash()), Ok((true, true)));
+        set_decision(&mut dag, c_v00v00, None);
+        set_decision(&mut dag, c_v01v01, Some(false));
+        set_decision(&mut dag, c_v00v01, None);
+        set_preferred(&mut dag, c_v00v01, false);
+        set_decision(&mut dag, c_v10v10, Some(true));
+        assert_matches!(dag.query(&v10.hash()), Ok((true, true)));
 
         // Should be rejected even if all others are accepted or undecided
-        set_decision(&mut dag, c_v0v0, Some(true));
-        set_decision(&mut dag, c_v1v1, Some(true));
-        set_decision(&mut dag, c_v0v1, Some(true));
-        set_decision(&mut dag, c_v2v2, Some(false));
-        assert_matches!(dag.query(&v2.hash()), Ok((false, true)));
-        set_decision(&mut dag, c_v0v0, Some(true));
-        set_decision(&mut dag, c_v1v1, None);
-        set_decision(&mut dag, c_v0v1, Some(true));
-        set_decision(&mut dag, c_v2v2, Some(false));
-        assert_matches!(dag.query(&v2.hash()), Ok((false, true)));
+        set_decision(&mut dag, c_v00v00, Some(true));
+        set_decision(&mut dag, c_v01v01, Some(true));
+        set_decision(&mut dag, c_v00v01, Some(true));
+        set_decision(&mut dag, c_v10v10, Some(false));
+        assert_matches!(dag.query(&v10.hash()), Ok((false, true)));
+        set_decision(&mut dag, c_v00v00, Some(true));
+        set_decision(&mut dag, c_v01v01, None);
+        set_decision(&mut dag, c_v00v01, Some(true));
+        set_decision(&mut dag, c_v10v10, Some(false));
+        assert_matches!(dag.query(&v10.hash()), Ok((false, true)));
 
         // Should be undecided, but strongly preferred, if all ancesters are preferred
-        set_decision(&mut dag, c_v0v0, Some(true));
-        set_decision(&mut dag, c_v1v1, Some(true));
-        set_decision(&mut dag, c_v0v1, Some(true));
-        set_preferred(&mut dag, c_v0v1, true);
-        set_decision(&mut dag, c_v2v2, None);
-        assert_matches!(dag.query(&v2.hash()), Ok((true, false)));
-        set_decision(&mut dag, c_v0v0, None);
-        set_decision(&mut dag, c_v1v1, None);
-        set_decision(&mut dag, c_v0v1, None);
-        set_preferred(&mut dag, c_v0v1, true);
-        set_decision(&mut dag, c_v2v2, None);
-        assert_matches!(dag.query(&v2.hash()), Ok((true, false)));
-        set_decision(&mut dag, c_v0v0, None);
-        set_decision(&mut dag, c_v1v1, None);
-        set_decision(&mut dag, c_v0v1, None);
-        set_preferred(&mut dag, c_v0v1, false);
-        set_decision(&mut dag, c_v2v2, None);
-        assert_matches!(dag.query(&v2.hash()), Ok((false, false)));
+        set_decision(&mut dag, c_v00v00, Some(true));
+        set_decision(&mut dag, c_v01v01, Some(true));
+        set_decision(&mut dag, c_v00v01, Some(true));
+        set_preferred(&mut dag, c_v00v01, true);
+        set_decision(&mut dag, c_v10v10, None);
+        assert_matches!(dag.query(&v10.hash()), Ok((true, false)));
+        set_decision(&mut dag, c_v00v00, None);
+        set_decision(&mut dag, c_v01v01, None);
+        set_decision(&mut dag, c_v00v01, None);
+        set_preferred(&mut dag, c_v00v01, true);
+        set_decision(&mut dag, c_v10v10, None);
+        assert_matches!(dag.query(&v10.hash()), Ok((true, false)));
+        set_decision(&mut dag, c_v00v00, None);
+        set_decision(&mut dag, c_v01v01, None);
+        set_decision(&mut dag, c_v00v01, None);
+        set_preferred(&mut dag, c_v00v01, false);
+        set_decision(&mut dag, c_v10v10, None);
+        println!(":::: PORBLAM CHALD");
+        assert_matches!(dag.query(&v10.hash()), Ok((false, false)));
+
+        todo!("need test varying heights");
     }
 
     #[test]
@@ -1253,13 +1237,12 @@ mod test {
         let gen = Arc::new(Vertex::empty());
         let v10 = make_rand_vertex([&gen]);
         let v11 = make_rand_vertex([&gen]);
-        let mut dag = DAG::new(Config::default());
+        let mut dag = DAG::new(Config::default(), [&gen]).unwrap();
+        assert_eq!(dag.get_known_children(&gen.hash()).unwrap(), HashSet::new());
         assert_matches!(
-            dag.get_known_children(&gen.hash()),
+            dag.get_known_children(&v10.hash()),
             Err(dag::Error::NotFound)
         );
-        dag.insert(&gen);
-        assert_eq!(dag.get_known_children(&gen.hash()).unwrap(), HashSet::new());
         dag.insert(&v10);
         assert!(dag
             .get_known_children(&gen.hash())
