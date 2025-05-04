@@ -7,7 +7,7 @@ use libp2p::{
     gossipsub::{self, MessageAcceptance, MessageId, Sha256Topic, TopicHash},
     PeerId,
 };
-use std::result;
+use std::{result, sync::Arc};
 use strum_macros::{AsRefStr, EnumIter};
 
 /// Broadcasts that can be sent to/from the gossipsub network
@@ -79,7 +79,7 @@ pub struct BroadcastValidationReport {
 
 #[derive(Clone, Debug, PartialEq, Eq, EnumIter, AsRefStr)]
 pub enum BroadcastData {
-    Vertex(Vertex),
+    Vertex(Arc<Vertex>),
 }
 
 impl<'a> WireFormat<'a, proto::Broadcast> for BroadcastData {
@@ -94,10 +94,10 @@ impl<'a> WireFormat<'a, proto::Broadcast> for BroadcastData {
     }
 
     fn from_protobuf(broadcast: &proto::Broadcast, check: bool) -> result::Result<Self, Error> {
-        Ok(BroadcastData::Vertex(Vertex::from_protobuf(
+        Ok(BroadcastData::Vertex(Arc::new(Vertex::from_protobuf(
             broadcast.vertex.as_ref().ok_or(Error::EmptyBroadcast)?,
             check,
-        )?))
+        )?)))
     }
 }
 
@@ -124,7 +124,7 @@ mod test {
         let m = Broadcast {
             id: MessageId::new(b"hello"),
             src: PeerId::from_multihash(Multihash::default()).unwrap(),
-            data: BroadcastData::Vertex(Vertex::default()),
+            data: BroadcastData::Vertex(Arc::new(Vertex::default())),
         };
         let response = m.accept();
         assert_matches!(response.acceptance, MessageAcceptance::Accept);
@@ -135,7 +135,7 @@ mod test {
         let m = Broadcast {
             id: MessageId::new(b"hello"),
             src: PeerId::from_multihash(Multihash::default()).unwrap(),
-            data: BroadcastData::Vertex(Vertex::default()),
+            data: BroadcastData::Vertex(Arc::new(Vertex::default())),
         };
         let response = m.ignore();
         assert_matches!(response.acceptance, MessageAcceptance::Ignore);
@@ -146,7 +146,7 @@ mod test {
         let m = Broadcast {
             id: MessageId::new(b"hello"),
             src: PeerId::from_multihash(Multihash::default()).unwrap(),
-            data: BroadcastData::Vertex(Vertex::default()),
+            data: BroadcastData::Vertex(Arc::new(Vertex::default())),
         };
         let response = m.reject();
         assert_matches!(response.acceptance, MessageAcceptance::Reject);

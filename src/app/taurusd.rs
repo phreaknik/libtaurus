@@ -1,6 +1,7 @@
 use clap::{arg, command, ArgMatches, Command};
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
 use libp2p::identity::Keypair;
+use libtaurus::consensus::dag;
 pub use libtaurus::{
     consensus::{self, GenesisConfig, Vertex, VertexHash},
     hash::Hash,
@@ -154,9 +155,11 @@ fn build_p2p_cfg(args: &ArgMatches) -> p2p::Config {
 fn build_consensus_cfg(args: &ArgMatches) -> consensus::Config {
     let data_dir = parse_data_dir(args).join("consensus/");
     let genesis = GenesisConfig {};
+    let dag = dag::Config::default();
     consensus::Config {
         data_dir: data_dir.clone(),
         genesis,
+        dag,
     }
 }
 

@@ -37,6 +37,8 @@ pub enum Action {}
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    #[error(transparent)]
+    DAG(#[from] dag::Error),
     #[error("consensus event channel error")]
     EventsOutCh(#[from] tokio::sync::broadcast::error::SendError<Event>),
     #[error("p2p action channel error")]
@@ -51,8 +53,12 @@ type Result<T> = result::Result<T, Error>;
 pub struct Config {
     /// Genesis block details
     pub genesis: GenesisConfig,
+
     /// Path to the consensus data directory
     pub data_dir: PathBuf,
+
+    /// DAG configuration
+    pub dag: dag::Config,
 }
 
 /// Genesis configuration
@@ -103,6 +109,7 @@ pub struct Runtime {
     events_out: broadcast::Sender<Event>,
     p2p_action_ch: UnboundedSender<p2p::Action>,
     p2p_event_ch: broadcast::Receiver<p2p::Event>,
+    dag: dag::DAG,
 }
 
 impl Runtime {
@@ -115,6 +122,9 @@ impl Runtime {
     ) -> Result<Runtime> {
         info!("Starting consensus...");
 
+        // Construct the DAG, initialized with the genesis vertex
+        let dag = dag::DAG::new(config.dag.clone(), &[config.genesis.to_vertex()])?;
+
         // Instantiate the runtime
         Ok(Runtime {
             _config: config.clone(),
@@ -123,6 +133,7 @@ impl Runtime {
             events_out,
             p2p_action_ch,
             p2p_event_ch,
+            dag,
         })
     }
 
@@ -182,13 +193,16 @@ impl Runtime {
         &mut self,
         bcast: p2p::Broadcast,
     ) -> Result<p2p::BroadcastValidationReport> {
-        let _accept = bcast.accept();
-        let _ignore = bcast.ignore();
-        let _reject = bcast.reject();
+        let accept = bcast.accept();
+        let ignore = bcast.ignore();
+        let reject = bcast.reject();
         match bcast.data {
-            p2p::BroadcastData::Vertex(_) => {
-                todo!()
-            }
+            p2p::BroadcastData::Vertex(vx) => match self.dag.try_insert(&vx) {
+                Ok(_waiting) => todo!("send internal event to retry the waiting"),
+                Err(dag::Error::MissingParents(_)) => Ok(accept),
+                Err(dag::Error::AlreadyInserted | dag::Error::RejectedAncestor) => Ok(ignore),
+                Err(_) => Ok(reject),
+            },
         }
     }
 }
