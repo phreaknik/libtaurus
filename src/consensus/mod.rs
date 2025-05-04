@@ -5,14 +5,12 @@ pub mod vertex;
 
 use crate::p2p;
 use chrono::DateTime;
-use libp2p::PeerId;
 use namespace::NamespaceId;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::result;
 use std::sync::Arc;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
-use tokio::sync::oneshot;
 use tokio::{select, sync::broadcast};
 use tracing::{error, info, warn};
 use transaction::TxRoot;
@@ -91,14 +89,14 @@ pub fn start(
     config: Config,
     p2p_action_ch: UnboundedSender<p2p::Action>,
     p2p_event_ch: broadcast::Receiver<p2p::Event>,
-) -> (UnboundedSender<Action>, broadcast::Sender<Event>) {
+) -> (UnboundedSender<Action>, broadcast::Receiver<Event>) {
     // Spawn a task to execute the runtime
     let (action_sender, action_receiver) = mpsc::unbounded_channel();
-    let (event_sender, _) = broadcast::channel(CONSENSUS_EVENT_CHAN_CAPACITY);
+    let (event_sender, event_receiver) = broadcast::channel(CONSENSUS_EVENT_CHAN_CAPACITY);
     let runtime = Runtime::new(
         config,
         action_receiver,
-        event_sender.clone(),
+        event_sender,
         p2p_action_ch,
         p2p_event_ch,
     )
@@ -106,13 +104,12 @@ pub fn start(
     tokio::spawn(runtime.run());
 
     // Return the communication channels
-    (action_sender, event_sender)
+    (action_sender, event_receiver)
 }
 
 /// Runtime state for the consensus process
 pub struct Runtime {
     _config: Config,
-    peer_id: Option<PeerId>,
     actions_in: UnboundedReceiver<Action>,
     events_out: broadcast::Sender<Event>,
     p2p_action_ch: UnboundedSender<p2p::Action>,
@@ -136,7 +133,6 @@ impl Runtime {
         // Instantiate the runtime
         Ok(Runtime {
             _config: config.clone(),
-            peer_id: None,
             actions_in,
             events_out,
             p2p_action_ch,
@@ -147,13 +143,6 @@ impl Runtime {
 
     // Run the consensus processing loop
     async fn run(mut self) {
-        // Get peer id from p2p client
-        let (resp_sender, resp_ch) = oneshot::channel();
-        self.p2p_action_ch
-            .send(p2p::Action::GetLocalPeerId(resp_sender))
-            .unwrap();
-        self.peer_id = Some(resp_ch.await.unwrap());
-
         // Wait until the events channel has listeners, before initializing the DAG
         while self.events_out.receiver_count() == 0 {}
 

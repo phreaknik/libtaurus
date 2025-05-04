@@ -10,6 +10,7 @@ pub mod consensus;
 pub mod hash;
 pub mod p2p;
 pub mod params;
+pub mod rpc;
 pub mod util;
 pub mod wire;
 

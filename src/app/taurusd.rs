@@ -1,7 +1,7 @@
 use clap::{arg, command, ArgMatches, Command};
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
 use libp2p::identity::Keypair;
-use libtaurus::consensus::dag;
+use libtaurus::{consensus::dag, rpc};
 pub use libtaurus::{
     consensus::{self, GenesisConfig, Vertex, VertexHash},
     hash::Hash,
@@ -22,6 +22,9 @@ struct Config {
 
     /// Consensus configuration
     pub consensus: consensus::Config,
+
+    /// RPC server configuration
+    pub rpc: rpc::Config,
 }
 
 /// Main taurus CLI application
@@ -50,21 +53,30 @@ async fn cmd_run(args: &ArgMatches) {
     // Build config from args
     let cfg = build_cfg(&args);
 
-    // Build a list of futures to be executed
-    let (p2p_action_ch, p2p_event_sender) = p2p::start(cfg.p2p);
-    let (_consensus_action_ch, consensus_event_sender) = consensus::start(
+    // Start the P2P process
+    let (p2p_action_ch, mut p2p_event_receiver) = p2p::start(cfg.p2p);
+
+    // Start the consensus process
+    let (consensus_action_ch, mut consensus_event_receiver) = consensus::start(
         cfg.consensus,
-        p2p_action_ch.clone(),
-        p2p_event_sender.subscribe(),
+        p2p_action_ch,
+        p2p_event_receiver.resubscribe(),
     );
-    let mut p2p_event_ch = p2p_event_sender.subscribe();
-    let mut consensus_event_ch = consensus_event_sender.subscribe();
+
+    // Start the RPC server
+    rpc::start(
+        cfg.rpc,
+        consensus_action_ch,
+        consensus_event_receiver.resubscribe(),
+    );
+
+    // Handle events
     loop {
         select! {
-            event = p2p_event_ch.recv() => {
+            event = p2p_event_receiver.recv() => {
                 trace!("p2p event: {event:?}");
             }
-            event = consensus_event_ch.recv() => {
+            event = consensus_event_receiver.recv() => {
                 trace!("consensus event: {event:?}");
             }
         }
@@ -124,6 +136,7 @@ fn build_cfg(args: &ArgMatches) -> Config {
     Config {
         p2p: build_p2p_cfg(args),
         consensus: build_consensus_cfg(args),
+        rpc: rpc::Config::default(),
     }
 }
 
