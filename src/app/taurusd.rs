@@ -1,4 +1,4 @@
-use clap::{arg, command, ArgMatches, Command};
+use clap::{arg, command, ArgMatches};
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
 use libp2p::identity::Keypair;
 use libtaurus::{consensus::dag, rpc};
@@ -27,16 +27,6 @@ struct Config {
     pub rpc: rpc::Config,
 }
 
-/// Main taurus CLI application
-#[tokio::main]
-async fn main() {
-    // Parse CLI arguments
-    match parse_cli_args().subcommand() {
-        Some(("run", sub_args)) => cmd_run(sub_args).await,
-        _ => unreachable!("Exausted list of subcommands and subcommand_requred prevents 'None'"),
-    }
-}
-
 #[derive(thiserror::Error, Debug)]
 enum Error {
     #[error(transparent)]
@@ -45,8 +35,12 @@ enum Error {
     ConsensusError(#[from] crate::consensus::Error),
 }
 
-/// Command to start node and connect to the network
-async fn cmd_run(args: &ArgMatches) {
+/// Main taurus daemon
+#[tokio::main]
+async fn main() {
+    // Parse CLI args
+    let args = parse_cli_args();
+
     // Set up a subscriber to capture logs
     setup_logger(&args);
 
@@ -86,28 +80,14 @@ async fn cmd_run(args: &ArgMatches) {
 /// Parse CLI args
 fn parse_cli_args() -> ArgMatches {
     command!() // initialize CLI with details from cargo.toml
-        .subcommand(
-            Command::new("run")
-                .about("Connect to the p2p network and join consensus")
-                .arg(arg!(--bootnode <MULTIADDR> "Specify boot node to connect to").required(false))
-                .arg(
-                    arg!(--mining_threads <NUMBER> "Number of threads for mining")
-                        .required(false)
-                        .default_value("0"),
-                )
-                .arg(arg!(-d --data_dir <PATH> "Specify data directory").required(false))
-                .arg(
-                    arg!(--waitlist_cap <CAP> "Set the capacity of the DAG waitlist")
-                        .required(false)
-                        .default_value("10"),
-                )
-                .arg(
-                    arg!(--log_level <LEVEL> "Set log level (error, warn, info, debug, trace)")
-                        .required(false)
-                        .default_value("info"),
-                ),
+        .about("Start taurusd network client")
+        .arg(arg!(--bootnode <MULTIADDR> "Specify boot node to connect to").required(false))
+        .arg(arg!(-d --data_dir <PATH> "Specify data directory").required(false))
+        .arg(
+            arg!(--log_level <LEVEL> "Set log level (error, warn, info, debug, trace)")
+                .required(false)
+                .default_value("info"),
         )
-        .subcommand_required(true)
         .get_matches()
 }
 
