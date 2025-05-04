@@ -622,6 +622,8 @@ impl DAG {
             );
         frontier.sort_by(|a, b| Ord::cmp(&a.timestamp, &b.timestamp));
         frontier
+        // TODO: should only return vertices which are strongly preferred
+        // TODO: needs tests
     }
 
     /// Get the known children of the specified [`Vertex`]

@@ -517,3 +517,6 @@ fn resetter() {
     ]);
     tg.check_frontier(["v7"]);
 }
+
+// TODO: need test to ensure a stalled vertex (vertex with non-virtuous parents) gets retried with
+// new parents. See "dynamic parent selection" in Avalanche consensus paper.

@@ -7,6 +7,7 @@ use crate::p2p;
 use chrono::DateTime;
 use libp2p::PeerId;
 use namespace::NamespaceId;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::result;
 use std::sync::Arc;
@@ -24,14 +25,14 @@ pub const CONSENSUS_EVENT_CHAN_CAPACITY: usize = 32;
 /// Events produced by the consensus process
 #[derive(Debug, Clone)]
 pub enum Event {
-    /// The DAG frontier has updated
-    NewFrontier(Vec<VertexHash>),
-    /// If a vertex has parents which become non-virtuous, it will be impossible for this
-    /// vertex to be accepted. According to Avalanche consensus, we should dynamically
-    /// select parents to retry submitting
-    StalledVertex(Arc<Vertex>),
-    /// Indicates the specified vertex has been queried, and the query is complete.
-    QueryCompleted(VertexHash),
+    /// The following vertices should be re-inserted. This usually means a missing parent has been
+    /// found and it may now be possible to process these vertices.
+    RetryInsert(HashSet<VertexHash>),
+
+    /// The following vertices make up the latest frontier, after a recent graph update. These
+    /// vertices are sorted according to the order they were first observed, so that they may be
+    /// used as parents in a new vertex which extends the graph.
+    NewFrontier(Vec<Arc<Vertex>>),
 }
 
 /// Actions that can be performed by the consensus process
@@ -184,10 +185,9 @@ impl Runtime {
                 // Handle internally generated events
                 event = internal_events.recv() => {
                     match event {
-                        Ok(Event::NewFrontier(_)) => {todo!()},
-                        Ok(Event::StalledVertex(_)) => {todo!()},
-                        Ok(Event::QueryCompleted(_)) => {todo!()},
+                        Ok(Event::RetryInsert(_)) => {todo!()},
                         Err(e) => return error!("Stopping due to consensus_event channel error: {e}"),
+                        Ok(_) => {},
                     }
                 }
             }
@@ -205,7 +205,14 @@ impl Runtime {
         let reject = bcast.reject();
         match bcast.data {
             p2p::BroadcastData::Vertex(vx) => match self.dag.try_insert(&vx) {
-                Ok(_waiting) => todo!("send internal event to retry the waiting"),
+                Ok(waiting) => {
+                    // Send internal signal to retry any vertices which were waiting on this one
+                    self.events_out.send(Event::RetryInsert(waiting))?;
+                    // Emit event indicating the latest frontier
+                    self.events_out
+                        .send(Event::NewFrontier(self.dag.get_frontier()))?;
+                    Ok(accept)
+                }
                 Err(dag::Error::MissingParents(_)) => Ok(accept),
                 Err(dag::Error::AlreadyInserted | dag::Error::RejectedAncestor) => Ok(ignore),
                 Err(_) => Ok(reject),
