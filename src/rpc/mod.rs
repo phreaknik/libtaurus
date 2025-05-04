@@ -11,8 +11,10 @@ pub enum Error {}
 type Result<T> = result::Result<T, Error>;
 
 /// Configuration details for the RPC process.
-#[derive(Debug, Clone, Default)]
-pub struct Config {}
+#[derive(Debug, Clone)]
+pub struct Config {
+    pub port: u16,
+}
 
 /// Setup a new RPC server and run the process
 pub fn start(
@@ -39,7 +41,7 @@ impl Runtime {
         consensus_action_ch: UnboundedSender<consensus::Action>,
         consensus_event_ch: broadcast::Receiver<consensus::Event>,
     ) -> Result<Runtime> {
-        info!("Starting RPC server...");
+        info!("Starting RPC server on port {}", config.port);
 
         // Instantiate the runtime
         Ok(Runtime {

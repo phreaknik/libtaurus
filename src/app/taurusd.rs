@@ -84,6 +84,11 @@ fn parse_cli_args() -> ArgMatches {
         .arg(arg!(--bootnode <MULTIADDR> "Specify boot node to connect to").required(false))
         .arg(arg!(-d --data_dir <PATH> "Specify data directory").required(false))
         .arg(
+            arg!(--ws_port <PORT> "Port number to use for websocket connections")
+                .required(false)
+                .default_value("8546"),
+        )
+        .arg(
             arg!(--log_level <LEVEL> "Set log level (error, warn, info, debug, trace)")
                 .required(false)
                 .default_value("info"),
@@ -116,7 +121,7 @@ fn build_cfg(args: &ArgMatches) -> Config {
     Config {
         p2p: build_p2p_cfg(args),
         consensus: build_consensus_cfg(args),
-        rpc: rpc::Config::default(),
+        rpc: build_rpc_cfg(args),
     }
 }
 
@@ -136,7 +141,7 @@ fn build_p2p_cfg(args: &ArgMatches) -> p2p::Config {
     }
 }
 
-/// Build P2P [`p2p::Config`] from parsed CLI args
+/// Build consensus [`consensus::Config`] from parsed CLI args
 fn build_consensus_cfg(args: &ArgMatches) -> consensus::Config {
     let data_dir = parse_data_dir(args).join("consensus/");
     let genesis = GenesisConfig {};
@@ -145,6 +150,17 @@ fn build_consensus_cfg(args: &ArgMatches) -> consensus::Config {
         data_dir: data_dir.clone(),
         genesis,
         dag,
+    }
+}
+
+/// Build RPC [`rpc::Config`] from parsed CLI args
+fn build_rpc_cfg(args: &ArgMatches) -> rpc::Config {
+    rpc::Config {
+        port: args
+            .get_one::<String>("ws_port")
+            .unwrap()
+            .parse::<u16>()
+            .expect("invalid value for ws_port"),
     }
 }
 
