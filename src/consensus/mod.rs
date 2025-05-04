@@ -4,7 +4,9 @@ pub mod transaction;
 pub mod vertex;
 
 use crate::p2p;
+use chrono::DateTime;
 use libp2p::PeerId;
+use namespace::NamespaceId;
 use std::path::PathBuf;
 use std::result;
 use std::sync::Arc;
@@ -12,6 +14,7 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 use tokio::{select, sync::broadcast};
 use tracing::{error, info, warn};
+use transaction::TxRoot;
 pub use vertex::{Vertex, VertexHash};
 
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
@@ -66,14 +69,18 @@ pub struct Config {
 pub struct GenesisConfig {}
 
 impl GenesisConfig {
-    /// Make sure the vertex passes all basic sanity checks
-    pub fn sanity_checks(&self) -> Result<()> {
-        todo!()
-    }
-
     /// Create a genesis block
     pub fn to_vertex(&self) -> Arc<Vertex> {
-        todo!()
+        Arc::new(Vertex {
+            version: 1,
+            height: 0,
+            parents: Vec::new(),
+            namespace_id: NamespaceId::default(),
+            root: TxRoot::default(),
+            timestamp: DateTime::parse_from_rfc2822("Wed, 18 Feb 2015 23:16:09 GMT")
+                .unwrap()
+                .to_utc(),
+        })
     }
 }
 
