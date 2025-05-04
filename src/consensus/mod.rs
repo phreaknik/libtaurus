@@ -157,6 +157,11 @@ impl Runtime {
         // Wait until the events channel has listeners, before initializing the DAG
         while self.events_out.receiver_count() == 0 {}
 
+        // Emit event for initial frontier
+        self.events_out
+            .send(Event::NewFrontier(self.dag.get_frontier()))
+            .expect("Failed to send initial frontier event");
+
         // Handle consensus events
         let mut internal_events = self.events_out.subscribe();
         loop {
