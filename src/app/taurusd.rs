@@ -5,7 +5,7 @@ use libtaurus::consensus::dag;
 pub use libtaurus::{
     consensus::{self, GenesisConfig, Vertex, VertexHash},
     hash::Hash,
-    http, p2p, params,
+    p2p, params,
 };
 use std::{fs, path::PathBuf};
 use tokio::select;
@@ -19,10 +19,9 @@ const IDENTITY_KEY_FILE: &str = "identity_key";
 struct Config {
     /// P2P client configuration
     pub p2p: p2p::Config,
+
     /// Consensus configuration
     pub consensus: consensus::Config,
-    /// Http server configuration
-    pub http: http::Config,
 }
 
 /// Main taurus CLI application
@@ -41,8 +40,6 @@ enum Error {
     P2pError(#[from] crate::p2p::Error),
     #[error(transparent)]
     ConsensusError(#[from] crate::consensus::Error),
-    #[error(transparent)]
-    HttpError(#[from] crate::http::Error),
 }
 
 /// Command to start node and connect to the network
@@ -55,14 +52,11 @@ async fn cmd_run(args: &ArgMatches) {
 
     // Build a list of futures to be executed
     let (p2p_action_ch, p2p_event_sender) = p2p::start(cfg.p2p);
-    let (consensus_action_ch, consensus_event_sender) = consensus::start(
+    let (_consensus_action_ch, consensus_event_sender) = consensus::start(
         cfg.consensus,
         p2p_action_ch.clone(),
         p2p_event_sender.subscribe(),
     );
-    if !args.get_flag("nohttp") {
-        http::start(cfg.http, p2p_action_ch, consensus_action_ch.clone());
-    }
     let mut p2p_event_ch = p2p_event_sender.subscribe();
     let mut consensus_event_ch = consensus_event_sender.subscribe();
     loop {
@@ -90,7 +84,6 @@ fn parse_cli_args() -> ArgMatches {
                         .default_value("0"),
                 )
                 .arg(arg!(-d --data_dir <PATH> "Specify data directory").required(false))
-                .arg(arg!(--nohttp "Disable HTTP server").required(false))
                 .arg(
                     arg!(--waitlist_cap <CAP> "Set the capacity of the DAG waitlist")
                         .required(false)
@@ -131,7 +124,6 @@ fn build_cfg(args: &ArgMatches) -> Config {
     Config {
         p2p: build_p2p_cfg(args),
         consensus: build_consensus_cfg(args),
-        http: http::Config {},
     }
 }
 

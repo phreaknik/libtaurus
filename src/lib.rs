@@ -8,7 +8,6 @@
 
 pub mod consensus;
 pub mod hash;
-pub mod http;
 pub mod p2p;
 pub mod params;
 pub mod util;
