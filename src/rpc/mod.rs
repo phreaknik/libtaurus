@@ -1,10 +1,11 @@
 use crate::consensus;
+use jsonrpsee::server::{RpcModule, Server};
 use std::result;
 use tokio::{
     select,
-    sync::{broadcast, mpsc::UnboundedSender},
+    sync::{broadcast, mpsc},
 };
-use tracing::info;
+use tracing::{info, trace};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {}
@@ -13,13 +14,13 @@ type Result<T> = result::Result<T, Error>;
 /// Configuration details for the RPC process.
 #[derive(Debug, Clone)]
 pub struct Config {
-    pub port: u16,
+    pub http_addr: String,
 }
 
 /// Setup a new RPC server and run the process
 pub fn start(
     config: Config,
-    consensus_action_ch: UnboundedSender<consensus::Action>,
+    consensus_action_ch: mpsc::UnboundedSender<consensus::Action>,
     consensus_event_ch: broadcast::Receiver<consensus::Event>,
 ) {
     // Spawn a task to execute the runtime
@@ -30,22 +31,20 @@ pub fn start(
 
 /// Runtime state for the RPC server
 pub struct Runtime {
-    _config: Config,
-    _consensus_action_ch: UnboundedSender<consensus::Action>,
+    config: Config,
+    _consensus_action_ch: mpsc::UnboundedSender<consensus::Action>,
     consensus_event_ch: broadcast::Receiver<consensus::Event>,
 }
 
 impl Runtime {
     fn new(
         config: Config,
-        consensus_action_ch: UnboundedSender<consensus::Action>,
+        consensus_action_ch: mpsc::UnboundedSender<consensus::Action>,
         consensus_event_ch: broadcast::Receiver<consensus::Event>,
     ) -> Result<Runtime> {
-        info!("Starting RPC server on port {}", config.port);
-
         // Instantiate the runtime
         Ok(Runtime {
-            _config: config.clone(),
+            config,
             _consensus_action_ch: consensus_action_ch,
             consensus_event_ch,
         })
@@ -53,11 +52,30 @@ impl Runtime {
 
     // Run the RPC processing loop
     async fn run(mut self) {
+        let server = Server::builder()
+            .build(self.config.http_addr)
+            .await
+            .unwrap();
+        let mut module = RpcModule::new(());
+        module
+            .register_method("say_hello", |params, _, _| {
+                format!("Hello, {}", params.one::<String>().unwrap())
+            })
+            .unwrap();
+        let addr = server.local_addr().unwrap();
+        info!("HTTP RPC server listening on {}", addr);
+
+        let handle = server.start(module);
+
+        // In this example we don't care about doing shutdown so let's it run forever.
+        // You may use the `ServerHandle` to shut it down or manage it yourself.
+        tokio::spawn(handle.stopped());
+
         loop {
             select! {
                 // Handle consensus events
-                _event = self.consensus_event_ch.recv() => {
-                    todo!()
+                event = self.consensus_event_ch.recv() => {
+                    trace!("received consensus event: {event:?}");
                 },
             }
         }

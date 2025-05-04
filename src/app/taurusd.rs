@@ -84,9 +84,14 @@ fn parse_cli_args() -> ArgMatches {
         .arg(arg!(--bootnode <MULTIADDR> "Specify boot node to connect to").required(false))
         .arg(arg!(-d --data_dir <PATH> "Specify data directory").required(false))
         .arg(
-            arg!(--ws_port <PORT> "Port number to use for websocket connections")
+            arg!(--http_addr <ADDR> "IP address to serve http RPC")
                 .required(false)
-                .default_value("8546"),
+                .default_value("127.0.0.1"),
+        )
+        .arg(
+            arg!(--http_port <PORT> "Port number to serve http RPC")
+                .required(false)
+                .default_value("8545"),
         )
         .arg(
             arg!(--log_level <LEVEL> "Set log level (error, warn, info, debug, trace)")
@@ -155,12 +160,10 @@ fn build_consensus_cfg(args: &ArgMatches) -> consensus::Config {
 
 /// Build RPC [`rpc::Config`] from parsed CLI args
 fn build_rpc_cfg(args: &ArgMatches) -> rpc::Config {
+    let http_ip = args.get_one::<String>("http_addr").unwrap();
+    let http_port = args.get_one::<String>("http_port").unwrap();
     rpc::Config {
-        port: args
-            .get_one::<String>("ws_port")
-            .unwrap()
-            .parse::<u16>()
-            .expect("invalid value for ws_port"),
+        http_addr: format!("{http_ip}:{http_port}"),
     }
 }
 
