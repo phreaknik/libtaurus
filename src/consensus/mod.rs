@@ -1,3 +1,4 @@
+pub mod api;
 pub mod dag;
 pub mod namespace;
 pub mod transaction;
@@ -5,14 +6,13 @@ pub mod vertex;
 
 use crate::p2p;
 use chrono::DateTime;
-use futures::channel::oneshot;
 use namespace::NamespaceId;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::result;
 use std::sync::Arc;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
-use tokio::{select, sync::broadcast};
+use tokio::{select, sync::broadcast, sync::oneshot};
 use tracing::{debug, error, info, warn};
 use transaction::TxRoot;
 pub use vertex::{Vertex, VertexHash};
@@ -184,11 +184,15 @@ impl Runtime {
                 // Handle requested actions
                 Some(action) = self.actions_in.recv() => {
                         match action{
-                            Action::GetAcceptedFrontier{result_ch} =>                                 if let Err(_e) = result_ch.send(self.dag.get_frontier()) {
-                                debug!("failed to respond to GetAcceptedFrontier");
+                            Action::GetAcceptedFrontier{result_ch} => {
+                                if let Err(_e) = result_ch.send(self.dag.get_frontier()) {
+                                    debug!("failed to respond to GetAcceptedFrontier");
+                                }
                             },
                             Action::SubmitVertex{vertex, result_ch} => {
-                                todo!()
+                                if let Err(_e) = result_ch.send(self.dag.try_insert(&vertex).map_err(Error::from)) {
+                                    debug!("failed to respond to SubmitVertex");
+                                }
                             }
                         }
                 },

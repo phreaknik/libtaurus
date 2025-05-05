@@ -1,65 +1,24 @@
-use super::{RpcContext, RpcError};
-use crate::{consensus, Vertex, VertexHash, WireFormat};
-use futures::channel::oneshot;
+use super::RpcError;
+use crate::{consensus::api::ConsensusApi, Vertex};
 use jsonrpsee::RpcModule;
-use serde::{Deserialize, Serialize};
-use std::{sync::Arc, time::Duration};
-use tokio::time::timeout;
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct VertexMeta {
-    pub hash: VertexHash,
-    pub height: u64,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct FrontierResponse {
-    pub frontier_meta: Vec<VertexMeta>,
-}
+use std::sync::Arc;
 
 /// Register RPC method handlers
-pub(crate) fn register_handlers(module: &mut RpcModule<RpcContext>) {
+pub(crate) fn register_consensus_api(module: &mut RpcModule<ConsensusApi>) {
     module
         .register_async_method("get_frontier", |_params, ctx, _| async move {
-            let (sender, resp) = oneshot::channel();
-            ctx.consensus_action_ch
-                .send(consensus::Action::GetAcceptedFrontier { result_ch: sender })
-                .map_err(|_| RpcError::Unknown)?;
-            let frontier = timeout(Duration::from_secs(60), resp)
-                .await
-                .map_err(|_| RpcError::Busy)?
-                .map_err(|_| RpcError::Unknown)?;
-            Ok::<_, RpcError>(FrontierResponse {
-                frontier_meta: frontier
-                    .iter()
-                    .map(|vx| VertexMeta {
-                        hash: vx.hash(),
-                        height: vx.height,
-                    })
-                    .collect::<Vec<_>>(),
-            })
+            Ok::<_, RpcError>(ctx.get_frontier().await?)
         })
         .unwrap();
-
+    module
+        .register_async_method("get_frontier_meta", |_params, ctx, _| async move {
+            Ok::<_, RpcError>(ctx.get_frontier_meta().await?)
+        })
+        .unwrap();
     module
         .register_async_method("submit_vertex", |params, ctx, _| async move {
             let vertex = Arc::new(params.one::<Vertex>().map_err(|_| RpcError::BadArg)?);
-            let (sender, resp) = oneshot::channel();
-            ctx.consensus_action_ch
-                .send(consensus::Action::SubmitVertex {
-                    vertex,
-                    result_ch: sender,
-                })
-                .map_err(|_| RpcError::Unknown)?;
-            let result = match timeout(Duration::from_secs(60), resp)
-                .await
-                .map_err(|_| RpcError::Busy)?
-                .map_err(|_| RpcError::Unknown)?
-            {
-                Ok(_) => Ok(()),
-                _ => Err(RpcError::Unknown),
-            }?;
-            Ok::<_, RpcError>(result)
+            Ok::<_, RpcError>(ctx.insert_vertex(&vertex).await?)
         })
         .unwrap();
 }
