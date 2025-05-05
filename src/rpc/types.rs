@@ -9,5 +9,5 @@ pub struct VertexMeta {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct FrontierResponse {
-    pub frontier: Vec<VertexMeta>,
+    pub frontier_meta: Vec<VertexMeta>,
 }

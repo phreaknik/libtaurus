@@ -120,7 +120,7 @@ impl Runtime {
                     .map_err(|_| RpcError::Busy)?
                     .map_err(|_| RpcError::Unknown)?;
                 Ok::<_, RpcError>(FrontierResponse {
-                    frontier: frontier
+                    frontier_meta: frontier
                         .iter()
                         .map(|vx| VertexMeta {
                             hash: vx.hash(),
