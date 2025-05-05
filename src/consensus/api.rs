@@ -37,7 +37,7 @@ impl ConsensusApi {
     }
 
     /// Get the accepted frontier of the DAG
-    pub async fn get_frontier(&mut self) -> Result<Vec<Arc<Vertex>>> {
+    pub async fn get_frontier(&self) -> Result<Vec<Arc<Vertex>>> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.consensus_action_ch
             .send(Action::GetAcceptedFrontier { result_ch: resp_tx })?;
@@ -45,7 +45,7 @@ impl ConsensusApi {
     }
 
     /// Get metadata or the accepted frontier
-    pub async fn get_frontier_meta(&mut self) -> Result<Vec<VertexMeta>> {
+    pub async fn get_frontier_meta(&self) -> Result<Vec<VertexMeta>> {
         Ok(self
             .get_frontier()
             .await?
@@ -55,7 +55,7 @@ impl ConsensusApi {
     }
 
     /// Try to insert the given [`Vertex`] into the [`DAG`]
-    pub async fn insert_vertex(&mut self, vx: &Arc<Vertex>) -> Result<HashSet<VertexHash>> {
+    pub async fn insert_vertex(&self, vx: &Arc<Vertex>) -> Result<HashSet<VertexHash>> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.consensus_action_ch.send(Action::SubmitVertex {
             vertex: vx.clone(),

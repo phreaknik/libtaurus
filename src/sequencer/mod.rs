@@ -1,4 +1,4 @@
-use crate::{rpc::api, Vertex};
+use crate::{consensus, Vertex};
 use jsonrpsee::{core::client::ClientT, rpc_params, ws_client::WsClientBuilder};
 use std::result;
 use tokio::{
@@ -61,12 +61,12 @@ impl Sequencer {
                 // Handle timer event
                 _ = timer.tick() => {
                     // Get the latest frontier
-                    let response: api::FrontierResponse = ws_client.request("get_frontier", rpc_params![]).await?;
+                    let frontier_meta: Vec<consensus::api::VertexMeta> = ws_client.request("get_frontier", rpc_params![]).await?;
 
                     // Build a new vertex on the frontier
                     let mut proposal = Vertex::empty();
-                    proposal.height = 1 + response.frontier_meta.iter().map(|meta| meta.height).max().unwrap();
-                    proposal.parents = response.frontier_meta.iter().map(|meta| meta.hash).collect();
+                    proposal.height = 1 + frontier_meta.iter().map(|meta| meta.height).max().unwrap();
+                    proposal.parents = frontier_meta.iter().map(|meta| meta.hash).collect();
 
                     // Submit the vertex
                     ws_client.request("submit_vertex", rpc_params![proposal]).await?;

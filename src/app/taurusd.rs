@@ -8,8 +8,7 @@ pub use libtaurus::{
     p2p, params,
 };
 use std::{fs, path::PathBuf};
-use tokio::select;
-use tracing::{error, trace};
+use tracing::error;
 use tracing_subscriber::{fmt::time::UtcTime, EnvFilter, FmtSubscriber};
 
 /// File name of the stored identity_key
@@ -48,33 +47,16 @@ async fn main() {
     let cfg = build_cfg(&args);
 
     // Start the P2P process
-    let (p2p_action_ch, mut p2p_event_receiver) = p2p::start(cfg.p2p);
+    let (p2p_action_ch, p2p_event_receiver) = p2p::start(cfg.p2p);
 
     // Start the consensus process
-    let (consensus_action_ch, mut consensus_event_receiver) = consensus::start(
-        cfg.consensus,
-        p2p_action_ch,
-        p2p_event_receiver.resubscribe(),
-    );
+    let consensus_api = consensus::start(cfg.consensus, p2p_action_ch, p2p_event_receiver);
 
     // Start the RPC server
-    rpc::start(
-        cfg.rpc,
-        consensus_action_ch,
-        consensus_event_receiver.resubscribe(),
-    );
+    rpc::start(cfg.rpc, consensus_api);
 
     // Handle events
-    loop {
-        select! {
-            event = p2p_event_receiver.recv() => {
-                trace!("p2p event: {event:?}");
-            }
-            event = consensus_event_receiver.recv() => {
-                trace!("consensus event: {event:?}");
-            }
-        }
-    }
+    loop {}
 }
 
 /// Parse CLI args

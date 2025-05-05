@@ -1,6 +1,7 @@
-pub mod api;
+mod handlers;
 
 use crate::consensus::{self, api::ConsensusApi};
+use futures::executor::block_on;
 use jsonrpsee::{
     server::{RpcModule, Server},
     types::ErrorObjectOwned,
@@ -8,10 +9,6 @@ use jsonrpsee::{
 };
 use serde::Serialize;
 use std::result;
-use tokio::{
-    select,
-    sync::{broadcast, mpsc},
-};
 use tracing::info;
 
 #[derive(Debug, Clone)]
@@ -69,26 +66,10 @@ pub struct Config {
     pub bind_addr: String,
 }
 
-// Persistent context for the JSON RPC
-pub struct RpcContext {
-    consensus_action_ch: mpsc::UnboundedSender<consensus::Action>,
-}
-
 /// Setup a new RPC server and run the process
-pub fn start(
-    config: Config,
-    consensus_api: ConsensusApi,
-    consensus_action_ch: mpsc::UnboundedSender<consensus::Action>,
-    consensus_event_ch: broadcast::Receiver<consensus::Event>,
-) {
+pub fn start(config: Config, consensus_api: ConsensusApi) {
     // Spawn a task to execute the runtime
-    let runtime = Runtime::new(
-        config,
-        consensus_api,
-        consensus_action_ch,
-        consensus_event_ch,
-    )
-    .expect("Failed to start RPC server");
+    let runtime = Runtime::new(config, consensus_api).expect("Failed to start RPC server");
     tokio::spawn(runtime.run());
 }
 
@@ -96,51 +77,30 @@ pub fn start(
 pub struct Runtime {
     config: Config,
     consensus_api: ConsensusApi,
-    consensus_action_ch: mpsc::UnboundedSender<consensus::Action>,
-    consensus_event_ch: broadcast::Receiver<consensus::Event>,
 }
 
 impl Runtime {
-    fn new(
-        config: Config,
-        consensus_api: ConsensusApi,
-        consensus_action_ch: mpsc::UnboundedSender<consensus::Action>,
-        consensus_event_ch: broadcast::Receiver<consensus::Event>,
-    ) -> Result<Runtime> {
+    fn new(config: Config, consensus_api: ConsensusApi) -> Result<Runtime> {
         // Instantiate the runtime
         Ok(Runtime {
             config,
             consensus_api,
-            consensus_action_ch,
-            consensus_event_ch,
         })
     }
 
     // Run the RPC processing loop
-    async fn run(mut self) {
+    async fn run(self) {
         // Build the RPC server
         let server = Server::builder()
             .build(self.config.bind_addr)
             .await
             .unwrap();
         let mut module = RpcModule::new(self.consensus_api);
-        api::register_consensus_api(&mut module);
+        handlers::register_consensus_api(&mut module);
         let addr = server.local_addr().unwrap();
         info!("JSON RPC listening at {}", addr);
 
-        // Start the server
-        let _handle = server.start(module);
-
-        // Handle async events
-        loop {
-            select! {
-                // Handle consensus events
-                event = self.consensus_event_ch.recv() => {
-                    match event {
-                        _ => {},
-                    }
-                },
-            }
-        }
+        // Run the server indefinitely
+        block_on(server.start(module).stopped());
     }
 }
