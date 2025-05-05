@@ -1,7 +1,6 @@
 mod handlers;
 
 use crate::consensus::{self, api::ConsensusApi};
-use futures::executor::block_on;
 use jsonrpsee::{
     server::{RpcModule, Server},
     types::ErrorObjectOwned,
@@ -9,6 +8,7 @@ use jsonrpsee::{
 };
 use serde::Serialize;
 use std::result;
+use tokio::select;
 use tracing::info;
 
 #[derive(Debug, Clone)]
@@ -95,12 +95,19 @@ impl Runtime {
             .build(self.config.bind_addr)
             .await
             .unwrap();
-        let mut module = RpcModule::new(self.consensus_api);
+        let mut module = RpcModule::new(self.consensus_api.duplicate());
         handlers::register_consensus_api(&mut module);
         let addr = server.local_addr().unwrap();
         info!("JSON RPC listening at {}", addr);
 
         // Run the server indefinitely
-        block_on(server.start(module).stopped());
+        let _hdl = server.start(module);
+
+        let mut consensus_events = self.consensus_api.subscribe_events();
+        loop {
+            select! {
+                _event = consensus_events.recv() => {},
+            }
+        }
     }
 }

@@ -102,7 +102,7 @@ pub fn start(
 ) -> ConsensusApi {
     // Spawn a task to execute the runtime
     let (action_sender, action_receiver) = mpsc::unbounded_channel();
-    let (event_sender, _event_receiver) = broadcast::channel(CONSENSUS_EVENT_CHAN_CAPACITY);
+    let (event_sender, event_receiver) = broadcast::channel(CONSENSUS_EVENT_CHAN_CAPACITY);
     let runtime = Runtime::new(
         config,
         action_receiver,
@@ -114,7 +114,7 @@ pub fn start(
     tokio::spawn(runtime.run());
 
     // Return the communication channels
-    ConsensusApi::new(action_sender)
+    ConsensusApi::new(action_sender, event_receiver)
 }
 
 /// Runtime state for the consensus process

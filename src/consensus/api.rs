@@ -1,9 +1,9 @@
-use super::Action;
+use super::{Action, Event};
 use crate::{consensus, Vertex, VertexHash, WireFormat};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, result, sync::Arc, time::Duration};
 use tokio::{
-    sync::{mpsc, oneshot},
+    sync::{broadcast, mpsc, oneshot},
     time::timeout,
 };
 
@@ -25,15 +25,33 @@ const DEFAULT_TIMEOUT: u64 = 60;
 pub struct ConsensusApi {
     timeout: u64,
     consensus_action_ch: mpsc::UnboundedSender<Action>,
+    consensus_event_ch: broadcast::Receiver<Event>,
 }
 
 impl ConsensusApi {
     /// Construct a new instance of the [`ConsensusApi`]
-    pub fn new(consensus_action_ch: mpsc::UnboundedSender<Action>) -> ConsensusApi {
+    pub fn new(
+        consensus_action_ch: mpsc::UnboundedSender<Action>,
+        consensus_event_ch: broadcast::Receiver<Event>,
+    ) -> ConsensusApi {
         ConsensusApi {
             timeout: DEFAULT_TIMEOUT,
             consensus_action_ch,
+            consensus_event_ch,
         }
+    }
+
+    /// Create a new API object, with duplicate subscribers
+    pub fn duplicate(&self) -> ConsensusApi {
+        ConsensusApi {
+            timeout: self.timeout,
+            consensus_action_ch: self.consensus_action_ch.clone(),
+            consensus_event_ch: self.consensus_event_ch.resubscribe(),
+        }
+    }
+
+    pub fn subscribe_events(&self) -> broadcast::Receiver<Event> {
+        self.consensus_event_ch.resubscribe()
     }
 
     /// Get the accepted frontier of the DAG

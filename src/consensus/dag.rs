@@ -829,10 +829,6 @@ mod test {
         let c_v01v01 = Constraint(v01.hash(), v01.hash());
         let c_v00v01 = Constraint(v00.hash(), v01.hash());
         let c_v10v10 = Constraint(v10.hash(), v10.hash());
-        println!(":::: c_v00v00 = {c_v00v00}");
-        println!(":::: c_v01v01 = {c_v01v01}");
-        println!(":::: c_v00v01 = {c_v00v01}");
-        println!(":::: c_v10v10 = {c_v10v10}");
 
         // one of the parents (v10) has not been inserted yet
         assert_matches!(
@@ -859,7 +855,6 @@ mod test {
             dag.get_active_ancestor_constraints(&v20)
                 .unwrap()
                 .into_iter()
-                .inspect(|c| println!(":::: got c = {c}"))
                 .collect::<Vec<_>>(),
             []
         );
@@ -1219,7 +1214,6 @@ mod test {
         set_decision(&mut dag, c_v00v01, None);
         set_preferred(&mut dag, c_v00v01, false);
         set_decision(&mut dag, c_v10v10, None);
-        println!(":::: PORBLAM CHALD");
         assert_matches!(dag.query(&v10.hash()), Ok((false, false)));
     }
 
