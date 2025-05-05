@@ -1,3 +1,5 @@
+pub mod types;
+
 use crate::{consensus, VertexHash, WireFormat};
 use futures::channel::oneshot;
 use jsonrpsee::{
@@ -13,6 +15,7 @@ use tokio::{
     time::timeout,
 };
 use tracing::info;
+use types::{FrontierResponse, VertexMeta};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {}
@@ -54,7 +57,7 @@ impl IntoResponse for RpcError {
 /// Configuration details for the RPC process.
 #[derive(Debug, Clone)]
 pub struct Config {
-    pub http_addr: String,
+    pub bind_addr: String,
 }
 
 /// Setup a new RPC server and run the process
@@ -102,7 +105,7 @@ impl Runtime {
 
         // Build the RPC server
         let server = Server::builder()
-            .build(self.config.http_addr)
+            .build(self.config.bind_addr)
             .await
             .unwrap();
         let mut module = RpcModule::new(ctx);
@@ -116,24 +119,19 @@ impl Runtime {
                     .await
                     .map_err(|_| RpcError::Busy)?
                     .map_err(|_| RpcError::Unknown)?;
-                #[derive(Clone, Serialize)]
-                struct RespEntry {
-                    hash: VertexHash,
-                    height: u64,
-                }
-                Ok::<_, RpcError>(
-                    frontier
+                Ok::<_, RpcError>(FrontierResponse {
+                    frontier: frontier
                         .iter()
-                        .map(|vx| RespEntry {
+                        .map(|vx| VertexMeta {
                             hash: vx.hash(),
                             height: vx.height,
                         })
                         .collect::<Vec<_>>(),
-                )
+                })
             })
             .unwrap();
         let addr = server.local_addr().unwrap();
-        info!("JSON RPC listening at http://{}", addr);
+        info!("JSON RPC listening at {}", addr);
 
         // Start the server
         let _handle = server.start(module);

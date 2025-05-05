@@ -163,7 +163,7 @@ fn build_rpc_cfg(args: &ArgMatches) -> rpc::Config {
     let http_ip = args.get_one::<String>("http_addr").unwrap();
     let http_port = args.get_one::<String>("http_port").unwrap();
     rpc::Config {
-        http_addr: format!("{http_ip}:{http_port}"),
+        bind_addr: format!("{http_ip}:{http_port}"),
     }
 }
 

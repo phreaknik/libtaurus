@@ -7,8 +7,7 @@ pub use libtaurus::{
 };
 use tracing_subscriber::{fmt::time::UtcTime, EnvFilter, FmtSubscriber};
 
-#[tokio::main]
-async fn main() {
+fn main() {
     // Parse CLI args
     let args = parse_cli_args();
 
@@ -26,6 +25,7 @@ async fn main() {
 fn parse_cli_args() -> ArgMatches {
     command!() // initialize CLI with details from cargo.toml
         .about("Start taurus sequencer service")
+        .arg(arg!(-u --node_url <URL> "URL to reach consensus node").required(true))
         .arg(
             arg!(-L --log_level <LEVEL> "Set log level (error, warn, info, debug, trace)")
                 .required(false)
@@ -44,6 +44,8 @@ fn setup_logger<'a>(args: &'a ArgMatches) {
 }
 
 /// Build application config from parsed CLI args
-fn build_cfg(_args: &ArgMatches) -> sequencer::Config {
-    sequencer::Config {}
+fn build_cfg(args: &ArgMatches) -> sequencer::Config {
+    sequencer::Config {
+        rpc_url: args.get_one::<String>("node_url").unwrap().clone(),
+    }
 }

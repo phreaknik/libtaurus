@@ -1,50 +1,66 @@
+use jsonrpsee::{core::client::ClientT, rpc_params, ws_client::WsClientBuilder};
 use std::result;
 use tokio::{
+    runtime::Runtime,
     select,
     time::{interval, Duration},
 };
-use tracing::info;
+use tracing::{error, info};
 
 #[derive(thiserror::Error, Debug)]
-pub enum Error {}
+pub enum Error {
+    #[error(transparent)]
+    JsonrpseeClient(#[from] jsonrpsee::core::client::Error),
+}
 type Result<T> = result::Result<T, Error>;
 
 /// Configuration details for the sequencer process.
 #[derive(Debug, Clone)]
-pub struct Config {}
+pub struct Config {
+    pub rpc_url: String,
+}
 
 /// Run the consensus process, spawning the task as a new thread. Returns an [`broadcast::Sender`],
 /// which can be subscribed to, to receive consensus events from the task.
 pub fn start(config: Config) {
+    // Build a tokio runtime
+    let rt = Runtime::new().unwrap();
+    let hdl = rt.handle();
+
     // Spawn a task to execute the runtime
-    let runtime = Runtime::new(config).expect("Failed to start sequencer runtime");
-    tokio::spawn(runtime.run());
-    loop {}
+    let sequencer = Sequencer::new(config).expect("Failed to start sequencer runtime");
+    match hdl.block_on(sequencer.run()) {
+        Ok(_) => {}
+        Err(e) => error!("exited with error: {e}"),
+    }
 }
 
 /// Runtime state for the consensus process
-pub struct Runtime {
-    _config: Config,
+pub struct Sequencer {
+    config: Config,
 }
 
-impl Runtime {
-    fn new(config: Config) -> Result<Runtime> {
+impl Sequencer {
+    fn new(config: Config) -> Result<Sequencer> {
         info!("Starting sequencer...");
 
         // Instantiate the runtime
-        Ok(Runtime {
-            _config: config.clone(),
-        })
+        Ok(Sequencer { config })
     }
 
     // Run the consensus processing loop
-    async fn run(self) {
+    async fn run(self) -> Result<()> {
+        let ws_client = WsClientBuilder::default()
+            .build(&self.config.rpc_url)
+            .await?;
+
         let mut timer = interval(Duration::from_secs(1));
         loop {
             select! {
                 // Handle timer event
                 _ = timer.tick() => {
-                    info!("tick!");
+                    let frontier: serde_json::Value = ws_client.request("get_frontier", rpc_params![]).await?;
+                    info!("got frontier: {}", serde_json::to_string(&frontier).unwrap());
                 },
             }
         }
