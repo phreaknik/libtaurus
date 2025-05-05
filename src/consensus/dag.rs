@@ -588,6 +588,7 @@ impl DAG {
     /// Get the latest vertices which have no children, in the order we've observed them. If
     /// frontier vertices exist and different heights, will only return those at the lowest height;
     /// i.e. those which need children in order to stay attached to the [`DAG`].
+    // TODO: clean up these docs ^
     pub fn get_frontier(&mut self) -> Vec<Arc<Vertex>> {
         // First, find every vertex in the DAG which is strongly preferred
         let strong_pref_set: HashMap<_, _> = self

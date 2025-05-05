@@ -94,7 +94,7 @@ fn parse_cli_args() -> ArgMatches {
                 .default_value("8545"),
         )
         .arg(
-            arg!(--log_level <LEVEL> "Set log level (error, warn, info, debug, trace)")
+            arg!(-L --log_level <LEVEL> "Set log level (error, warn, info, debug, trace)")
                 .required(false)
                 .default_value("info"),
         )

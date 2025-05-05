@@ -5,6 +5,7 @@ pub mod vertex;
 
 use crate::p2p;
 use chrono::DateTime;
+use futures::channel::oneshot;
 use namespace::NamespaceId;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -12,7 +13,7 @@ use std::result;
 use std::sync::Arc;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::{select, sync::broadcast};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use transaction::TxRoot;
 pub use vertex::{Vertex, VertexHash};
 
@@ -34,8 +35,11 @@ pub enum Event {
 }
 
 /// Actions that can be performed by the consensus process
-#[derive(Clone, Debug)]
-pub enum Action {}
+#[derive(Debug)]
+pub enum Action {
+    /// Get the latest accepted frontier
+    GetAcceptedFrontier(oneshot::Sender<Vec<Arc<Vertex>>>),
+}
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -173,8 +177,12 @@ impl Runtime {
                     }
                 },
                 // Handle requested actions
-                Some(_action) = self.actions_in.recv() => {
-                    todo!();
+                Some(action) = self.actions_in.recv() => {
+                        match action{
+                            Action::GetAcceptedFrontier(resp) =>                                 if let Err(_e) = resp.send(self.dag.get_frontier()) {
+                                debug!("failed to respond to GetAcceptedFrontier");
+                            },
+                        }
                 },
                 // Handle internally generated events
                 event = internal_events.recv() => {

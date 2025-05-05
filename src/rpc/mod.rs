@@ -1,15 +1,55 @@
-use crate::consensus;
-use jsonrpsee::server::{RpcModule, Server};
-use std::result;
+use crate::{consensus, VertexHash, WireFormat};
+use futures::channel::oneshot;
+use jsonrpsee::{
+    server::{RpcModule, Server},
+    types::ErrorObjectOwned,
+    IntoResponse, ResponsePayload,
+};
+use serde::Serialize;
+use std::{result, time::Duration};
 use tokio::{
     select,
     sync::{broadcast, mpsc},
+    time::timeout,
 };
-use tracing::{info, trace};
+use tracing::info;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {}
 type Result<T> = result::Result<T, Error>;
+
+#[derive(Debug, Clone, Serialize)]
+pub enum RpcError {
+    Unknown,
+    Busy,
+}
+
+impl Into<ErrorObjectOwned> for RpcError {
+    fn into(self) -> ErrorObjectOwned {
+        let code = match &self {
+            Self::Unknown => -32000,
+            Self::Busy => -32001,
+        };
+        let message = match &self {
+            Self::Unknown => "unknown error",
+            Self::Busy => "server is busy",
+        };
+        let data: Option<serde_json::Value> = match &self {
+            _ => None,
+        };
+        let data = data.map(|val| serde_json::value::to_raw_value(&val).unwrap());
+
+        jsonrpsee::types::ErrorObjectOwned::owned(code, message, data)
+    }
+}
+
+impl IntoResponse for RpcError {
+    type Output = Self;
+
+    fn into_response(self) -> ResponsePayload<'static, Self::Output> {
+        ResponsePayload::error(self)
+    }
+}
 
 /// Configuration details for the RPC process.
 #[derive(Debug, Clone)]
@@ -32,7 +72,7 @@ pub fn start(
 /// Runtime state for the RPC server
 pub struct Runtime {
     config: Config,
-    _consensus_action_ch: mpsc::UnboundedSender<consensus::Action>,
+    consensus_action_ch: mpsc::UnboundedSender<consensus::Action>,
     consensus_event_ch: broadcast::Receiver<consensus::Event>,
 }
 
@@ -45,37 +85,67 @@ impl Runtime {
         // Instantiate the runtime
         Ok(Runtime {
             config,
-            _consensus_action_ch: consensus_action_ch,
+            consensus_action_ch,
             consensus_event_ch,
         })
     }
 
     // Run the RPC processing loop
     async fn run(mut self) {
+        // Persistent context for the JSON RPC
+        struct RpcContext {
+            consensus_action_ch: mpsc::UnboundedSender<consensus::Action>,
+        }
+        let ctx = RpcContext {
+            consensus_action_ch: self.consensus_action_ch.clone(),
+        };
+
+        // Build the RPC server
         let server = Server::builder()
             .build(self.config.http_addr)
             .await
             .unwrap();
-        let mut module = RpcModule::new(());
+        let mut module = RpcModule::new(ctx);
         module
-            .register_method("say_hello", |params, _, _| {
-                format!("Hello, {}", params.one::<String>().unwrap())
+            .register_async_method("get_frontier", |_params, ctx, _| async move {
+                let (sender, resp) = oneshot::channel();
+                ctx.consensus_action_ch
+                    .send(consensus::Action::GetAcceptedFrontier(sender))
+                    .map_err(|_| RpcError::Unknown)?;
+                let frontier = timeout(Duration::from_secs(60), resp)
+                    .await
+                    .map_err(|_| RpcError::Busy)?
+                    .map_err(|_| RpcError::Unknown)?;
+                #[derive(Clone, Serialize)]
+                struct RespEntry {
+                    hash: VertexHash,
+                    height: u64,
+                }
+                Ok::<_, RpcError>(
+                    frontier
+                        .iter()
+                        .map(|vx| RespEntry {
+                            hash: vx.hash(),
+                            height: vx.height,
+                        })
+                        .collect::<Vec<_>>(),
+                )
             })
             .unwrap();
         let addr = server.local_addr().unwrap();
-        info!("HTTP RPC server listening on {}", addr);
+        info!("JSON RPC listening at http://{}", addr);
 
-        let handle = server.start(module);
+        // Start the server
+        let _handle = server.start(module);
 
-        // In this example we don't care about doing shutdown so let's it run forever.
-        // You may use the `ServerHandle` to shut it down or manage it yourself.
-        tokio::spawn(handle.stopped());
-
+        // Handle async events
         loop {
             select! {
                 // Handle consensus events
                 event = self.consensus_event_ch.recv() => {
-                    trace!("received consensus event: {event:?}");
+                    match event {
+                        _ => {},
+                    }
                 },
             }
         }
