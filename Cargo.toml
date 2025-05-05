@@ -11,6 +11,10 @@ path = "src/lib.rs"
 name = "taurusd"
 path = "src/app/taurusd.rs"
 
+[[bin]]
+name = "taurseq"
+path = "src/app/taurseq.rs"
+
 [dependencies]
 async-std = { version = "1.12", features = ["attributes"] }
 async-trait = "0.1"
