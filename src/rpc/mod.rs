@@ -1,6 +1,7 @@
-pub mod types;
+pub mod api;
 
-use crate::{consensus, VertexHash, WireFormat};
+use crate::{consensus, WireFormat};
+use api::{FrontierResponse, VertexMeta};
 use futures::channel::oneshot;
 use jsonrpsee::{
     server::{RpcModule, Server},
@@ -15,9 +16,8 @@ use tokio::{
     time::timeout,
 };
 use tracing::info;
-use types::{FrontierResponse, VertexMeta};
 
-#[derive(thiserror::Error, Debug)]
+#[derive(Debug, Clone)]
 pub enum Error {}
 type Result<T> = result::Result<T, Error>;
 
@@ -25,6 +25,7 @@ type Result<T> = result::Result<T, Error>;
 pub enum RpcError {
     Unknown,
     Busy,
+    BadArg,
 }
 
 impl Into<ErrorObjectOwned> for RpcError {
@@ -32,10 +33,12 @@ impl Into<ErrorObjectOwned> for RpcError {
         let code = match &self {
             Self::Unknown => -32000,
             Self::Busy => -32001,
+            Self::BadArg => -32002,
         };
         let message = match &self {
             Self::Unknown => "unknown error",
             Self::Busy => "server is busy",
+            Self::BadArg => "one or more arguments is incorrect",
         };
         let data: Option<serde_json::Value> = match &self {
             _ => None,
@@ -58,6 +61,11 @@ impl IntoResponse for RpcError {
 #[derive(Debug, Clone)]
 pub struct Config {
     pub bind_addr: String,
+}
+
+// Persistent context for the JSON RPC
+pub struct RpcContext {
+    consensus_action_ch: mpsc::UnboundedSender<consensus::Action>,
 }
 
 /// Setup a new RPC server and run the process
@@ -95,10 +103,7 @@ impl Runtime {
 
     // Run the RPC processing loop
     async fn run(mut self) {
-        // Persistent context for the JSON RPC
-        struct RpcContext {
-            consensus_action_ch: mpsc::UnboundedSender<consensus::Action>,
-        }
+        // Initialize a new RPC context
         let ctx = RpcContext {
             consensus_action_ch: self.consensus_action_ch.clone(),
         };
@@ -109,27 +114,7 @@ impl Runtime {
             .await
             .unwrap();
         let mut module = RpcModule::new(ctx);
-        module
-            .register_async_method("get_frontier", |_params, ctx, _| async move {
-                let (sender, resp) = oneshot::channel();
-                ctx.consensus_action_ch
-                    .send(consensus::Action::GetAcceptedFrontier(sender))
-                    .map_err(|_| RpcError::Unknown)?;
-                let frontier = timeout(Duration::from_secs(60), resp)
-                    .await
-                    .map_err(|_| RpcError::Busy)?
-                    .map_err(|_| RpcError::Unknown)?;
-                Ok::<_, RpcError>(FrontierResponse {
-                    frontier_meta: frontier
-                        .iter()
-                        .map(|vx| VertexMeta {
-                            hash: vx.hash(),
-                            height: vx.height,
-                        })
-                        .collect::<Vec<_>>(),
-                })
-            })
-            .unwrap();
+        api::register_handlers(&mut module);
         let addr = server.local_addr().unwrap();
         info!("JSON RPC listening at {}", addr);
 

@@ -37,8 +37,13 @@ pub enum Event {
 /// Actions that can be performed by the consensus process
 #[derive(Debug)]
 pub enum Action {
-    /// Get the latest accepted frontier
-    GetAcceptedFrontier(oneshot::Sender<Vec<Arc<Vertex>>>),
+    GetAcceptedFrontier {
+        result_ch: oneshot::Sender<Vec<Arc<Vertex>>>,
+    },
+    SubmitVertex {
+        vertex: Arc<Vertex>,
+        result_ch: oneshot::Sender<Result<HashSet<VertexHash>>>,
+    },
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -179,9 +184,12 @@ impl Runtime {
                 // Handle requested actions
                 Some(action) = self.actions_in.recv() => {
                         match action{
-                            Action::GetAcceptedFrontier(resp) =>                                 if let Err(_e) = resp.send(self.dag.get_frontier()) {
+                            Action::GetAcceptedFrontier{result_ch} =>                                 if let Err(_e) = result_ch.send(self.dag.get_frontier()) {
                                 debug!("failed to respond to GetAcceptedFrontier");
                             },
+                            Action::SubmitVertex{vertex, result_ch} => {
+                                todo!()
+                            }
                         }
                 },
                 // Handle internally generated events

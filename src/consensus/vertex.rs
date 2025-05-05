@@ -37,7 +37,7 @@ type Result<T> = result::Result<T, Error>;
 pub type VertexHash = crate::hash::Hash;
 
 /// Transaction vertex, representing a batch of transactions within the graph
-#[derive(Clone, Default, Debug, PartialEq, Eq)]
+#[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Vertex {
     /// Revision number of the vertex structure
     pub version: u32,
