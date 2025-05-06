@@ -16,7 +16,7 @@ pub(crate) fn register_consensus_api(module: &mut RpcModule<ConsensusApi>) {
         })
         .unwrap();
     module
-        .register_async_method("submit_vertex", |params, ctx, _| async move {
+        .register_async_method("insert_vertex", |params, ctx, _| async move {
             let vertex = Arc::new(params.one::<Vertex>().map_err(|_| RpcError::BadArg)?);
             Ok::<_, RpcError>(ctx.insert_vertex(&vertex).await?)
         })

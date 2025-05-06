@@ -4,7 +4,7 @@ pub mod namespace;
 pub mod transaction;
 pub mod vertex;
 
-use crate::p2p;
+use crate::{p2p, WireFormat};
 use api::ConsensusApi;
 use chrono::DateTime;
 use namespace::NamespaceId;
@@ -193,6 +193,8 @@ impl Runtime {
                             Action::SubmitVertex{vertex, result_ch} => {
                                 if let Err(_e) = result_ch.send(self.dag.try_insert(&vertex).map_err(Error::from)) {
                                     debug!("failed to respond to SubmitVertex");
+                                } else {
+                                    info!("inserted {}", vertex.hash().to_hex());
                                 }
                             }
                         }
