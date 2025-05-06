@@ -67,12 +67,12 @@ fn parse_cli_args() -> ArgMatches {
         .arg(arg!(--bootnode <MULTIADDR> "Specify boot node to connect to").required(false))
         .arg(arg!(-d --data_dir <PATH> "Specify data directory").required(false))
         .arg(
-            arg!(--http_addr <ADDR> "IP address to serve http RPC")
+            arg!(--rpc_addr <ADDR> "IP address to serve JSON RPC")
                 .required(false)
                 .default_value("127.0.0.1"),
         )
         .arg(
-            arg!(--http_port <PORT> "Port number to serve http RPC")
+            arg!(--rpc_port <PORT> "Port number to serve JSON RPC")
                 .required(false)
                 .default_value("8545"),
         )
@@ -134,10 +134,10 @@ fn build_consensus_cfg(args: &ArgMatches) -> consensus::Config {
 
 /// Build RPC [`rpc::Config`] from parsed CLI args
 fn build_rpc_cfg(args: &ArgMatches) -> rpc::Config {
-    let http_ip = args.get_one::<String>("http_addr").unwrap();
-    let http_port = args.get_one::<String>("http_port").unwrap();
+    let addr = args.get_one::<String>("rpc_addr").unwrap();
+    let port = args.get_one::<String>("rpc_port").unwrap();
     rpc::Config {
-        bind_addr: format!("{http_ip}:{http_port}"),
+        bind_addr: format!("{addr}:{port}"),
     }
 }
 
