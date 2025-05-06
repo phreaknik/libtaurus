@@ -1,3 +1,5 @@
+mod util;
+
 use clap::{arg, command, ArgMatches};
 use libtaurus::sequencer;
 pub use libtaurus::{
@@ -5,14 +7,13 @@ pub use libtaurus::{
     hash::Hash,
     p2p, params,
 };
-use tracing_subscriber::{fmt::time::UtcTime, EnvFilter, FmtSubscriber};
 
 fn main() {
     // Parse CLI args
     let args = parse_cli_args();
 
     // Set up a subscriber to capture logs
-    setup_logger(&args);
+    util::setup_logger(&args);
 
     // Build config from args
     let cfg = build_cfg(&args);
@@ -32,15 +33,6 @@ fn parse_cli_args() -> ArgMatches {
                 .default_value("info"),
         )
         .get_matches()
-}
-
-/// Set up logger
-fn setup_logger<'a>(args: &'a ArgMatches) {
-    let subscriber = FmtSubscriber::builder()
-        .with_env_filter(EnvFilter::new(args.get_one::<String>("log_level").unwrap()))
-        .with_timer(UtcTime::rfc_3339())
-        .finish();
-    tracing::subscriber::set_global_default(subscriber).expect("failed to start logger");
 }
 
 /// Build application config from parsed CLI args

@@ -1,3 +1,5 @@
+mod util;
+
 use clap::{arg, command, ArgMatches};
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
 use libp2p::identity::Keypair;
@@ -9,7 +11,6 @@ pub use libtaurus::{
 };
 use std::{fs, path::PathBuf};
 use tracing::error;
-use tracing_subscriber::{fmt::time::UtcTime, EnvFilter, FmtSubscriber};
 
 /// File name of the stored identity_key
 const IDENTITY_KEY_FILE: &str = "identity_key";
@@ -41,7 +42,7 @@ async fn main() {
     let args = parse_cli_args();
 
     // Set up a subscriber to capture logs
-    setup_logger(&args);
+    util::setup_logger(&args);
 
     // Build config from args
     let cfg = build_cfg(&args);
@@ -81,15 +82,6 @@ fn parse_cli_args() -> ArgMatches {
                 .default_value("info"),
         )
         .get_matches()
-}
-
-/// Set up logger
-fn setup_logger<'a>(args: &'a ArgMatches) {
-    let subscriber = FmtSubscriber::builder()
-        .with_env_filter(EnvFilter::new(args.get_one::<String>("log_level").unwrap()))
-        .with_timer(UtcTime::rfc_3339())
-        .finish();
-    tracing::subscriber::set_global_default(subscriber).expect("failed to start logger");
 }
 
 /// Determine system directories for the application to use
