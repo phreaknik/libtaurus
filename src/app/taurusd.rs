@@ -77,6 +77,10 @@ fn parse_cli_args() -> ArgMatches {
                 .default_value("8545"),
         )
         .arg(
+            arg!(--rpc_port_search "Increment RPC port number until an available port is found")
+                .required(false),
+        )
+        .arg(
             arg!(-L --log_level <LEVEL> "Set log level (error, warn, info, debug, trace)")
                 .required(false)
                 .default_value("info"),
@@ -134,10 +138,14 @@ fn build_consensus_cfg(args: &ArgMatches) -> consensus::Config {
 
 /// Build RPC [`rpc::Config`] from parsed CLI args
 fn build_rpc_cfg(args: &ArgMatches) -> rpc::Config {
-    let addr = args.get_one::<String>("rpc_addr").unwrap();
-    let port = args.get_one::<String>("rpc_port").unwrap();
     rpc::Config {
-        bind_addr: format!("{addr}:{port}"),
+        bind_addr: args.get_one::<String>("rpc_addr").unwrap().clone(),
+        bind_port: args
+            .get_one::<String>("rpc_port")
+            .unwrap()
+            .parse::<u16>()
+            .unwrap(),
+        search_port: args.get_flag("rpc_port_search"),
     }
 }
 

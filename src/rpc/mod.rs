@@ -9,7 +9,7 @@ use jsonrpsee::{
 use serde::Serialize;
 use std::result;
 use tokio::select;
-use tracing::info;
+use tracing::{error, info};
 
 #[derive(Debug, Clone)]
 pub enum Error {}
@@ -64,6 +64,8 @@ impl IntoResponse for RpcError {
 #[derive(Debug, Clone)]
 pub struct Config {
     pub bind_addr: String,
+    pub bind_port: u16,
+    pub search_port: bool,
 }
 
 /// Setup a new RPC server and run the process
@@ -76,6 +78,8 @@ pub fn start(config: Config, consensus_api: ConsensusApi) {
 /// Runtime state for the RPC server
 pub struct Runtime {
     config: Config,
+    bind_addr: String,
+    bind_port: u16,
     consensus_api: ConsensusApi,
 }
 
@@ -83,18 +87,34 @@ impl Runtime {
     fn new(config: Config, consensus_api: ConsensusApi) -> Result<Runtime> {
         // Instantiate the runtime
         Ok(Runtime {
+            bind_addr: config.bind_addr.clone(),
+            bind_port: config.bind_port,
             config,
             consensus_api,
         })
     }
 
-    // Run the RPC processing loop
-    async fn run(self) {
-        // Build the RPC server
-        let server = Server::builder()
-            .build(self.config.bind_addr)
-            .await
-            .unwrap();
+    /// Return the RPC server address
+    fn address(&self) -> String {
+        format!("{}:{}", self.bind_addr, self.bind_port)
+    }
+
+    /// Run the RPC processing loop
+    async fn run(mut self) {
+        // Build the RPC server, and optionally scan for an open port to bind
+        let server = loop {
+            match Server::builder().build(self.address()).await {
+                Ok(server) => break server,
+                Err(e) => {
+                    if self.config.search_port && self.bind_port < u16::MAX {
+                        self.bind_port += 1;
+                    } else {
+                        error!("Failed to start RPC: {e}");
+                        return;
+                    }
+                }
+            }
+        };
         let mut module = RpcModule::new(self.consensus_api.duplicate());
         handlers::register_consensus_api(&mut module);
         let addr = server.local_addr().unwrap();
