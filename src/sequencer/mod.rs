@@ -1,4 +1,4 @@
-use crate::{consensus, Vertex, VertexHash};
+use crate::{consensus, Vertex, VertexHash, WireFormat};
 use jsonrpsee::{core::client::ClientT, rpc_params, ws_client::WsClientBuilder};
 use std::result;
 use tokio::{
@@ -69,7 +69,9 @@ impl Sequencer {
                     proposal.parents = frontier_meta.iter().map(|meta| meta.hash).collect();
 
                     // Submit the vertex
+                    let vhash = proposal.hash();
                     let _resp: Vec<VertexHash> = ws_client.request("insert_vertex", rpc_params![proposal]).await?;
+                    info!("Proposed vertex {}", vhash.to_hex());
                 },
             }
         }
