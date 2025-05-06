@@ -310,14 +310,19 @@ type SwarmAction<'a> =
 pub(super) struct Config {
     /// Keypair used for signing messages
     keys: Keypair,
+
     /// Identify protocol configuration
     identify_cfg: identify::Config,
+
     /// Kademlia protocol configuration
     kad_cfg: kad::Config,
+
     /// Gossipsub protocol configuration
     gossipsub_cfg: gossipsub::Config,
+
     /// Peer RPC protocol configuration
     consensus_rpc_cfg: consensus_rpc::Config,
+
     /// Bootstrap nodes to join the P2P network
     boot_peers: Vec<Multiaddr>,
 }
