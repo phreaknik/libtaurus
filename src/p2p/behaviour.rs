@@ -82,7 +82,7 @@ impl<'a> Behaviour {
             peer_db,
             inner: InnerBehaviour::new(config.clone())?,
         };
-        b.add_boot_nodes(&config);
+        b.add_boot_peers(&config);
         Ok(b)
     }
 
@@ -110,20 +110,20 @@ impl<'a> Behaviour {
         }
     }
 
-    /// Add bootnodes to dial and bootstrap into the P2P network.
-    /// The list of bootnodes will include both explicitely provided bootnodes in the config, as
-    /// well as previously reachable peers saved in the peer database.
-    pub fn add_boot_nodes(&mut self, config: &Config) {
+    /// Add boot peers to dial and bootstrap into the P2P network. The list of boot peers will
+    /// include both explicitely provided boot peers in the config, as well as previously reachable
+    /// peers saved in the peer database.
+    pub fn add_boot_peers(&mut self, config: &Config) {
         let rtxn = self.peer_db.env.read_txn().unwrap();
         config
-            .boot_nodes
+            .boot_peers
             .clone()
             .into_iter()
             .filter_map(|mut addr| {
                 if let Protocol::P2p(peer_id) = addr.pop().unwrap() {
                     Some((peer_id, vec![addr]))
                 } else {
-                    warn!("Skipping incomplete bootnode address: {addr}");
+                    warn!("Skipping incomplete boot peer address: {addr}");
                     None
                 }
             })
@@ -319,11 +319,11 @@ pub(super) struct Config {
     /// Peer RPC protocol configuration
     consensus_rpc_cfg: consensus_rpc::Config,
     /// Bootstrap nodes to join the P2P network
-    boot_nodes: Vec<Multiaddr>,
+    boot_peers: Vec<Multiaddr>,
 }
 
 impl Config {
-    pub fn new(keys: Keypair, boot_nodes: Vec<Multiaddr>) -> Self {
+    pub fn new(keys: Keypair, boot_peers: Vec<Multiaddr>) -> Self {
         let mut kad_cfg = kad::Config::default();
         kad_cfg.set_query_timeout(DEFAULT_KAD_QUERY_TIMOUT);
         let pubkey = keys.public();
@@ -340,7 +340,7 @@ impl Config {
             kad_cfg,
             consensus_rpc_cfg: consensus_rpc::Config {},
             gossipsub_cfg,
-            boot_nodes,
+            boot_peers,
         }
     }
 }

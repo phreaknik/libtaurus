@@ -59,7 +59,7 @@
 //#[tokio::test]
 //async fn add_boot_nodes() {
 //    // Setup test
-//    let test_dirs = reset_test_dirs("add_boot_nodes");
+//    let test_dirs = reset_test_dirs("add_boot_peers");
 //
 //    // Create behaviour WITHOUT BOOT PEERS
 //    let peer_db = PeerDatabase::open(&test_dirs.data_dir(), true).unwrap();

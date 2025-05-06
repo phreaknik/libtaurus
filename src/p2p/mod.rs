@@ -86,7 +86,7 @@ pub struct Config {
     /// Path to the p2p data directory
     pub data_dir: PathBuf,
     /// Bootstrap nodes to join P2P network
-    pub boot_nodes: Vec<Multiaddr>,
+    pub boot_peers: Vec<Multiaddr>,
     /// Key used to identify self on p2p network
     pub identity_key: Keypair,
 }
@@ -122,7 +122,7 @@ async fn task_fn(
         .with_quic()
         .with_behaviour(|key| {
             Behaviour::new(
-                behaviour::Config::new(key.clone(), config.boot_nodes.clone()),
+                behaviour::Config::new(key.clone(), config.boot_peers.clone()),
                 peer_db,
             )
             .unwrap()

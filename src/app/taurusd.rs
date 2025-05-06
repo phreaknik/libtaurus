@@ -64,7 +64,7 @@ async fn main() {
 fn parse_cli_args() -> ArgMatches {
     command!() // initialize CLI with details from cargo.toml
         .about("Start taurusd network client")
-        .arg(arg!(--bootnode <MULTIADDR> "Specify boot node to connect to").required(false))
+        .arg(arg!(--bootpeer <MULTIADDR> "Specify a boot peer to connect to").required(false))
         .arg(arg!(-d --data_dir <PATH> "Specify data directory").required(false))
         .arg(
             arg!(--rpc_addr <ADDR> "IP address to serve JSON RPC")
@@ -113,13 +113,13 @@ fn build_p2p_cfg(args: &ArgMatches) -> p2p::Config {
     // Read the peer identity key if it exists, or create a new one.
     let data_dir = parse_data_dir(args);
     let identity_key = get_peer_identity_key(&data_dir);
-    let boot_nodes = match args.try_get_one::<String>("bootnode") {
-        Ok(Some(v)) => vec![v.parse().expect("failed to parse bootnode address")],
+    let boot_peers = match args.try_get_one::<String>("bootpeer") {
+        Ok(Some(v)) => vec![v.parse().expect("failed to parse boot peer address")],
         _ => Vec::new(),
     };
     p2p::Config {
         data_dir: data_dir.join("p2p/"),
-        boot_nodes,
+        boot_peers,
         identity_key,
     }
 }
