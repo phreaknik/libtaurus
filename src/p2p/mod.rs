@@ -11,8 +11,8 @@ use core::result;
 pub use database::{PeerDatabase, PeerInfo};
 use futures::StreamExt;
 use libp2p::{
-    gossipsub, identity::Keypair, kad, multiaddr::Protocol, noise,
-    request_response::InboundRequestId, swarm::SwarmEvent, tcp, yamux, Multiaddr, PeerId,
+    gossipsub, identity::Keypair, kad, multiaddr::Protocol, request_response::InboundRequestId,
+    swarm::SwarmEvent, Multiaddr, PeerId,
 };
 use std::{io, path::PathBuf, time::Duration};
 use tokio::{
@@ -121,12 +121,6 @@ async fn task_fn(
     // Build the swarm
     let mut swarm = libp2p::SwarmBuilder::with_existing_identity(config.identity_key.clone())
         .with_tokio()
-        .with_tcp(
-            tcp::Config::default(),
-            noise::Config::new,
-            yamux::Config::default,
-        )
-        .unwrap()
         .with_quic()
         .with_behaviour(|key| {
             Behaviour::new(
