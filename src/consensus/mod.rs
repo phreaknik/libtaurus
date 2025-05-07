@@ -100,12 +100,12 @@ impl GenesisConfig {
 /// Run the consensus process, spawning the task as a new thread. Returns an [`broadcast::Sender`],
 /// which can be subscribed to, to receive consensus events from the task.
 pub fn start(config: Config, p2p_api: P2pApi) -> ConsensusApi {
-    // Spawn a task to execute the runtime
+    // Spawn a task to run the process
     let (action_sender, action_receiver) = mpsc::unbounded_channel();
     let (event_sender, event_receiver) = broadcast::channel(CONSENSUS_EVENT_CHAN_CAPACITY);
-    let runtime = Runtime::new(config, action_receiver, event_sender.clone(), p2p_api)
-        .expect("Failed to start consensus runtime");
-    let handle = tokio::spawn(runtime.run());
+    let process = Process::new(config, action_receiver, event_sender.clone(), p2p_api)
+        .expect("Failed to start consensus process");
+    let handle = tokio::spawn(process.task_fn());
     tokio::spawn(async move {
         if let Err(e) = handle.await {
             error!("Consensus stopped with error: {e}");
@@ -118,7 +118,7 @@ pub fn start(config: Config, p2p_api: P2pApi) -> ConsensusApi {
 }
 
 /// Runtime state for the consensus process
-pub struct Runtime {
+pub struct Process {
     _config: Config,
     actions_in: UnboundedReceiver<Action>,
     events_out: broadcast::Sender<Event>,
@@ -126,20 +126,20 @@ pub struct Runtime {
     dag: dag::DAG,
 }
 
-impl Runtime {
+impl Process {
     fn new(
         config: Config,
         actions_in: UnboundedReceiver<Action>,
         events_out: broadcast::Sender<Event>,
         p2p_api: P2pApi,
-    ) -> Result<Runtime> {
+    ) -> Result<Process> {
         info!("Starting consensus...");
 
         // Construct the DAG, initialized with the genesis vertex
         let dag = dag::DAG::new(config.dag.clone(), &[config.genesis.to_vertex()])?;
 
-        // Instantiate the runtime
-        Ok(Runtime {
+        // Instantiate the process
+        Ok(Process {
             _config: config.clone(),
             actions_in,
             events_out,
@@ -149,7 +149,7 @@ impl Runtime {
     }
 
     // Run the consensus processing loop
-    async fn run(mut self) {
+    async fn task_fn(mut self) {
         // Wait until the events channel has listeners, before initializing the DAG
         while self.events_out.receiver_count() == 0 {}
 

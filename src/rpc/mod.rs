@@ -70,23 +70,23 @@ pub struct Config {
 
 /// Setup a new RPC server and run the process
 pub fn start(config: Config, consensus_api: ConsensusApi) {
-    // Spawn a task to execute the runtime
-    let runtime = Runtime::new(config, consensus_api).expect("Failed to start RPC server");
-    tokio::spawn(runtime.run());
+    // Spawn a task to run the process
+    let process = Process::new(config, consensus_api).expect("Failed to start RPC server");
+    tokio::spawn(process.task_fn());
 }
 
-/// Runtime state for the RPC server
-pub struct Runtime {
+/// Runtime state for the RPC server process
+pub struct Process {
     config: Config,
     bind_addr: String,
     bind_port: u16,
     consensus_api: ConsensusApi,
 }
 
-impl Runtime {
-    fn new(config: Config, consensus_api: ConsensusApi) -> Result<Runtime> {
-        // Instantiate the runtime
-        Ok(Runtime {
+impl Process {
+    fn new(config: Config, consensus_api: ConsensusApi) -> Result<Process> {
+        // Instantiate the process
+        Ok(Process {
             bind_addr: config.bind_addr.clone(),
             bind_port: config.bind_port,
             config,
@@ -100,7 +100,7 @@ impl Runtime {
     }
 
     /// Run the RPC processing loop
-    async fn run(mut self) {
+    async fn task_fn(mut self) {
         // Build the RPC server, and optionally scan for an open port to bind
         let server = loop {
             match Server::builder().build(self.address()).await {
