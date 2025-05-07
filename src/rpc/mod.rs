@@ -115,7 +115,7 @@ impl Runtime {
                 }
             }
         };
-        let mut module = RpcModule::new(self.consensus_api.duplicate());
+        let mut module = RpcModule::new(self.consensus_api.clone());
         handlers::register_consensus_api(&mut module);
         let addr = server.local_addr().unwrap();
         info!("JSON RPC listening at {}", addr);

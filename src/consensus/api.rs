@@ -41,15 +41,6 @@ impl ConsensusApi {
         }
     }
 
-    /// Create a new API object, with duplicate subscribers
-    pub fn duplicate(&self) -> ConsensusApi {
-        ConsensusApi {
-            timeout: self.timeout,
-            consensus_action_ch: self.consensus_action_ch.clone(),
-            consensus_event_ch: self.consensus_event_ch.resubscribe(),
-        }
-    }
-
     pub fn subscribe_events(&self) -> broadcast::Receiver<Event> {
         self.consensus_event_ch.resubscribe()
     }
@@ -80,6 +71,16 @@ impl ConsensusApi {
             result_ch: resp_tx,
         })?;
         Ok(timeout(Duration::from_secs(self.timeout), resp_rx).await???)
+    }
+}
+
+impl Clone for ConsensusApi {
+    fn clone(&self) -> Self {
+        ConsensusApi {
+            timeout: self.timeout,
+            consensus_action_ch: self.consensus_action_ch.clone(),
+            consensus_event_ch: self.consensus_event_ch.resubscribe(),
+        }
     }
 }
 
