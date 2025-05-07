@@ -186,7 +186,7 @@ async fn task_fn(
                 }
                 e => {
                     debug!("unhandled p2p event: {e:#?}");
-                } // Ignore other events
+                }
             },
 
             // Handle requested actions

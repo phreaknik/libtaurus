@@ -4,15 +4,16 @@ use libp2p::{
     allow_block_list,
     core::Endpoint,
     gossipsub::{self, MessageAcceptance, MessageAuthenticity, MessageId, Sha256Topic},
+    identify,
     identity::Keypair,
-    kad::{self, store::MemoryStore, NoKnownPeers},
+    kad::{self, store::MemoryStore, NoKnownPeers, RoutingUpdate},
     multiaddr::Protocol,
     request_response::InboundRequestId,
     swarm::{
         ConnectionDenied, ConnectionId, FromSwarm, NetworkBehaviour, THandler, THandlerInEvent,
         THandlerOutEvent, ToSwarm,
     },
-    upnp, {identify, Multiaddr, PeerId},
+    upnp, Multiaddr, PeerId,
 };
 use std::{
     borrow::BorrowMut,
@@ -21,7 +22,7 @@ use std::{
     time::Duration,
 };
 use strum::IntoEnumIterator;
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 pub const PROTOCOL_NAME: &[u8; 13] = b"/taurus/0.1.0";
 
@@ -143,7 +144,11 @@ impl<'a> Behaviour {
             )
             .for_each(|(peer, addrs)| {
                 for address in addrs {
-                    let _ = self.inner.borrow_mut().kademlia.add_address(&peer, address);
+                    match self.inner.borrow_mut().kademlia.add_address(&peer, address) {
+                        RoutingUpdate::Success => info!("added peer {peer}"),
+                        RoutingUpdate::Pending => warn!("waiting to add {peer}"),
+                        RoutingUpdate::Failed => warn!("failed to add {peer}"),
+                    }
                 }
             });
     }
