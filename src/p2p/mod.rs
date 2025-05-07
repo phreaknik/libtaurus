@@ -137,9 +137,6 @@ async fn task_fn(
     swarm
         .listen_on("/ip4/0.0.0.0/udp/0/quic-v1".parse().unwrap())
         .expect("Cannot start listener on {local_addr}");
-    swarm
-        .listen_on("/ip4/0.0.0.0/tcp/0".parse().unwrap())
-        .expect("Cannot start listener on {local_addr}");
 
     // Bootstrap into the P2P network
     swarm.behaviour_mut().bootstrap();
