@@ -71,7 +71,7 @@ pub struct Config {
     pub genesis: GenesisConfig,
 
     /// Path to the consensus data directory
-    pub data_dir: PathBuf,
+    pub datadir: PathBuf,
 
     /// DAG configuration
     pub dag: dag::Config,

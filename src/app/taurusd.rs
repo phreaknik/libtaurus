@@ -87,19 +87,19 @@ fn parse_cli_args() -> ArgMatches {
     command!() // initialize CLI with details from cargo.toml
         .about("Start taurusd network client")
         .arg(arg!(--bootpeer <MULTIADDR> "Specify a boot peer to connect to").required(false))
-        .arg(arg!(-d --data_dir <PATH> "Specify data directory").required(false))
+        .arg(arg!(-d --datadir <PATH> "Specify data directory").required(false))
         .arg(
-            arg!(--rpc_addr <ADDR> "IP address to serve JSON RPC")
+            arg!(--rpcbind <ADDR> "IP address to serve JSON RPC")
                 .required(false)
                 .default_value("127.0.0.1"),
         )
         .arg(
-            arg!(--rpc_port <PORT> "Port number to serve JSON RPC")
+            arg!(--rpcport <PORT> "Port number to serve JSON RPC")
                 .required(false)
                 .default_value("8545"),
         )
         .arg(
-            arg!(--rpc_port_search "Increment RPC port number until an available port is found")
+            arg!(--rpcportsearch "Increment RPC port number until an available port is found")
                 .required(false),
         )
         .arg(
@@ -111,12 +111,12 @@ fn parse_cli_args() -> ArgMatches {
 }
 
 /// Determine system directories for the application to use
-fn parse_data_dir(args: &ArgMatches) -> PathBuf {
+fn parse_datadir(args: &ArgMatches) -> PathBuf {
     // TODO: look into etcetera AppStrategies. Instead of manually building data/config dirs, setup
     // an app strategy and use the provided API any time you want a file or subdir of the data,
     // config, etc dirs.
     let app_dirs = choose_native_strategy().expect("failed to build application directories");
-    args.get_one::<String>("data_dir")
+    args.get_one::<String>("datadir")
         .map(|s| PathBuf::from(s))
         .unwrap_or(app_dirs.data_dir().join("taurus/"))
 }
@@ -133,14 +133,14 @@ fn build_cfg(args: &ArgMatches) -> Config {
 /// Build P2P [`p2p::Config`] from parsed CLI args
 fn build_p2p_cfg(args: &ArgMatches) -> p2p::Config {
     // Read the peer identity key if it exists, or create a new one.
-    let data_dir = parse_data_dir(args);
-    let identity_key = get_peer_identity_key(&data_dir);
+    let datadir = parse_datadir(args);
+    let identity_key = get_peer_identity_key(&datadir);
     let boot_peers = match args.try_get_one::<String>("bootpeer") {
         Ok(Some(v)) => vec![v.parse().expect("failed to parse boot peer address")],
         _ => Vec::new(),
     };
     p2p::Config {
-        data_dir: data_dir.join("p2p/"),
+        datadir: datadir.join("p2p/"),
         boot_peers,
         identity_key,
     }
@@ -148,11 +148,11 @@ fn build_p2p_cfg(args: &ArgMatches) -> p2p::Config {
 
 /// Build consensus [`consensus::Config`] from parsed CLI args
 fn build_consensus_cfg(args: &ArgMatches) -> consensus::Config {
-    let data_dir = parse_data_dir(args).join("consensus/");
+    let datadir = parse_datadir(args).join("consensus/");
     let genesis = GenesisConfig {};
     let dag = dag::Config::default();
     consensus::Config {
-        data_dir: data_dir.clone(),
+        datadir: datadir.clone(),
         genesis,
         dag,
     }
@@ -161,19 +161,19 @@ fn build_consensus_cfg(args: &ArgMatches) -> consensus::Config {
 /// Build RPC [`rpc::Config`] from parsed CLI args
 fn build_rpc_cfg(args: &ArgMatches) -> rpc::Config {
     rpc::Config {
-        bind_addr: args.get_one::<String>("rpc_addr").unwrap().clone(),
+        bind_addr: args.get_one::<String>("rpcbind").unwrap().clone(),
         bind_port: args
-            .get_one::<String>("rpc_port")
+            .get_one::<String>("rpcport")
             .unwrap()
             .parse::<u16>()
             .unwrap(),
-        search_port: args.get_flag("rpc_port_search"),
+        search_port: args.get_flag("rpcportsearch"),
     }
 }
 
-fn get_peer_identity_key(data_dir: &PathBuf) -> Keypair {
-    let keypath = data_dir.join(IDENTITY_KEY_FILE);
-    let _ = fs::create_dir_all(&data_dir);
+fn get_peer_identity_key(datadir: &PathBuf) -> Keypair {
+    let keypath = datadir.join(IDENTITY_KEY_FILE);
+    let _ = fs::create_dir_all(&datadir);
     match fs::read(&keypath) {
         Ok(keydata) => {
             Keypair::from_protobuf_encoding(&keydata).expect("Failed to decode keyfile!")

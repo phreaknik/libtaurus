@@ -10,7 +10,7 @@
 //        app_name: format!("Cordelia P2P Test {test_name}"),
 //    })
 //    .unwrap();
-//    match fs::remove_dir_all(app_dirs.data_dir().as_path()) {
+//    match fs::remove_dir_all(app_dirs.datadir().as_path()) {
 //        Err(e) => {
 //            if let ErrorKind::NotFound = e.kind() {
 //                Ok(())
@@ -21,7 +21,7 @@
 //        _ => Ok(()),
 //    }
 //    .expect("failed to remove old test data directory");
-//    fs::create_dir_all(app_dirs.data_dir().as_path())
+//    fs::create_dir_all(app_dirs.datadir().as_path())
 //        .expect("failed to create test data directory");
 //    app_dirs
 //}
@@ -38,7 +38,7 @@
 // 12D3KooWJ4CkDESz7bfG2XLoKWwTjVUh1XftYtZh3dzo4AaD9qvG".parse().unwrap(),    ];
 //
 //    // Create behaviour
-//    let peer_db = PeerDatabase::open(&test_dirs.data_dir(), true).unwrap();
+//    let peer_db = PeerDatabase::open(&test_dirs.datadir(), true).unwrap();
 //    let cfg = behaviour::Config::new(Keypair::generate_ed25519(), boot_peers);
 //    let mut _bhvr = Behaviour::new(cfg, peer_db).unwrap();
 //
@@ -62,7 +62,7 @@
 //    let test_dirs = reset_test_dirs("add_boot_peers");
 //
 //    // Create behaviour WITHOUT BOOT PEERS
-//    let peer_db = PeerDatabase::open(&test_dirs.data_dir(), true).unwrap();
+//    let peer_db = PeerDatabase::open(&test_dirs.datadir(), true).unwrap();
 //    let cfg = behaviour::Config::new(Keypair::generate_ed25519(), Vec::new());
 //    let mut bhvr = Behaviour::new(cfg, peer_db).unwrap();
 //

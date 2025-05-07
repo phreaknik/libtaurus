@@ -86,7 +86,7 @@ pub enum Action {
 #[derive(Clone)]
 pub struct Config {
     /// Path to the p2p data directory
-    pub data_dir: PathBuf,
+    pub datadir: PathBuf,
     /// Bootstrap nodes to join P2P network
     pub boot_peers: Vec<Multiaddr>,
     /// Key used to identify self on p2p network
@@ -115,7 +115,7 @@ async fn task_fn(
     info!("Starting p2p client...");
 
     // Open the peer database
-    let peer_db = PeerDatabase::open(&config.data_dir.join(DATABASE_DIR), true)
+    let peer_db = PeerDatabase::open(&config.datadir.join(DATABASE_DIR), true)
         .expect("Failed to open peer database");
 
     // Build the swarm
