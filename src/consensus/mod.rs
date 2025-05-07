@@ -34,6 +34,9 @@ pub enum Event {
     /// vertices are sorted according to the order they were first observed, so that they may be
     /// used as parents in a new vertex which extends the graph.
     NewFrontier(Vec<Arc<Vertex>>),
+
+    /// The process has been stopped
+    Stopped,
 }
 
 /// Actions that can be performed by the consensus process
@@ -100,9 +103,15 @@ pub fn start(config: Config, p2p_api: P2pApi) -> ConsensusApi {
     // Spawn a task to execute the runtime
     let (action_sender, action_receiver) = mpsc::unbounded_channel();
     let (event_sender, event_receiver) = broadcast::channel(CONSENSUS_EVENT_CHAN_CAPACITY);
-    let runtime = Runtime::new(config, action_receiver, event_sender, p2p_api)
+    let runtime = Runtime::new(config, action_receiver, event_sender.clone(), p2p_api)
         .expect("Failed to start consensus runtime");
-    tokio::spawn(runtime.run());
+    let handle = tokio::spawn(runtime.run());
+    tokio::spawn(async move {
+        if let Err(e) = handle.await {
+            error!("Consensus stopped with error: {e}");
+        }
+        event_sender.send(Event::Stopped).unwrap();
+    });
 
     // Return the communication channels
     ConsensusApi::new(action_sender, event_receiver)

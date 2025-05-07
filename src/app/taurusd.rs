@@ -10,6 +10,7 @@ pub use libtaurus::{
     p2p, params,
 };
 use std::{fs, path::PathBuf};
+use tokio::select;
 use tracing::error;
 
 /// File name of the stored identity_key
@@ -52,12 +53,33 @@ async fn main() {
 
     // Start the consensus process
     let consensus_api = consensus::start(cfg.consensus, p2p_api);
+    let mut consensus_events = consensus_api.subscribe_events();
 
     // Start the RPC server
     rpc::start(cfg.rpc, consensus_api);
 
     // Handle events
-    loop {}
+    loop {
+        select! {
+            // Handle P2P events
+            event = consensus_events.recv() => {
+                match event {
+                    Ok(consensus::Event::Stopped) =>{
+                        error!("Consensus stopped.");
+                        error!("Shutting down.");
+                        // TODO: clean shutdown of all processes
+                        return
+                    },
+                    Err(e) =>{
+                        error!("Consensus error: {e}");
+                        error!("Shutting down.");
+                        return
+                    },
+                    _ => {},
+                }
+            },
+        }
+    }
 }
 
 /// Parse CLI args
