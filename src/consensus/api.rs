@@ -22,6 +22,7 @@ type Result<T> = result::Result<T, Error>;
 
 const DEFAULT_TIMEOUT: u64 = 60;
 
+/// API wrapper to communicate with the consensus process
 pub struct ConsensusApi {
     timeout: u64,
     consensus_action_ch: mpsc::UnboundedSender<Action>,
@@ -41,6 +42,7 @@ impl ConsensusApi {
         }
     }
 
+    /// Get a subscription handler for events
     pub fn subscribe_events(&self) -> broadcast::Receiver<Event> {
         self.consensus_event_ch.resubscribe()
     }

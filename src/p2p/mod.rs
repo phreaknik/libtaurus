@@ -1,8 +1,10 @@
+pub mod api;
 mod behaviour;
 mod broadcast;
 pub mod consensus_rpc;
 mod database;
 
+use api::P2pApi;
 use behaviour::Behaviour;
 pub use broadcast::{Broadcast, BroadcastData, BroadcastValidationReport};
 use core::result;
@@ -17,7 +19,7 @@ use tokio::{
     select,
     sync::{
         self,
-        mpsc::{self, UnboundedReceiver, UnboundedSender},
+        mpsc::{self, UnboundedReceiver},
         oneshot,
     },
 };
@@ -94,14 +96,14 @@ pub struct Config {
 /// Run the p2p networking client, spawning the client task as a new thread. Returns an
 /// [`UnboundedSender`], which can be used to send actions to the running task. Also returns a
 /// [`broadcast::Sender`], which can be subscribed to, to receive P2P events from the task.
-pub fn start(config: Config) -> (UnboundedSender<Action>, sync::broadcast::Receiver<Event>) {
+pub fn start(config: Config) -> P2pApi {
     // Spawn the task
     let (action_sender, action_receiver) = mpsc::unbounded_channel();
     let (event_sender, event_receiver) = sync::broadcast::channel(P2P_EVENT_CHAN_CAPACITY);
     tokio::spawn(task_fn(config, action_receiver, event_sender));
 
     // Return the communication channels
-    (action_sender, event_receiver)
+    P2pApi::new(action_sender, event_receiver)
 }
 
 /// The task function which runs the p2p networking client.

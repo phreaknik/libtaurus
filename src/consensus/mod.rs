@@ -4,6 +4,7 @@ pub mod namespace;
 pub mod transaction;
 pub mod vertex;
 
+use crate::p2p::api::P2pApi;
 use crate::{p2p, WireFormat};
 use api::ConsensusApi;
 use chrono::DateTime;
@@ -12,7 +13,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::result;
 use std::sync::Arc;
-use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{self, UnboundedReceiver};
 use tokio::{select, sync::broadcast, sync::oneshot};
 use tracing::{debug, error, info, warn};
 use transaction::TxRoot;
@@ -95,22 +96,12 @@ impl GenesisConfig {
 
 /// Run the consensus process, spawning the task as a new thread. Returns an [`broadcast::Sender`],
 /// which can be subscribed to, to receive consensus events from the task.
-pub fn start(
-    config: Config,
-    p2p_action_ch: UnboundedSender<p2p::Action>,
-    p2p_event_ch: broadcast::Receiver<p2p::Event>,
-) -> ConsensusApi {
+pub fn start(config: Config, p2p_api: P2pApi) -> ConsensusApi {
     // Spawn a task to execute the runtime
     let (action_sender, action_receiver) = mpsc::unbounded_channel();
     let (event_sender, event_receiver) = broadcast::channel(CONSENSUS_EVENT_CHAN_CAPACITY);
-    let runtime = Runtime::new(
-        config,
-        action_receiver,
-        event_sender,
-        p2p_action_ch,
-        p2p_event_ch,
-    )
-    .expect("Failed to start consensus runtime");
+    let runtime = Runtime::new(config, action_receiver, event_sender, p2p_api)
+        .expect("Failed to start consensus runtime");
     tokio::spawn(runtime.run());
 
     // Return the communication channels
@@ -122,8 +113,7 @@ pub struct Runtime {
     _config: Config,
     actions_in: UnboundedReceiver<Action>,
     events_out: broadcast::Sender<Event>,
-    p2p_action_ch: UnboundedSender<p2p::Action>,
-    p2p_event_ch: broadcast::Receiver<p2p::Event>,
+    p2p_api: P2pApi,
     dag: dag::DAG,
 }
 
@@ -132,8 +122,7 @@ impl Runtime {
         config: Config,
         actions_in: UnboundedReceiver<Action>,
         events_out: broadcast::Sender<Event>,
-        p2p_action_ch: UnboundedSender<p2p::Action>,
-        p2p_event_ch: broadcast::Receiver<p2p::Event>,
+        p2p_api: P2pApi,
     ) -> Result<Runtime> {
         info!("Starting consensus...");
 
@@ -145,8 +134,7 @@ impl Runtime {
             _config: config.clone(),
             actions_in,
             events_out,
-            p2p_action_ch,
-            p2p_event_ch,
+            p2p_api,
             dag,
         })
     }
@@ -163,10 +151,11 @@ impl Runtime {
 
         // Handle consensus events
         let mut internal_events = self.events_out.subscribe();
+        let mut p2p_events = self.p2p_api.subscribe_events();
         loop {
             select! {
                 // Handle P2P events
-                event = self.p2p_event_ch.recv() => {
+                event = p2p_events.recv() => {
                     match event {
                         Ok(p2p::Event::Pubsub(msg)) => {
                             let ignore = msg.ignore();
@@ -175,7 +164,7 @@ impl Runtime {
                                     warn!("Error handling p2p message: {e}");
                                     Ok(ignore)
                                 })
-                                .and_then(|validation| self.p2p_action_ch.send(p2p::Action::ReportMessageValidity(validation)).map_err(Error::from)) {
+                                .and_then(|validation| self.p2p_api.report_message_validity(validation)) {
                                 return error!("Stopping due to p2p_action channel error: {e}");
                             }
                         },

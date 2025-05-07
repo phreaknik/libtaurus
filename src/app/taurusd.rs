@@ -48,10 +48,10 @@ async fn main() {
     let cfg = build_cfg(&args);
 
     // Start the P2P process
-    let (p2p_action_ch, p2p_event_receiver) = p2p::start(cfg.p2p);
+    let p2p_api = p2p::start(cfg.p2p);
 
     // Start the consensus process
-    let consensus_api = consensus::start(cfg.consensus, p2p_action_ch, p2p_event_receiver);
+    let consensus_api = consensus::start(cfg.consensus, p2p_api);
 
     // Start the RPC server
     rpc::start(cfg.rpc, consensus_api);
