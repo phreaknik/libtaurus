@@ -41,6 +41,9 @@ libp2p = { version = "0.53", features = [
   "gossipsub",
   "quic",
   "upnp",
+  "tcp",
+  "yamux",
+  "noise",
 ] }
 lru = "0.11"
 num = "0.4"

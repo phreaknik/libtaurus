@@ -11,10 +11,10 @@ use core::result;
 pub use database::{PeerDatabase, PeerInfo};
 use futures::StreamExt;
 use libp2p::{
-    gossipsub, identity::Keypair, kad, multiaddr::Protocol, request_response::InboundRequestId,
-    swarm::SwarmEvent, Multiaddr, PeerId,
+    gossipsub, identity::Keypair, kad, multiaddr::Protocol, noise,
+    request_response::InboundRequestId, swarm::SwarmEvent, tcp, yamux, Multiaddr, PeerId,
 };
-use std::{io, net::Ipv4Addr, path::PathBuf};
+use std::{io, path::PathBuf, time::Duration};
 use tokio::{
     select,
     sync::{
@@ -121,6 +121,12 @@ async fn task_fn(
     // Build the swarm
     let mut swarm = libp2p::SwarmBuilder::with_existing_identity(config.identity_key.clone())
         .with_tokio()
+        .with_tcp(
+            tcp::Config::default(),
+            noise::Config::new,
+            yamux::Config::default,
+        )
+        .unwrap()
         .with_quic()
         .with_behaviour(|key| {
             Behaviour::new(
@@ -130,15 +136,15 @@ async fn task_fn(
             .unwrap()
         })
         .unwrap()
+        .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
         .build();
 
     // Listen for inbound connections
-    let local_addr = Multiaddr::empty()
-        .with(Protocol::Ip4(Ipv4Addr::UNSPECIFIED))
-        .with(Protocol::Udp(0))
-        .with(Protocol::QuicV1);
     swarm
-        .listen_on(local_addr)
+        .listen_on("/ip4/0.0.0.0/udp/0/quic-v1".parse().unwrap())
+        .expect("Cannot start listener on {local_addr}");
+    swarm
+        .listen_on("/ip4/0.0.0.0/tcp/0".parse().unwrap())
         .expect("Cannot start listener on {local_addr}");
 
     // Bootstrap into the P2P network
@@ -178,7 +184,9 @@ async fn task_fn(
                     // emit behaviour event to any subscribers
                     events_out.send(event).expect("Channel closed");
                 }
-                _e @ _ => {} // Ignore other events
+                e => {
+                    debug!("unhandled p2p event: {e:#?}");
+                } // Ignore other events
             },
 
             // Handle requested actions
