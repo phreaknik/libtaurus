@@ -11,8 +11,8 @@ use core::result;
 pub use database::{PeerDatabase, PeerInfo};
 use futures::StreamExt;
 use libp2p::{
-    gossipsub, identity::Keypair, kad, multiaddr::Protocol, request_response::InboundRequestId,
-    swarm::SwarmEvent, Multiaddr, PeerId,
+    gossipsub, identity::Keypair, kad, multiaddr::Protocol, noise,
+    request_response::InboundRequestId, swarm::SwarmEvent, tcp, yamux, Multiaddr, PeerId,
 };
 use std::{io, net::Ipv4Addr, path::PathBuf, time::Duration};
 use tokio::{
@@ -69,6 +69,7 @@ type Result<T> = result::Result<T, Error>;
 #[derive(Debug, Clone)]
 pub enum Event {
     Pubsub(Broadcast),
+    Stopped,
 }
 
 /// Actions that can be performed by the p2p client
@@ -109,131 +110,162 @@ pub fn start(config: Config) -> P2pApi {
     // Spawn the task
     let (action_sender, action_receiver) = mpsc::unbounded_channel();
     let (event_sender, event_receiver) = sync::broadcast::channel(P2P_EVENT_CHAN_CAPACITY);
-    tokio::spawn(task_fn(config, action_receiver, event_sender));
+    let process = Process::new(config, action_receiver, event_sender.clone());
+    let handle = tokio::spawn(process.task_fn());
+    tokio::spawn(async move {
+        if let Err(e) = handle.await {
+            error!("Consensus stopped with error: {e}");
+        }
+        event_sender.send(Event::Stopped).unwrap();
+    });
 
     // Return the communication channels
     P2pApi::new(action_sender, event_receiver)
 }
 
-/// The task function which runs the p2p networking client.
-async fn task_fn(
+pub struct Process {
     config: Config,
-    mut actions_in: UnboundedReceiver<Action>,
+    actions_in: UnboundedReceiver<Action>,
     events_out: sync::broadcast::Sender<Event>,
-) {
-    info!("Starting p2p client");
+}
 
-    // Open the peer database
-    let peer_db = PeerDatabase::open(&config.datadir.join(DATABASE_DIR), true)
-        .expect("Failed to open peer database");
-
-    // Build the swarm
-    let mut swarm = libp2p::SwarmBuilder::with_existing_identity(config.identity_key.clone())
-        .with_tokio()
-        .with_quic()
-        .with_behaviour(|key| {
-            Behaviour::new(
-                behaviour::Config::new(key.clone(), config.boot_peers.clone()),
-                peer_db,
-            )
-            .unwrap()
-        })
-        .unwrap()
-        .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
-        .build();
-
-    // Listen for inbound connections
-    let mut port = config.port;
-    loop {
-        let addr = Multiaddr::empty()
-            .with(Protocol::Ip4(config.addr))
-            .with(Protocol::Udp(port))
-            .with(Protocol::QuicV1);
-        match swarm.listen_on(addr.clone()) {
-            Ok(_) => break,
-            Err(e) => {
-                if config.search_port && port < u16::MAX {
-                    port += 1;
-                } else {
-                    error!("Cannot start P2P listener on {addr}: {e}");
-                    return;
-                }
-            }
+impl Process {
+    /// Construct a new P2P process
+    pub fn new(
+        config: Config,
+        actions_in: UnboundedReceiver<Action>,
+        events_out: sync::broadcast::Sender<Event>,
+    ) -> Process {
+        Process {
+            config,
+            actions_in,
+            events_out,
         }
     }
 
-    // Bootstrap into the P2P network
-    swarm.behaviour_mut().bootstrap();
+    /// The task function which runs the p2p networking client.
+    async fn task_fn(mut self) {
+        info!("Starting p2p client");
 
-    // Main event loop
-    let local_peer_id = PeerId::from(config.identity_key.public());
-    loop {
-        select! {
-            // Handle swarm events
-            event = swarm.select_next_some() => match event {
-                SwarmEvent::NewListenAddr { mut address, .. } => {
-                    address.push(Protocol::P2p(local_peer_id.into()));
-                    info!("Listening on {address}")
-                }
-                SwarmEvent::ConnectionEstablished { peer_id, .. } => {
-                    info!(
-                        "Connected to {peer_id}. Now have {} peers.",
-                        swarm.connected_peers().count()
-                    );
-                }
-                SwarmEvent::ConnectionClosed { peer_id, cause, .. } => {
-                    info!(
-                        "Disconnected from {peer_id}. Now have {} peers.",
-                        swarm.connected_peers().count()
-                    );
-                    if let Some(c) = cause {
-                        debug!("Disconnection reason: {c}");
-                    }
-                }
-                SwarmEvent::OutgoingConnectionError { peer_id, .. } => {
-                    if let Some(peer_id) = peer_id {
-                        swarm.behaviour_mut().handle_unreachable_peer(&peer_id);
-                    }
-                }
-                SwarmEvent::Behaviour(event) => {
-                    // emit behaviour event to any subscribers
-                    events_out.send(event).expect("Channel closed");
-                }
-                e => {
-                    debug!("unhandled p2p event: {e:#?}");
-                }
-            },
+        // Open the peer database
+        let peer_db = PeerDatabase::open(&self.config.datadir.join(DATABASE_DIR), true)
+            .expect("Failed to open peer database");
 
-            // Handle requested actions
-            action = actions_in.recv() => match action {
-                Some(Action::BlockPeer(peer)) => {
-                    swarm.behaviour_mut().block_peer(peer);
-                },
-                Some(Action::Broadcast(message)) => {
-                    if let Err(e) = swarm.behaviour_mut().publish(message) {
-                        error!("Failed to publish p2p message: {e}");
+        // Build the swarm
+        let mut swarm =
+            libp2p::SwarmBuilder::with_existing_identity(self.config.identity_key.clone())
+                .with_tokio()
+                .with_tcp(
+                    tcp::Config::default(),
+                    noise::Config::new,
+                    yamux::Config::default,
+                )
+                .unwrap()
+                .with_quic()
+                .with_behaviour(|key| {
+                    Behaviour::new(
+                        behaviour::Config::new(key.clone(), self.config.boot_peers.clone()),
+                        peer_db,
+                    )
+                    .unwrap()
+                })
+                .unwrap()
+                .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
+                .build();
+
+        // Listen for inbound connections
+        let mut port = self.config.port;
+        loop {
+            let addr = Multiaddr::empty()
+                .with(Protocol::Ip4(self.config.addr))
+                .with(Protocol::Udp(port))
+                .with(Protocol::QuicV1);
+            match swarm.listen_on(addr.clone()) {
+                Ok(_) => break,
+                Err(e) => {
+                    if self.config.search_port && port < u16::MAX {
+                        port += 1;
+                    } else {
+                        error!("Cannot start P2P listener on {addr}: {e}");
+                        return;
+                    }
+                }
+            }
+        }
+
+        // Bootstrap into the P2P network
+        swarm.behaviour_mut().bootstrap();
+
+        // Main event loop
+        let local_peer_id = PeerId::from(self.config.identity_key.public());
+        loop {
+            select! {
+                // Handle swarm events
+                event = swarm.select_next_some() => match event {
+                    SwarmEvent::NewListenAddr { mut address, .. } => {
+                        address.push(Protocol::P2p(local_peer_id.into()));
+                        info!("Listening on {address}")
+                    }
+                    SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+                        info!(
+                            "Connected to {peer_id}. Now have {} peers.",
+                            swarm.connected_peers().count()
+                        );
+                    }
+                    SwarmEvent::ConnectionClosed { peer_id, cause, .. } => {
+                        info!(
+                            "Disconnected from {peer_id}. Now have {} peers.",
+                            swarm.connected_peers().count()
+                        );
+                        if let Some(c) = cause {
+                            debug!("Disconnection reason: {c}");
+                        }
+                    }
+                    SwarmEvent::OutgoingConnectionError { peer_id, .. } => {
+                        if let Some(peer_id) = peer_id {
+                            swarm.behaviour_mut().handle_unreachable_peer(&peer_id);
+                        }
+                    }
+                    SwarmEvent::Behaviour(event) => {
+                        // emit behaviour event to any subscribers
+                        self.events_out.send(event).expect("Channel closed");
+                    }
+                    e => {
+                        debug!("unhandled p2p event: {e:#?}");
                     }
                 },
-                Some(Action::GetLocalPeerId(resp_ch)) => resp_ch.send(local_peer_id).unwrap(),
-                Some(Action::ReportMessageValidity(BroadcastValidationReport{
-                    id, src, acceptance,
-                })) => {
-                    swarm.behaviour_mut().report_message_validation_result(&id, &src, acceptance)
+
+                // Handle requested actions
+                action = self.actions_in.recv() => match action {
+                    Some(Action::BlockPeer(peer)) => {
+                        swarm.behaviour_mut().block_peer(peer);
+                    },
+                    Some(Action::Broadcast(message)) => {
+                        if let Err(e) = swarm.behaviour_mut().publish(message) {
+                            error!("Failed to publish p2p message: {e}");
+                        }
+                    },
+                    Some(Action::GetLocalPeerId(resp_ch)) => resp_ch.send(local_peer_id).unwrap(),
+                    Some(Action::ReportMessageValidity(BroadcastValidationReport{
+                        id, src, acceptance,
+                    })) => {
+                        swarm.behaviour_mut().report_message_validation_result(&id, &src, acceptance)
+                    },
+                    Some(Action::AvalancheRequest(peer, request)) => {
+                        // TODO: also look in DHT in case this peer fails
+                        swarm.behaviour_mut().avalanche_request(&peer, request)
+                    },
+                    Some(Action::AvalancheResponse(request_id, response)) => {
+                        swarm.behaviour_mut().avalanche_response(request_id, response)
+                    },
+                    None => {
+                        // If we do not receive requests from the consensus module, we cannot
+                        // participate in the P2P network. Shut down the client.
+                        error!("Request channel closed");
+                        break;
+                    }
                 },
-                Some(Action::AvalancheRequest(peer, request)) => {
-                    // TODO: also look in DHT in case this peer fails
-                    swarm.behaviour_mut().avalanche_request(&peer, request)
-                },
-                Some(Action::AvalancheResponse(request_id, response)) => {
-                    swarm.behaviour_mut().avalanche_response(request_id, response)
-                },
-                None => {
-                    // If we do not receive requests from the consensus module, we cannot
-                    // participate in the P2P network. Shut down the client.
-                    error!("Request channel closed");
-                    break;
-                }
-            },
+            }
         }
     }
 }

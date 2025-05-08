@@ -177,6 +177,7 @@ impl Process {
                                 return error!("Stopping due to p2p_action channel error: {e}");
                             }
                         },
+                        Ok(p2p::Event::Stopped) => todo!(),
                         Err(e) => return error!("Stopping due to p2p_event channel error: {e}"),
                     }
                 },
