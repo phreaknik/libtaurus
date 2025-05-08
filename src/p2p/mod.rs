@@ -87,10 +87,15 @@ pub enum Action {
 pub struct Config {
     /// Path to the p2p data directory
     pub datadir: PathBuf,
+
     /// Bootstrap nodes to join P2P network
     pub boot_peers: Vec<Multiaddr>,
+
     /// Key used to identify self on p2p network
     pub identity_key: Keypair,
+
+    /// Bind address for P2P connections
+    pub listen_addr: Multiaddr,
 }
 
 /// Run the p2p networking client, spawning the client task as a new thread. Returns an
@@ -135,7 +140,7 @@ async fn task_fn(
 
     // Listen for inbound connections
     swarm
-        .listen_on("/ip4/0.0.0.0/udp/0/quic-v1".parse().unwrap())
+        .listen_on(config.listen_addr)
         .expect("Cannot start listener on {local_addr}");
 
     // Bootstrap into the P2P network

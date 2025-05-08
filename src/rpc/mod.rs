@@ -7,7 +7,7 @@ use jsonrpsee::{
     IntoResponse, ResponsePayload,
 };
 use serde::Serialize;
-use std::result;
+use std::{net::Ipv4Addr, result};
 use tokio::select;
 use tracing::{error, info};
 
@@ -63,7 +63,7 @@ impl IntoResponse for RpcError {
 /// Configuration details for the RPC process.
 #[derive(Debug, Clone)]
 pub struct Config {
-    pub bind_addr: String,
+    pub bind_addr: Ipv4Addr,
     pub bind_port: u16,
     pub search_port: bool,
 }
@@ -78,7 +78,7 @@ pub fn start(config: Config, consensus_api: ConsensusApi) {
 /// Runtime state for the RPC server process
 pub struct Process {
     config: Config,
-    bind_addr: String,
+    bind_addr: Ipv4Addr,
     bind_port: u16,
     consensus_api: ConsensusApi,
 }
@@ -87,7 +87,7 @@ impl Process {
     fn new(config: Config, consensus_api: ConsensusApi) -> Result<Process> {
         // Instantiate the process
         Ok(Process {
-            bind_addr: config.bind_addr.clone(),
+            bind_addr: config.bind_addr,
             bind_port: config.bind_port,
             config,
             consensus_api,

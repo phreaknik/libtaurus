@@ -26,11 +26,12 @@ fn main() {
 fn parse_cli_args() -> ArgMatches {
     command!() // initialize CLI with details from cargo.toml
         .about("Start taurus sequencer service")
-        .arg(arg!(-u --node_url <URL> "URL to reach consensus node").required(true))
+        .arg(arg!(-u --rpchost <URL> "Host address to reach consensus RPC").required(true))
         .arg(
-            arg!(--loglevel <LEVEL> "Set log level (error, warn, info, debug, trace)")
+            arg!(--loglevel <LEVEL> "Set log level")
                 .required(false)
-                .default_value("info"),
+                .default_value("info")
+                .value_parser(["info", "debug", "trace"]),
         )
         .get_matches()
 }
@@ -38,6 +39,6 @@ fn parse_cli_args() -> ArgMatches {
 /// Build application config from parsed CLI args
 fn build_cfg(args: &ArgMatches) -> sequencer::Config {
     sequencer::Config {
-        rpc_url: args.get_one::<String>("node_url").unwrap().clone(),
+        rpc_url: args.get_one::<String>("rpchost").unwrap().clone(),
     }
 }
