@@ -117,7 +117,7 @@ async fn task_fn(
     mut actions_in: UnboundedReceiver<Action>,
     events_out: sync::broadcast::Sender<Event>,
 ) {
-    info!("Starting p2p client...");
+    info!("Starting p2p client on {}", config.listen_addr);
 
     // Open the peer database
     let peer_db = PeerDatabase::open(&config.datadir.join(DATABASE_DIR), true)
