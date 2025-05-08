@@ -14,7 +14,7 @@ use libp2p::{
     gossipsub, identity::Keypair, kad, multiaddr::Protocol, request_response::InboundRequestId,
     swarm::SwarmEvent, Multiaddr, PeerId,
 };
-use std::{io, path::PathBuf, time::Duration};
+use std::{io, net::Ipv4Addr, path::PathBuf, time::Duration};
 use tokio::{
     select,
     sync::{
@@ -95,7 +95,11 @@ pub struct Config {
     pub identity_key: Keypair,
 
     /// Bind address for P2P connections
-    pub listen_addr: Multiaddr,
+    pub addr: Ipv4Addr,
+    pub port: u16,
+
+    /// If true, increment port number until one is available
+    pub search_port: bool,
 }
 
 /// Run the p2p networking client, spawning the client task as a new thread. Returns an
@@ -117,7 +121,7 @@ async fn task_fn(
     mut actions_in: UnboundedReceiver<Action>,
     events_out: sync::broadcast::Sender<Event>,
 ) {
-    info!("Starting p2p client on {}", config.listen_addr);
+    info!("Starting p2p client");
 
     // Open the peer database
     let peer_db = PeerDatabase::open(&config.datadir.join(DATABASE_DIR), true)
@@ -139,9 +143,24 @@ async fn task_fn(
         .build();
 
     // Listen for inbound connections
-    swarm
-        .listen_on(config.listen_addr)
-        .expect("Cannot start listener on {local_addr}");
+    let mut port = config.port;
+    loop {
+        let addr = Multiaddr::empty()
+            .with(Protocol::Ip4(config.addr))
+            .with(Protocol::Udp(port))
+            .with(Protocol::QuicV1);
+        match swarm.listen_on(addr.clone()) {
+            Ok(_) => break,
+            Err(e) => {
+                if config.search_port && port < u16::MAX {
+                    port += 1;
+                } else {
+                    error!("Cannot start P2P listener on {addr}: {e}");
+                    return;
+                }
+            }
+        }
+    }
 
     // Bootstrap into the P2P network
     swarm.behaviour_mut().bootstrap();

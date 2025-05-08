@@ -117,6 +117,10 @@ fn parse_cli_args() -> ArgMatches {
                 .value_parser(clap::value_parser!(u16)),
         )
         .arg(
+            arg!(--portsearch "Increment P2P port number until an available port is found")
+                .required(false),
+        )
+        .arg(
             arg!(--rpcbind <ADDR> "Address to bind for JSON RPC")
                 .required(false)
                 .default_value("127.0.0.1")
@@ -182,10 +186,9 @@ fn build_p2p_cfg(args: &ArgMatches) -> p2p::Config {
             .get_many("bootpeer")
             .map(|p| p.cloned().collect())
             .unwrap_or(Vec::new()),
-        listen_addr: Multiaddr::empty()
-            .with(Protocol::Ip4(*args.get_one("bind").unwrap()))
-            .with(Protocol::Udp(*args.get_one("port").unwrap()))
-            .with(Protocol::QuicV1),
+        addr: *args.get_one("bind").unwrap(),
+        port: *args.get_one("port").unwrap(),
+        search_port: args.get_flag("portsearch"),
     }
 }
 
