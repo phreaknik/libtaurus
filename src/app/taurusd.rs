@@ -2,7 +2,7 @@ mod util;
 
 use clap::{arg, command, ArgMatches};
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
-use libp2p::{identity::Keypair, multiaddr::Protocol, Multiaddr};
+use libp2p::{identity::Keypair, Multiaddr};
 use libtaurus::{consensus::dag, rpc};
 pub use libtaurus::{
     consensus::{self, GenesisConfig, Vertex, VertexHash},
