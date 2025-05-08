@@ -28,7 +28,7 @@ fn parse_cli_args() -> ArgMatches {
         .about("Start taurus sequencer service")
         .arg(arg!(-u --node_url <URL> "URL to reach consensus node").required(true))
         .arg(
-            arg!(-L --log_level <LEVEL> "Set log level (error, warn, info, debug, trace)")
+            arg!(--loglevel <LEVEL> "Set log level (error, warn, info, debug, trace)")
                 .required(false)
                 .default_value("info"),
         )

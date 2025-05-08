@@ -5,7 +5,7 @@ use tracing_subscriber::{fmt::time::UtcTime, EnvFilter, FmtSubscriber};
 /// Set up logger
 pub(crate) fn setup_logger<'a>(args: &'a ArgMatches) {
     let subscriber = FmtSubscriber::builder()
-        .with_env_filter(EnvFilter::new(args.get_one::<String>("log_level").unwrap()))
+        .with_env_filter(EnvFilter::new(args.get_one::<String>("loglevel").unwrap()))
         .with_timer(UtcTime::new(format_description!(
             "[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:3]"
         )))
