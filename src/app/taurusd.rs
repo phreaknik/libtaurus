@@ -12,7 +12,7 @@ pub use libtaurus::{
 use rand::{distributions::Alphanumeric, Rng};
 use std::{char, env, fs, net::Ipv4Addr, path::PathBuf};
 use tokio::select;
-use tracing::error;
+use tracing::{error, info};
 
 /// Application configuration details
 struct Config {
@@ -42,6 +42,10 @@ async fn main() {
 
     // Set up a subscriber to capture logs
     util::setup_logger(&args);
+    info!(
+        "Using data directory {}",
+        app_data_dir(&args).to_str().unwrap()
+    );
 
     // Build config from args
     let cfg = build_cfg(&args);
