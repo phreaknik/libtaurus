@@ -89,14 +89,24 @@ fn parse_cli_args() -> ArgMatches {
         .arg(arg!(--bootpeer <MULTIADDR> "Specify a boot peer to connect to").required(false))
         .arg(arg!(-d --datadir <PATH> "Specify data directory").required(false))
         .arg(
-            arg!(--rpcbind <ADDR> "IP address to serve JSON RPC")
+            arg!(--bind <ADDR> "Address to bind for P2P connections")
+                .required(false)
+                .default_value("0.0.0.0"),
+        )
+        .arg(
+            arg!(--port <PORT> "Port number to accept P2P connections")
+                .required(false)
+                .default_value("9047"),
+        )
+        .arg(
+            arg!(--rpcbind <ADDR> "Address to bind for JSON RPC")
                 .required(false)
                 .default_value("127.0.0.1"),
         )
         .arg(
-            arg!(--rpcport <PORT> "Port number to serve JSON RPC")
+            arg!(--rpcport <PORT> "Port number to accept JSON RPC http/ws connections")
                 .required(false)
-                .default_value("8545"),
+                .default_value("9048"),
         )
         .arg(
             arg!(--rpcportsearch "Increment RPC port number until an available port is found")
