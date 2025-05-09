@@ -107,6 +107,7 @@ mod test {
             id: MessageId::new(b"hello"),
             src: PeerId::from_multihash(Multihash::default()).unwrap(),
             data: BroadcastData::Vertex(Arc::new(Vertex::default())),
+            topic: Sha256Topic::new("test/topic").hash(),
         };
         let response = m.accept();
         assert_matches!(response.acceptance, MessageAcceptance::Accept);
@@ -118,6 +119,7 @@ mod test {
             id: MessageId::new(b"hello"),
             src: PeerId::from_multihash(Multihash::default()).unwrap(),
             data: BroadcastData::Vertex(Arc::new(Vertex::default())),
+            topic: Sha256Topic::new("test/topic").hash(),
         };
         let response = m.ignore();
         assert_matches!(response.acceptance, MessageAcceptance::Ignore);
@@ -129,6 +131,7 @@ mod test {
             id: MessageId::new(b"hello"),
             src: PeerId::from_multihash(Multihash::default()).unwrap(),
             data: BroadcastData::Vertex(Arc::new(Vertex::default())),
+            topic: Sha256Topic::new("test/topic").hash(),
         };
         let response = m.reject();
         assert_matches!(response.acceptance, MessageAcceptance::Reject);
