@@ -291,78 +291,78 @@ impl Process {
         let local_peer_id = PeerId::from(self.config.identity_key.public());
         loop {
             select! {
-                                // Handle swarm events
-                                event = self.swarm.select_next_some() => match event {
-                                    SwarmEvent::NewListenAddr { mut address, .. } => {
-                                        address.push(Protocol::P2p(local_peer_id.into()));
-                                        info!("Listening on {address}")
-                                    }
-                                    SwarmEvent::ConnectionEstablished { peer_id, .. } => {
-                                        info!(
-                                            "Connected to {peer_id}. Now have {} peers.",
-                                            self.swarm.connected_peers().count()
-                                        );
-                                    }
-                                    SwarmEvent::ConnectionClosed { peer_id, cause, .. } => {
-                                        info!(
-                                            "Disconnected from {peer_id}. Now have {} peers.",
-                                            self.swarm.connected_peers().count()
-                                        );
-                                        if let Some(c) = cause {
-                                            debug!("Disconnection reason: {c}");
-                                        }
-                                    }
-                                    SwarmEvent::OutgoingConnectionError { .. } => {
-                                        // TODO: remove peer from db? from kademlia?
-                                    }
-                                    SwarmEvent::Behaviour(event) => {
-                                        // emit behaviour events to any subscribers
-                        if let Ok(evt) = Event::try_from(event) {
-                                        self.events_out.send(evt).expect("Channel closed");
-                                        // TODO: clean shutdown on channel closure
-                                    }
+                // Handle swarm events
+                event = self.swarm.select_next_some() => match event {
+                SwarmEvent::NewListenAddr { mut address, .. } => {
+                    address.push(Protocol::P2p(local_peer_id.into()));
+                    info!("Listening on {address}")
+                },
+                SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+                    info!(
+                        "Connected to {peer_id}. Now have {} peers.",
+                        self.swarm.connected_peers().count()
+                    );
+                },
+                SwarmEvent::ConnectionClosed { peer_id, cause, .. } => {
+                    info!(
+                        "Disconnected from {peer_id}. Now have {} peers.",
+                        self.swarm.connected_peers().count()
+                    );
+                    if let Some(c) = cause {
+                        debug!("Disconnection reason: {c}");
                     }
-                                    e => {
-                                        trace!("unhandled p2p event: {e:#?}");
-                                    }
-                                },
+                },
+                SwarmEvent::OutgoingConnectionError { .. } => {
+                    // TODO: remove peer from db? from kademlia?
+                },
+                SwarmEvent::Behaviour(event) => {
+                        error!("p2p event: {event:#?}");
+                    // emit behaviour events to any subscribers
+                    if let Ok(evt) = Event::try_from(event) {
+                        self.events_out.send(evt).expect("Channel closed");
+                        // TODO: clean shutdown on channel closure
+                    }
+                },
+                e => {
+                    trace!("unhandled p2p event: {e:#?}");
+                }
+            },
 
-                                // Handle requested actions
-                                action = self.actions_in.recv() => match action {
-                                    Some(Action::BlockPeer(peer)) => {
-                                        self.swarm.behaviour_mut().block_lists.block_peer(peer);
-                                    },
-                                    Some(Action::Broadcast(message)) => {
-                                        if let Err(e) =
-            message.to_wire(true).and_then(|bytes|
-                        self.swarm
-                                                .behaviour_mut()
+            // Handle requested actions
+            action = self.actions_in.recv() => match action {
+                Some(Action::BlockPeer(peer)) => {
+                    self.swarm.behaviour_mut().block_lists.block_peer(peer);
+                },
+                Some(Action::Broadcast(message)) => {
+                    if let Err(e) = message.to_wire(true).and_then(|bytes|
+                    self.swarm
+                        .behaviour_mut()
                             .gossipsub
-                            .publish(Sha256Topic::from(&message), bytes)
-                            .map_err(Error::from)) {
-                                            error!("Failed to publish p2p message: {e}");
+                                .publish(Sha256Topic::from(&message), bytes)
+                                .map_err(Error::from)) {
+                                    error!("Failed to publish p2p message: {e}");
                                         }
-                                    },
-                                    Some(Action::GetLocalPeerId(resp_ch)) => resp_ch.send(local_peer_id).unwrap(),
-                                    Some(Action::ReportMessageValidity(BroadcastValidationReport{
-                                        msg_id, propagation_source, acceptance,
-                                    })) => {
-                                        if let Err(e) = self.swarm.behaviour_mut().gossipsub.report_message_validation_result(
-                                            &msg_id,
-                                            &propagation_source,
-                                            acceptance,
-                                        ) {
-                                            warn!("Error updating gossipsub message status: {e}");
-                                        }
-                                    },
-                                    None => {
-                                        // If we do not receive requests from the consensus module, we cannot
-                                        // participate in the P2P network. Shut down the client.
-                                        error!("Request channel closed");
-                                        break;
-                                    }
-                                },
-                            }
+                                                },
+                                                        Some(Action::GetLocalPeerId(resp_ch)) => resp_ch.send(local_peer_id).unwrap(),
+                Some(Action::ReportMessageValidity(BroadcastValidationReport{
+                msg_id, propagation_source, acceptance,
+                })) => {
+                if let Err(e) = self.swarm.behaviour_mut().gossipsub.report_message_validation_result(
+                &msg_id,
+                &propagation_source,
+                acceptance,
+                ) {
+                warn!("Error updating gossipsub message status: {e}");
+                }
+                },
+                None => {
+                // If we do not receive requests from the consensus module, we cannot
+                // participate in the P2P network. Shut down the client.
+                error!("Request channel closed");
+                break;
+                }
+                },
+            }
         }
     }
 }
