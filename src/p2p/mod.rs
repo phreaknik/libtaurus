@@ -163,6 +163,10 @@ pub struct Config {
 
     /// If true, increment port number until one is available
     pub search_port: bool,
+
+    /// Optionally force kademlia mode of operation. Leave as [`None`] to rely on automatic mode
+    /// configuration
+    pub kad_mode_override: Option<kad::Mode>,
 }
 
 /// Run the p2p networking client, spawning the client task as a new thread. Returns an
@@ -200,7 +204,7 @@ impl Process {
         events_out: sync::broadcast::Sender<Event>,
     ) -> Process {
         // Build the swarm
-        let swarm = libp2p::SwarmBuilder::with_existing_identity(config.identity_key.clone())
+        let mut swarm = libp2p::SwarmBuilder::with_existing_identity(config.identity_key.clone())
             .with_tokio()
             .with_tcp(
                 tcp::Config::default(),
@@ -213,6 +217,10 @@ impl Process {
             .unwrap()
             .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
             .build();
+        swarm
+            .behaviour_mut()
+            .kademlia
+            .set_mode(config.kad_mode_override);
 
         Process {
             config,

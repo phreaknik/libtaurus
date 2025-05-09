@@ -2,7 +2,7 @@ mod util;
 
 use clap::{arg, command, ArgMatches};
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
-use libp2p::{identity::Keypair, Multiaddr};
+use libp2p::{identity::Keypair, kad, Multiaddr};
 use libtaurus::{consensus::dag, rpc};
 pub use libtaurus::{
     consensus::{self, GenesisConfig, Vertex, VertexHash},
@@ -137,6 +137,11 @@ fn parse_cli_args() -> ArgMatches {
                 .required(false),
         )
         .arg(
+            arg!(--dhtmode <MODE> "Set Kademlia DHT mode")
+                .required(false)
+                .value_parser(["client", "server"]),
+        )
+        .arg(
             arg!(--loglevel <LEVEL> "Set log level")
                 .required(false)
                 .default_value("info")
@@ -189,6 +194,11 @@ fn build_p2p_cfg(args: &ArgMatches) -> p2p::Config {
         addr: *args.get_one("bind").unwrap(),
         port: *args.get_one("port").unwrap(),
         search_port: args.get_flag("portsearch"),
+        kad_mode_override: args.get_one::<String>("dhtmode").map(|s| match s.as_str() {
+            "client" => kad::Mode::Client,
+            "server" => kad::Mode::Server,
+            _ => unreachable!(),
+        }),
     }
 }
 
