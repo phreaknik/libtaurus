@@ -127,6 +127,7 @@ pub struct Process {
 }
 
 impl Process {
+    /// Construct a new process
     fn new(
         config: Config,
         actions_in: UnboundedReceiver<Action>,
@@ -148,7 +149,7 @@ impl Process {
         })
     }
 
-    // Run the consensus processing loop
+    /// Run the consensus processing loop
     async fn task_fn(mut self) {
         // Wait until the events channel has listeners, before initializing the DAG
         while self.events_out.receiver_count() == 0 {}
