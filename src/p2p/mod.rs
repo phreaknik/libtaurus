@@ -1,6 +1,7 @@
 pub mod api;
 mod behaviour;
 mod broadcast;
+mod request;
 
 use crate::WireFormat;
 pub use api::P2pApi;

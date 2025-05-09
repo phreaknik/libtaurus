@@ -1,4 +1,4 @@
-use super::BroadcastData;
+use super::{request, BroadcastData};
 use libp2p::{
     allow_block_list,
     gossipsub::{self, MessageAuthenticity, Sha256Topic},
@@ -6,10 +6,11 @@ use libp2p::{
     identity::Keypair,
     kad::{self, store::MemoryStore},
     mdns,
+    request_response::{self, ProtocolSupport},
     swarm::NetworkBehaviour,
     upnp, PeerId,
 };
-use std::{str, time::Duration};
+use std::{iter::once, str, time::Duration};
 use strum::IntoEnumIterator;
 use tracing::debug;
 
@@ -35,6 +36,9 @@ pub(super) struct Config {
 
     /// MDNS protocol configuration
     mdns_cfg: mdns::Config,
+
+    /// Request/Response configuration
+    request_cfg: request_response::Config,
 }
 
 impl Config {
@@ -55,6 +59,7 @@ impl Config {
             kad_cfg,
             gossipsub_cfg,
             mdns_cfg: mdns::Config::default(),
+            request_cfg: request_response::Config::default(),
         }
     }
 }
@@ -68,6 +73,7 @@ pub(super) struct Behaviour {
     pub block_lists: allow_block_list::Behaviour<allow_block_list::BlockedPeers>,
     pub upnp: upnp::tokio::Behaviour,
     pub mdns: mdns::tokio::Behaviour,
+    pub requests: request_response::Behaviour<request::Codec>,
 }
 
 impl<'a> Behaviour {
@@ -94,6 +100,10 @@ impl<'a> Behaviour {
             block_lists: allow_block_list::Behaviour::default(),
             upnp: upnp::tokio::Behaviour::default(),
             mdns: mdns::tokio::Behaviour::new(config.mdns_cfg, local_peer_id)?,
+            requests: request_response::Behaviour::new(
+                once((request::Protocol::default(), ProtocolSupport::Full)),
+                config.request_cfg,
+            ),
         })
     }
 }
