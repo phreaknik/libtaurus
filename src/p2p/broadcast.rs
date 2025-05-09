@@ -1,4 +1,4 @@
-use super::{Error, Result};
+use super::Error;
 use crate::{
     consensus::Vertex,
     wire::{proto, WireFormat},
@@ -15,6 +15,7 @@ use strum_macros::{AsRefStr, EnumIter};
 pub struct Broadcast {
     pub id: MessageId,
     pub src: PeerId,
+    pub topic: TopicHash,
     pub data: BroadcastData,
 }
 
@@ -22,8 +23,8 @@ impl Broadcast {
     /// Generate a validation report to accept this message and propagate it to other peers.
     pub(crate) fn accept(&self) -> BroadcastValidationReport {
         BroadcastValidationReport {
-            id: self.id.clone(),
-            src: self.src,
+            msg_id: self.id.clone(),
+            propagation_source: self.src,
             acceptance: MessageAcceptance::Accept,
         }
     }
@@ -32,8 +33,8 @@ impl Broadcast {
     /// penalty to the peer that sent it.
     pub(crate) fn ignore(&self) -> BroadcastValidationReport {
         BroadcastValidationReport {
-            id: self.id.clone(),
-            src: self.src,
+            msg_id: self.id.clone(),
+            propagation_source: self.src,
             acceptance: MessageAcceptance::Ignore,
         }
     }
@@ -42,28 +43,9 @@ impl Broadcast {
     /// peer who sent it. Repeated penalization will eventually leading to that peer being banned.
     pub(crate) fn reject(&self) -> BroadcastValidationReport {
         BroadcastValidationReport {
-            id: self.id.clone(),
-            src: self.src,
+            msg_id: self.id.clone(),
+            propagation_source: self.src,
             acceptance: MessageAcceptance::Reject,
-        }
-    }
-}
-
-impl TryFrom<gossipsub::Event> for Broadcast {
-    type Error = Error;
-
-    fn try_from(event: gossipsub::Event) -> Result<Self> {
-        match event {
-            gossipsub::Event::Message {
-                propagation_source,
-                message_id,
-                message,
-            } => Ok(Broadcast {
-                src: propagation_source,
-                id: message_id,
-                data: BroadcastData::from_wire(&message.data, true)?,
-            }),
-            _ => Err(Error::InvalidBroadast),
         }
     }
 }
@@ -72,8 +54,8 @@ impl TryFrom<gossipsub::Event> for Broadcast {
 /// and propagated to peers, ignored, or rejected and penalize the peer.
 #[derive(Debug)]
 pub struct BroadcastValidationReport {
-    pub id: MessageId,
-    pub src: PeerId,
+    pub msg_id: MessageId,
+    pub propagation_source: PeerId,
     pub acceptance: MessageAcceptance,
 }
 

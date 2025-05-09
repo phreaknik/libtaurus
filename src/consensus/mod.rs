@@ -4,8 +4,10 @@ pub mod namespace;
 pub mod transaction;
 pub mod vertex;
 
-use crate::p2p::api::P2pApi;
-use crate::{p2p, WireFormat};
+use crate::{
+    p2p::{self, P2pApi},
+    WireFormat,
+};
 use api::ConsensusApi;
 use chrono::DateTime;
 use namespace::NamespaceId;
@@ -167,9 +169,9 @@ impl Process {
                 // Handle P2P events
                 event = p2p_events.recv() => {
                     match event {
-                        Ok(p2p::Event::Pubsub(msg)) => {
-                            let ignore = msg.ignore();
-                             if let Err(e) = self.handle_p2p_pubsub(msg)
+                        Ok(p2p::Event::GossipsubMessage(message)) => {
+                            let ignore = message.ignore();
+                             if let Err(e) = self.handle_p2p_pubsub(message)
                                 .or_else(|e| {
                                     warn!("Error handling p2p message: {e}");
                                     Ok(ignore)
@@ -179,6 +181,7 @@ impl Process {
                             }
                         },
                         Ok(p2p::Event::Stopped) => todo!(),
+                        Ok(evt) => debug!("unhandled event: {evt:#?}"),
                         Err(e) => return error!("Stopping due to p2p_event channel error: {e}"),
                     }
                 },

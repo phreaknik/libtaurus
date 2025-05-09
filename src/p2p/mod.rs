@@ -1,18 +1,22 @@
 pub mod api;
 mod behaviour;
 mod broadcast;
-pub mod consensus_rpc;
-mod database;
 
-use api::P2pApi;
-use behaviour::Behaviour;
+use crate::WireFormat;
+pub use api::P2pApi;
+use behaviour::{Behaviour, BehaviourEvent};
 pub use broadcast::{Broadcast, BroadcastData, BroadcastValidationReport};
 use core::result;
-pub use database::{PeerDatabase, PeerInfo};
 use futures::StreamExt;
 use libp2p::{
-    gossipsub, identity::Keypair, kad, multiaddr::Protocol, noise,
-    request_response::InboundRequestId, swarm::SwarmEvent, tcp, yamux, Multiaddr, PeerId, Swarm,
+    gossipsub::{self, Sha256Topic},
+    identify::{self, Info},
+    identity::Keypair,
+    kad,
+    multiaddr::Protocol,
+    noise,
+    swarm::SwarmEvent,
+    tcp, upnp, yamux, Multiaddr, PeerId, Swarm,
 };
 use std::{io, net::Ipv4Addr, path::PathBuf, time::Duration};
 use tokio::{
@@ -23,14 +27,11 @@ use tokio::{
         oneshot,
     },
 };
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
 /// [`tokio::sync::broadcast`] for more information.
 const P2P_EVENT_CHAN_CAPACITY: usize = 32;
-
-/// Path to the peer database, from within the peer data directory
-const DATABASE_DIR: &str = "peer_db/";
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -48,6 +49,8 @@ pub enum Error {
     InvalidBroadast,
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    #[error("malformed address")]
+    MalformedAddress,
     #[error(transparent)]
     Multiaddr(#[from] libp2p::multiaddr::Error),
     #[error(transparent)]
@@ -58,6 +61,8 @@ pub enum Error {
     Subscription(#[from] gossipsub::SubscriptionError),
     #[error(transparent)]
     NoKnownPeers(#[from] kad::NoKnownPeers),
+    #[error("unsupported event")]
+    UnsupportedEvent,
     #[error(transparent)]
     Vertex(#[from] crate::consensus::vertex::Error),
     #[error(transparent)]
@@ -68,19 +73,76 @@ type Result<T> = result::Result<T, Error>;
 /// Event produced by [`Behaviour`].
 #[derive(Debug, Clone)]
 pub enum Event {
-    Pubsub(Broadcast),
+    /// The renewal of the multiaddress on the gateway failed.
+    ExpiredExternalAddr(Multiaddr),
+
+    /// The IGD gateway was not found.
+    GatewayNotFound,
+
+    /// New message from the gossip sub network
+    GossipsubMessage(Broadcast),
+
+    /// Peer does not support gossipsub
+    GossipsubUnsupported { peer_id: PeerId },
+
+    /// Kademlia events
+    Kademlia(kad::Event),
+
+    /// The multiaddress is reachable externally.
+    NewExternalAddr(Multiaddr),
+
+    /// The Gateway is not exposed directly to the public network.
+    NonRoutableGateway,
+
+    /// New peer identity received
+    PeerIdentity { peer_id: PeerId, info: Info },
+
+    /// Process has stopped
     Stopped,
+}
+
+impl TryFrom<BehaviourEvent> for Event {
+    type Error = Error;
+
+    fn try_from(value: BehaviourEvent) -> result::Result<Self, Self::Error> {
+        match value {
+            BehaviourEvent::Gossipsub(gossipsub::Event::Message {
+                propagation_source,
+                message_id,
+                message,
+            }) => Ok(Event::GossipsubMessage(Broadcast {
+                src: propagation_source,
+                id: message_id,
+                topic: message.topic,
+                data: BroadcastData::from_wire(&message.data, true)?,
+            })),
+            BehaviourEvent::Gossipsub(gossipsub::Event::GossipsubNotSupported { peer_id }) => {
+                Ok(Event::GossipsubUnsupported { peer_id })
+            }
+            BehaviourEvent::Identify(identify::Event::Received { peer_id, info }) => {
+                Ok(Event::PeerIdentity { peer_id, info })
+            }
+            BehaviourEvent::Kademlia(data) => Ok(Event::Kademlia(data)),
+            BehaviourEvent::Upnp(upnp::Event::NewExternalAddr(addr)) => {
+                Ok(Event::NewExternalAddr(addr))
+            }
+            BehaviourEvent::Upnp(upnp::Event::ExpiredExternalAddr(addr)) => {
+                Ok(Event::ExpiredExternalAddr(addr))
+            }
+            BehaviourEvent::Upnp(upnp::Event::GatewayNotFound) => Ok(Event::GatewayNotFound),
+            BehaviourEvent::Upnp(upnp::Event::NonRoutableGateway) => Ok(Event::NonRoutableGateway),
+            _ => Err(Error::UnsupportedEvent),
+        }
+    }
 }
 
 /// Actions that can be performed by the p2p client
 #[derive(Debug)]
 pub enum Action {
     BlockPeer(PeerId),
-    Broadcast(BroadcastData),
     GetLocalPeerId(oneshot::Sender<PeerId>),
+    Broadcast(BroadcastData),
     ReportMessageValidity(BroadcastValidationReport),
-    AvalancheRequest(PeerId, consensus_rpc::Request),
-    AvalancheResponse(InboundRequestId, consensus_rpc::Response),
 }
 
 /// Configuration details for [`taurus-p2p`].
@@ -137,10 +199,6 @@ impl Process {
         actions_in: UnboundedReceiver<Action>,
         events_out: sync::broadcast::Sender<Event>,
     ) -> Process {
-        // Open the peer database
-        let peer_db = PeerDatabase::open(&config.datadir.join(DATABASE_DIR), true)
-            .expect("Failed to open peer database");
-
         // Build the swarm
         let swarm = libp2p::SwarmBuilder::with_existing_identity(config.identity_key.clone())
             .with_tokio()
@@ -151,13 +209,7 @@ impl Process {
             )
             .unwrap()
             .with_quic()
-            .with_behaviour(|key| {
-                Behaviour::new(
-                    behaviour::Config::new(key.clone(), config.boot_peers.clone()),
-                    peer_db,
-                )
-                .unwrap()
-            })
+            .with_behaviour(|key| Behaviour::new(behaviour::Config::new(key.clone())).unwrap())
             .unwrap()
             .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
             .build();
@@ -198,6 +250,22 @@ impl Process {
         }
     }
 
+    /// Connect to initial peers and bootstrap into the network
+    fn join_dht(&mut self) -> Result<()> {
+        for mut addr in self.config.boot_peers.iter().cloned() {
+            let peer_id = match addr.pop() {
+                Some(Protocol::P2p(peer_id)) => Ok(peer_id),
+                _ => Err(Error::MalformedAddress),
+            }?;
+            self.swarm
+                .behaviour_mut()
+                .kademlia
+                .add_address(&peer_id, addr);
+        }
+        self.swarm.behaviour_mut().kademlia.bootstrap()?;
+        Ok(())
+    }
+
     /// The task function which runs the p2p networking client.
     async fn task_fn(mut self) {
         info!("Starting p2p client");
@@ -207,78 +275,86 @@ impl Process {
         self.start_listener(true); // Start UDP QuicV1 listener
 
         // Bootstrap into the P2P network
-        self.swarm.behaviour_mut().bootstrap();
+        if let Err(e) = self.join_dht() {
+            warn!("Failed to join DHT: {e}");
+        }
 
         // Main event loop
         let local_peer_id = PeerId::from(self.config.identity_key.public());
         loop {
             select! {
-                // Handle swarm events
-                event = self.swarm.select_next_some() => match event {
-                    SwarmEvent::NewListenAddr { mut address, .. } => {
-                        address.push(Protocol::P2p(local_peer_id.into()));
-                        info!("Listening on {address}")
+                                // Handle swarm events
+                                event = self.swarm.select_next_some() => match event {
+                                    SwarmEvent::NewListenAddr { mut address, .. } => {
+                                        address.push(Protocol::P2p(local_peer_id.into()));
+                                        info!("Listening on {address}")
+                                    }
+                                    SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+                                        info!(
+                                            "Connected to {peer_id}. Now have {} peers.",
+                                            self.swarm.connected_peers().count()
+                                        );
+                                    }
+                                    SwarmEvent::ConnectionClosed { peer_id, cause, .. } => {
+                                        info!(
+                                            "Disconnected from {peer_id}. Now have {} peers.",
+                                            self.swarm.connected_peers().count()
+                                        );
+                                        if let Some(c) = cause {
+                                            debug!("Disconnection reason: {c}");
+                                        }
+                                    }
+                                    SwarmEvent::OutgoingConnectionError { .. } => {
+                                        // TODO: remove peer from db? from kademlia?
+                                    }
+                                    SwarmEvent::Behaviour(event) => {
+                                        // emit behaviour events to any subscribers
+                        if let Ok(evt) = Event::try_from(event) {
+                                        self.events_out.send(evt).expect("Channel closed");
+                                        // TODO: clean shutdown on channel closure
+                                    }
                     }
-                    SwarmEvent::ConnectionEstablished { peer_id, .. } => {
-                        info!(
-                            "Connected to {peer_id}. Now have {} peers.",
-                            self.swarm.connected_peers().count()
-                        );
-                    }
-                    SwarmEvent::ConnectionClosed { peer_id, cause, .. } => {
-                        info!(
-                            "Disconnected from {peer_id}. Now have {} peers.",
-                            self.swarm.connected_peers().count()
-                        );
-                        if let Some(c) = cause {
-                            debug!("Disconnection reason: {c}");
-                        }
-                    }
-                    SwarmEvent::OutgoingConnectionError { peer_id, .. } => {
-                        if let Some(peer_id) = peer_id {
-                            self.swarm.behaviour_mut().handle_unreachable_peer(&peer_id);
-                        }
-                    }
-                    SwarmEvent::Behaviour(event) => {
-                        // emit behaviour event to any subscribers
-                        self.events_out.send(event).expect("Channel closed");
-                    }
-                    e => {
-                        trace!("unhandled p2p event: {e:#?}");
-                    }
-                },
+                                    e => {
+                                        trace!("unhandled p2p event: {e:#?}");
+                                    }
+                                },
 
-                // Handle requested actions
-                action = self.actions_in.recv() => match action {
-                    Some(Action::BlockPeer(peer)) => {
-                        self.swarm.behaviour_mut().block_peer(peer);
-                    },
-                    Some(Action::Broadcast(message)) => {
-                        if let Err(e) = self.swarm.behaviour_mut().publish(message) {
-                            error!("Failed to publish p2p message: {e}");
-                        }
-                    },
-                    Some(Action::GetLocalPeerId(resp_ch)) => resp_ch.send(local_peer_id).unwrap(),
-                    Some(Action::ReportMessageValidity(BroadcastValidationReport{
-                        id, src, acceptance,
-                    })) => {
-                        self.swarm.behaviour_mut().report_message_validation_result(&id, &src, acceptance)
-                    },
-                    Some(Action::AvalancheRequest(peer, request)) => {
-                        // TODO: also look in DHT in case this peer fails
-                        self.swarm.behaviour_mut().avalanche_request(&peer, request)
-                    },
-                    Some(Action::AvalancheResponse(request_id, response)) => {
-                        self.swarm.behaviour_mut().avalanche_response(request_id, response)
-                    },
-                    None => {
-                        // If we do not receive requests from the consensus module, we cannot
-                        // participate in the P2P network. Shut down the client.
-                        error!("Request channel closed");
-                        break;
-                    }
-                },
-            }
+                                // Handle requested actions
+                                action = self.actions_in.recv() => match action {
+                                    Some(Action::BlockPeer(peer)) => {
+                                        self.swarm.behaviour_mut().block_lists.block_peer(peer);
+                                    },
+                                    Some(Action::Broadcast(message)) => {
+                                        if let Err(e) =
+            message.to_wire(true).and_then(|bytes|
+                        self.swarm
+                                                .behaviour_mut()
+                            .gossipsub
+                            .publish(Sha256Topic::from(&message), bytes)
+                            .map_err(Error::from)) {
+                                            error!("Failed to publish p2p message: {e}");
+                                        }
+                                    },
+                                    Some(Action::GetLocalPeerId(resp_ch)) => resp_ch.send(local_peer_id).unwrap(),
+                                    Some(Action::ReportMessageValidity(BroadcastValidationReport{
+                                        msg_id, propagation_source, acceptance,
+                                    })) => {
+                                        if let Err(e) = self.swarm.behaviour_mut().gossipsub.report_message_validation_result(
+                                            &msg_id,
+                                            &propagation_source,
+                                            acceptance,
+                                        ) {
+                                            warn!("Error updating gossipsub message status: {e}");
+                                        }
+                                    },
+                                    None => {
+                                        // If we do not receive requests from the consensus module, we cannot
+                                        // participate in the P2P network. Shut down the client.
+                                        error!("Request channel closed");
+                                        break;
+                                    }
+                                },
+                            }
         }
     }
 }
