@@ -73,29 +73,8 @@ type Result<T> = result::Result<T, Error>;
 /// Event produced by [`Behaviour`].
 #[derive(Debug, Clone)]
 pub enum Event {
-    /// The renewal of the multiaddress on the gateway failed.
-    ExpiredExternalAddr(Multiaddr),
-
-    /// The IGD gateway was not found.
-    GatewayNotFound,
-
     /// New message from the gossip sub network
     GossipsubMessage(Broadcast),
-
-    /// Peer does not support gossipsub
-    GossipsubUnsupported { peer_id: PeerId },
-
-    /// Kademlia events
-    Kademlia(kad::Event),
-
-    /// The multiaddress is reachable externally.
-    NewExternalAddr(Multiaddr),
-
-    /// The Gateway is not exposed directly to the public network.
-    NonRoutableGateway,
-
-    /// New peer identity received
-    PeerIdentity { peer_id: PeerId, info: Info },
 
     /// Process has stopped
     Stopped,
@@ -116,21 +95,6 @@ impl TryFrom<BehaviourEvent> for Event {
                 topic: message.topic,
                 data: BroadcastData::from_wire(&message.data, true)?,
             })),
-            BehaviourEvent::Gossipsub(gossipsub::Event::GossipsubNotSupported { peer_id }) => {
-                Ok(Event::GossipsubUnsupported { peer_id })
-            }
-            BehaviourEvent::Identify(identify::Event::Received { peer_id, info }) => {
-                Ok(Event::PeerIdentity { peer_id, info })
-            }
-            BehaviourEvent::Kademlia(data) => Ok(Event::Kademlia(data)),
-            BehaviourEvent::Upnp(upnp::Event::NewExternalAddr(addr)) => {
-                Ok(Event::NewExternalAddr(addr))
-            }
-            BehaviourEvent::Upnp(upnp::Event::ExpiredExternalAddr(addr)) => {
-                Ok(Event::ExpiredExternalAddr(addr))
-            }
-            BehaviourEvent::Upnp(upnp::Event::GatewayNotFound) => Ok(Event::GatewayNotFound),
-            BehaviourEvent::Upnp(upnp::Event::NonRoutableGateway) => Ok(Event::NonRoutableGateway),
             _ => Err(Error::UnsupportedEvent),
         }
     }
@@ -316,7 +280,15 @@ impl Process {
                     // TODO: remove peer from db? from kademlia?
                 },
                 SwarmEvent::Behaviour(event) => {
-                        error!("p2p event: {event:#?}");
+                    match &event {
+                            BehaviourEvent::Identify(identify::Event::Received { peer_id, info }) => {
+                                // TODO: filter by protocol name/version
+                                for addr in &info.listen_addrs {
+                                    self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
+                                }
+                            },
+                            _=> {},
+                    }
                     // emit behaviour events to any subscribers
                     if let Ok(evt) = Event::try_from(event) {
                         self.events_out.send(evt).expect("Channel closed");
