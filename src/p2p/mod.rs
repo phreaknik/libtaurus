@@ -23,7 +23,7 @@ use tokio::{
         oneshot,
     },
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, trace};
 
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
 /// [`tokio::sync::broadcast`] for more information.
@@ -244,7 +244,7 @@ impl Process {
                         self.events_out.send(event).expect("Channel closed");
                     }
                     e => {
-                        debug!("unhandled p2p event: {e:#?}");
+                        trace!("unhandled p2p event: {e:#?}");
                     }
                 },
 
