@@ -181,7 +181,6 @@ impl Process {
                             }
                         },
                         Ok(p2p::Event::Stopped) => todo!(),
-                        Ok(evt) => debug!("unhandled event: {evt:#?}"),
                         Err(e) => return error!("Stopping due to p2p_event channel error: {e}"),
                     }
                 },

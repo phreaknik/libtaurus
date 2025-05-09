@@ -5,6 +5,7 @@ use libp2p::{
     identify,
     identity::Keypair,
     kad::{self, store::MemoryStore},
+    mdns,
     swarm::NetworkBehaviour,
     upnp, PeerId,
 };
@@ -31,6 +32,9 @@ pub(super) struct Config {
 
     /// Gossipsub protocol configuration
     gossipsub_cfg: gossipsub::Config,
+
+    /// MDNS protocol configuration
+    mdns_cfg: mdns::Config,
 }
 
 impl Config {
@@ -39,7 +43,7 @@ impl Config {
         kad_cfg.set_query_timeout(DEFAULT_KAD_QUERY_TIMOUT);
         let pubkey = keys.public();
         let gossipsub_cfg = gossipsub::ConfigBuilder::default()
-            .validate_messages() // We mus accept every message before its allowed to propagate
+            .validate_messages() // We must accept every message before its allowed to propagate
             .build()
             .expect("Failed to build gossipsub config");
         Config {
@@ -50,6 +54,7 @@ impl Config {
             ),
             kad_cfg,
             gossipsub_cfg,
+            mdns_cfg: mdns::Config::default(),
         }
     }
 }
@@ -62,6 +67,7 @@ pub(super) struct Behaviour {
     pub gossipsub: gossipsub::Behaviour,
     pub block_lists: allow_block_list::Behaviour<allow_block_list::BlockedPeers>,
     pub upnp: upnp::tokio::Behaviour,
+    pub mdns: mdns::tokio::Behaviour,
 }
 
 impl<'a> Behaviour {
@@ -87,6 +93,7 @@ impl<'a> Behaviour {
             gossipsub,
             block_lists: allow_block_list::Behaviour::default(),
             upnp: upnp::tokio::Behaviour::default(),
+            mdns: mdns::tokio::Behaviour::new(config.mdns_cfg, local_peer_id)?,
         })
     }
 }

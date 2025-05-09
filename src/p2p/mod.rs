@@ -10,13 +10,13 @@ use core::result;
 use futures::StreamExt;
 use libp2p::{
     gossipsub::{self, Sha256Topic},
-    identify::{self, Info},
+    identify::{self},
     identity::Keypair,
     kad,
     multiaddr::Protocol,
     noise,
     swarm::SwarmEvent,
-    tcp, upnp, yamux, Multiaddr, PeerId, Swarm,
+    tcp, yamux, Multiaddr, PeerId, Swarm,
 };
 use std::{io, net::Ipv4Addr, path::PathBuf, time::Duration};
 use tokio::{
