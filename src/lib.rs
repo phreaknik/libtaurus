@@ -16,5 +16,5 @@ pub mod sequencer;
 pub mod util;
 pub mod wire;
 
-pub use consensus::{vertex, GenesisConfig, Vertex, VertexHash};
+pub use consensus::{dag, vertex, GenesisConfig, Vertex, VertexHash};
 pub use wire::WireFormat;

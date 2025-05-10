@@ -10,16 +10,12 @@ use std::result;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[error("bad hash")]
-    BadHash,
     #[error(transparent)]
     ProstDecode(#[from] prost::DecodeError),
     #[error(transparent)]
     ProstEncode(#[from] prost::EncodeError),
     #[error(transparent)]
     TryFromSlice(#[from] std::array::TryFromSliceError),
-    #[error("error acquiring read lock on a vertex")]
-    VertexReadLock,
 }
 type Result<T> = result::Result<T, Error>;
 
