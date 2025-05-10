@@ -1,6 +1,9 @@
 mod handlers;
 
-use crate::consensus::{self, api::ConsensusApi};
+use crate::{
+    consensus::{self, api::ConsensusApi},
+    p2p::P2pApi,
+};
 use jsonrpsee::{
     server::{RpcModule, Server},
     types::ErrorObjectOwned,
@@ -69,9 +72,9 @@ pub struct Config {
 }
 
 /// Setup a new RPC server and run the process
-pub fn start(config: Config, consensus_api: ConsensusApi) {
+pub fn start(config: Config, consensus_api: ConsensusApi, p2p_api: P2pApi) {
     // Spawn a task to run the process
-    let process = Process::new(config, consensus_api).expect("Failed to start RPC server");
+    let process = Process::new(config, consensus_api, p2p_api).expect("Failed to start RPC server");
     tokio::spawn(process.task_fn());
 }
 
@@ -81,16 +84,18 @@ pub struct Process {
     bind_addr: Ipv4Addr,
     bind_port: u16,
     consensus_api: ConsensusApi,
+    p2p_api: P2pApi,
 }
 
 impl Process {
-    fn new(config: Config, consensus_api: ConsensusApi) -> Result<Process> {
+    fn new(config: Config, consensus_api: ConsensusApi, p2p_api: P2pApi) -> Result<Process> {
         // Instantiate the process
         Ok(Process {
             bind_addr: config.bind_addr,
             bind_port: config.bind_port,
             config,
             consensus_api,
+            p2p_api,
         })
     }
 

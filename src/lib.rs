@@ -6,6 +6,7 @@
 #![feature(map_try_insert)]
 // TODO: reasses these unstable features
 
+pub mod app;
 pub mod consensus;
 pub mod hash;
 pub mod p2p;

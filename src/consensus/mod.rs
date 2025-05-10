@@ -5,7 +5,7 @@ pub mod transaction;
 pub mod vertex;
 
 use crate::{
-    p2p::{self, P2pApi},
+    p2p::{self},
     WireFormat,
 };
 use api::ConsensusApi;
@@ -15,9 +15,13 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::result;
 use std::sync::Arc;
-use tokio::sync::mpsc::{self, UnboundedReceiver};
-use tokio::{select, sync::broadcast, sync::oneshot};
-use tracing::{debug, error, info, warn};
+use tokio::{
+    select,
+    sync::broadcast,
+    sync::mpsc::{self, UnboundedReceiver},
+    sync::oneshot,
+};
+use tracing::{debug, error, info};
 use transaction::TxRoot;
 pub use vertex::{Vertex, VertexHash};
 
@@ -101,11 +105,11 @@ impl GenesisConfig {
 
 /// Run the consensus process, spawning the task as a new thread. Returns an [`broadcast::Sender`],
 /// which can be subscribed to, to receive consensus events from the task.
-pub fn start(config: Config, p2p_api: P2pApi) -> ConsensusApi {
+pub fn start(config: Config) -> ConsensusApi {
     // Spawn a task to run the process
     let (action_sender, action_receiver) = mpsc::unbounded_channel();
     let (event_sender, event_receiver) = broadcast::channel(CONSENSUS_EVENT_CHAN_CAPACITY);
-    let process = Process::new(config, action_receiver, event_sender.clone(), p2p_api)
+    let process = Process::new(config, action_receiver, event_sender.clone())
         .expect("Failed to start consensus process");
     let handle = tokio::spawn(process.task_fn());
     tokio::spawn(async move {
@@ -124,7 +128,6 @@ pub struct Process {
     _config: Config,
     actions_in: UnboundedReceiver<Action>,
     events_out: broadcast::Sender<Event>,
-    p2p_api: P2pApi,
     dag: dag::DAG,
 }
 
@@ -134,9 +137,8 @@ impl Process {
         config: Config,
         actions_in: UnboundedReceiver<Action>,
         events_out: broadcast::Sender<Event>,
-        p2p_api: P2pApi,
     ) -> Result<Process> {
-        info!("Starting consensus...");
+        info!("Starting consensus");
 
         // Construct the DAG, initialized with the genesis vertex
         let dag = dag::DAG::new(config.dag.clone(), &[config.genesis.to_vertex()])?;
@@ -146,7 +148,6 @@ impl Process {
             _config: config.clone(),
             actions_in,
             events_out,
-            p2p_api,
             dag,
         })
     }
@@ -163,27 +164,8 @@ impl Process {
 
         // Handle consensus events
         let mut internal_events = self.events_out.subscribe();
-        let mut p2p_events = self.p2p_api.subscribe_events();
         loop {
             select! {
-                // Handle P2P events
-                event = p2p_events.recv() => {
-                    match event {
-                        Ok(p2p::Event::GossipsubMessage(message)) => {
-                            let ignore = message.ignore();
-                             if let Err(e) = self.handle_p2p_pubsub(message)
-                                .or_else(|e| {
-                                    warn!("Error handling p2p message: {e}");
-                                    Ok(ignore)
-                                })
-                                .and_then(|validation| self.p2p_api.report_message_validity(validation)) {
-                                return error!("Stopping due to p2p_action channel error: {e}");
-                            }
-                        },
-                        Ok(p2p::Event::Stopped) => todo!(),
-                        Err(e) => return error!("Stopping due to p2p_event channel error: {e}"),
-                    }
-                },
                 // Handle requested actions
                 Some(action) = self.actions_in.recv() => {
                         match action{
@@ -210,32 +192,6 @@ impl Process {
                     }
                 }
             }
-        }
-    }
-
-    /// Handle a message from the peer to peer network, and generate a validation report back to the
-    /// p2p client.
-    fn handle_p2p_pubsub(
-        &mut self,
-        bcast: p2p::Broadcast,
-    ) -> Result<p2p::BroadcastValidationReport> {
-        let accept = bcast.accept();
-        let ignore = bcast.ignore();
-        let reject = bcast.reject();
-        match bcast.data {
-            p2p::BroadcastData::Vertex(vx) => match self.dag.try_insert(&vx) {
-                Ok(waiting) => {
-                    // Send internal signal to retry any vertices which were waiting on this one
-                    self.events_out.send(Event::RetryInsert(waiting))?;
-                    // Emit event indicating the latest frontier
-                    self.events_out
-                        .send(Event::NewFrontier(self.dag.get_frontier()))?;
-                    Ok(accept)
-                }
-                Err(dag::Error::MissingParents(_)) => Ok(accept),
-                Err(dag::Error::AlreadyInserted | dag::Error::RejectedAncestor) => Ok(ignore),
-                Err(_) => Ok(reject),
-            },
         }
     }
 }

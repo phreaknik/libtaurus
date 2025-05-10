@@ -21,7 +21,7 @@ pub struct Broadcast {
 
 impl Broadcast {
     /// Generate a validation report to accept this message and propagate it to other peers.
-    pub(crate) fn accept(&self) -> BroadcastValidationReport {
+    pub fn accept(&self) -> BroadcastValidationReport {
         BroadcastValidationReport {
             msg_id: self.id.clone(),
             propagation_source: self.src,
@@ -31,7 +31,7 @@ impl Broadcast {
 
     /// Generate a validation report to ignore this message and cease propagation, without
     /// penalty to the peer that sent it.
-    pub(crate) fn ignore(&self) -> BroadcastValidationReport {
+    pub fn ignore(&self) -> BroadcastValidationReport {
         BroadcastValidationReport {
             msg_id: self.id.clone(),
             propagation_source: self.src,
@@ -41,7 +41,7 @@ impl Broadcast {
 
     /// Generate a validation report to reject this message, cease propagation, and penalize the
     /// peer who sent it. Repeated penalization will eventually leading to that peer being banned.
-    pub(crate) fn reject(&self) -> BroadcastValidationReport {
+    pub fn reject(&self) -> BroadcastValidationReport {
         BroadcastValidationReport {
             msg_id: self.id.clone(),
             propagation_source: self.src,

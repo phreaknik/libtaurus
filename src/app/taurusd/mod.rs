@@ -1,9 +1,10 @@
-mod util;
+mod handler;
 
 use clap::{arg, command, ArgMatches};
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
+use handler::Handler;
 use libp2p::{identity::Keypair, kad, Multiaddr};
-use libtaurus::{consensus::dag, rpc};
+use libtaurus::{app::util, consensus::dag, rpc};
 pub use libtaurus::{
     consensus::{self, GenesisConfig, Vertex, VertexHash},
     hash::Hash,
@@ -54,11 +55,14 @@ async fn main() {
     let p2p_api = p2p::start(cfg.p2p);
 
     // Start the consensus process
-    let consensus_api = consensus::start(cfg.consensus, p2p_api);
+    let consensus_api = consensus::start(cfg.consensus);
     let mut consensus_events = consensus_api.subscribe_events();
 
     // Start the RPC server
-    rpc::start(cfg.rpc, consensus_api);
+    rpc::start(cfg.rpc, consensus_api.clone(), p2p_api.clone());
+
+    // Start the event handler
+    Handler::new(p2p_api, consensus_api).start();
 
     // Handle events
     loop {

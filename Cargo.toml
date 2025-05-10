@@ -9,7 +9,7 @@ path = "src/lib.rs"
 
 [[bin]]
 name = "taurusd"
-path = "src/app/taurusd.rs"
+path = "src/app/taurusd/mod.rs"
 
 [[bin]]
 name = "taurseq"
