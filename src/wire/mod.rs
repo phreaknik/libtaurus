@@ -1,6 +1,6 @@
 pub mod generated {
     pub mod proto {
-        include!(concat!(env!("OUT_DIR"), "/generated.proto.rs"));
+        include!(concat!(env!("OUT_DIR"), "/wire.pb.rs"));
     }
 }
 

@@ -1,0 +1,24 @@
+syntax = "proto3";
+import "types.proto";
+package wire.pb;
+
+// Broadcast message wrapper
+message Broadcast {
+	Vertex vertex = 1;
+}
+
+// Request message wrapper
+message Request {
+	oneof RequestData {
+		Hash get_vertex = 1;
+		Hash get_preference = 2;
+	}
+}
+
+// Response message wrapper
+message Response {
+	oneof ResponseData {
+		Vertex vertex = 1;
+		Preference preference = 2;
+	}
+}
