@@ -66,7 +66,7 @@ impl ConsensusApi {
     }
 
     /// Try to insert the given [`Vertex`] into the [`DAG`]
-    pub async fn insert_vertex(&self, vx: &Arc<Vertex>) -> Result<HashSet<VertexHash>> {
+    pub async fn submit_vertex(&self, vx: &Arc<Vertex>) -> Result<HashSet<VertexHash>> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.consensus_action_ch.send(Action::SubmitVertex {
             vertex: vx.clone(),

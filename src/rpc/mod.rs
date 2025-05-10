@@ -79,6 +79,7 @@ pub fn start(config: Config, consensus_api: ConsensusApi, p2p_api: P2pApi) {
 }
 
 /// Runtime state for the RPC server process
+#[derive(Clone)]
 pub struct Process {
     config: Config,
     bind_addr: Ipv4Addr,
@@ -120,7 +121,7 @@ impl Process {
                 }
             }
         };
-        let mut module = RpcModule::new(self.consensus_api.clone());
+        let mut module = RpcModule::new(self.clone());
         handlers::register_consensus_api(&mut module);
         let addr = server.local_addr().unwrap();
         info!("JSON RPC listening at {}", addr);

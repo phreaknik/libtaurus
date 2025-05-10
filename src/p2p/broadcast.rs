@@ -64,6 +64,12 @@ pub enum BroadcastData {
     Vertex(Arc<Vertex>),
 }
 
+impl From<Arc<Vertex>> for BroadcastData {
+    fn from(vx: Arc<Vertex>) -> Self {
+        BroadcastData::Vertex(vx)
+    }
+}
+
 impl<'a> WireFormat<'a, proto::Broadcast> for BroadcastData {
     type Error = Error;
 

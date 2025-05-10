@@ -52,7 +52,7 @@ impl Handler {
     /// Handle a message from the GossipSub router
     async fn handle_gossipsub(&mut self, bcast: p2p::Broadcast) -> p2p::BroadcastValidationReport {
         match &bcast.data {
-            p2p::BroadcastData::Vertex(vx) => match self.consensus_api.insert_vertex(&vx).await {
+            p2p::BroadcastData::Vertex(vx) => match self.consensus_api.submit_vertex(&vx).await {
                 Ok(_)
                 | Err(consensus::api::Error::Consensus(consensus::Error::DAG(
                     dag::Error::MissingParents(_),

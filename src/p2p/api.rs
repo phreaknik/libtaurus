@@ -1,5 +1,6 @@
 use super::{Action, BroadcastValidationReport, Event};
-use std::result;
+use crate::Vertex;
+use std::{result, sync::Arc};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 #[derive(thiserror::Error, Debug)]
@@ -43,6 +44,13 @@ impl P2pApi {
         self.p2p_action_ch
             .send(Action::ReportMessageValidity(validation))?;
         Ok(())
+    }
+
+    /// Publish a new [`Vertex`] to the GossipSub network
+    pub fn submit_vertex(&self, vx: &Arc<Vertex>) -> Result<()> {
+        Ok(self
+            .p2p_action_ch
+            .send(Action::Broadcast(vx.clone().into()))?)
     }
 }
 
