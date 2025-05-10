@@ -43,7 +43,7 @@ pub struct Sequencer {
 
 impl Sequencer {
     fn new(config: Config) -> Result<Sequencer> {
-        info!("Starting sequencer...");
+        info!("Starting sequencer");
 
         // Instantiate the runtime
         Ok(Sequencer { config })
@@ -70,8 +70,8 @@ impl Sequencer {
 
                     // Submit the vertex
                     let vhash = proposal.hash();
-                    let _resp: Vec<VertexHash> = ws_client.request("insert_vertex", rpc_params![proposal]).await?;
-                    info!("Proposed vertex {}", vhash.to_hex());
+                    let _resp: Vec<VertexHash> = ws_client.request("submit_vertex", rpc_params![proposal]).await?;
+                    info!("Submitted a new vertex {}", vhash.to_hex());
                 },
             }
         }
