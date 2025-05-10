@@ -77,8 +77,8 @@ impl<'a> WireFormat<'a, proto::Request> for Request {
 impl fmt::Display for Request {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Request::GetVertex(hash) => write!(f, "GetVertex({})", hash.to_short_hex()),
-            Request::GetPreference(hash) => write!(f, "GetPreference({})", hash.to_short_hex()),
+            Request::GetVertex(hash) => write!(f, "GetVertex({hash})"),
+            Request::GetPreference(hash) => write!(f, "GetPreference({hash})"),
         }
     }
 }

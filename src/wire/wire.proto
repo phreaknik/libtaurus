@@ -1,12 +1,12 @@
 syntax = "proto3";
 package generated.proto;
 
-// Broadcast message type
+// Broadcast message wrapper
 message Broadcast {
 	Vertex vertex = 1;
 }
 
-// Request message type
+// Request message wrapper
 message Request {
 	oneof RequestData {
 		Hash get_vertex = 1;
@@ -14,7 +14,7 @@ message Request {
 	}
 }
 
-// Response message type
+// Response message wrapper
 message Response {
 	oneof ResponseData {
 		Vertex vertex = 1;
