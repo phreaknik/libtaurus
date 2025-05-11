@@ -14,16 +14,12 @@ pub const VERSION: u32 = 1;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[error("bad version")]
+    #[error("bad version (expected {0}, found {1})")]
     BadVersion(u32, u32),
     #[error("duplicate parents")]
     DuplicateParents,
-    #[error("no namespace")]
-    NoNamespace,
-    #[error("no parents")]
-    NoParents,
-    #[error("no root")]
-    NoRoot,
+    #[error("missing field: {0}")]
+    MissingField(String),
     #[error(transparent)]
     ProstDecode(#[from] prost::DecodeError),
     #[error(transparent)]
@@ -79,7 +75,7 @@ impl Vertex {
         let (heights, hashes): (Vec<_>, Vec<_>) =
             parents.into_iter().map(|p| (p.height, p.hash())).unzip();
         if heights.is_empty() {
-            Err(Error::NoParents)
+            Err(Error::MissingField("parents".to_string()))
         } else if hashes.len() != hashes.iter().unique().count() {
             Err(Error::DuplicateParents)
         } else {
@@ -98,9 +94,9 @@ impl Vertex {
     /// Make sure the vertex passes all basic sanity checks
     pub fn sanity_checks(&self) -> Result<()> {
         if self.version != VERSION {
-            Err(Error::BadVersion(self.version, VERSION))
+            Err(Error::BadVersion(VERSION, self.version))
         } else if self.parents.is_empty() {
-            Err(Error::NoParents)
+            Err(Error::MissingField("parents".to_string()))
         } else if self.parents.len() != self.parents.iter().unique().count() {
             Err(Error::DuplicateParents)
         } else {
@@ -145,10 +141,19 @@ impl<'a> WireFormat<'a, proto::Vertex> for Vertex {
                 .map(|p| VertexHash::from_protobuf(p, check))
                 .try_collect()?,
             namespace_id: NamespaceId::from_protobuf(
-                vertex.namespace_id.as_ref().ok_or(Error::NoNamespace)?,
+                vertex
+                    .namespace_id
+                    .as_ref()
+                    .ok_or(Error::MissingField("namespace".to_string()))?,
                 check,
             )?,
-            root: TxRoot::from_protobuf(vertex.root.as_ref().ok_or(Error::NoRoot)?, check)?,
+            root: TxRoot::from_protobuf(
+                vertex
+                    .root
+                    .as_ref()
+                    .ok_or(Error::MissingField("root".to_string()))?,
+                check,
+            )?,
             timestamp: Utc::now(),
         };
         // Optionally perform sanity checks
@@ -313,6 +318,7 @@ mod test {
         vertex::{self, Constraint, Constraints, VERSION},
         Vertex, VertexHash, WireFormat,
     };
+    use core::panic;
     use std::{assert_matches::assert_matches, sync::Arc};
 
     // Some reusable dummy hashes
@@ -364,11 +370,10 @@ mod test {
         let p1 = Arc::new(p1);
         let p2 = Arc::new(p2);
         let p3 = Arc::new(p3);
-        assert_matches!(
-            Vertex::empty().with_parents([]),
-            Err(vertex::Error::NoParents),
-            "should error if no parents provided"
-        );
+        match Vertex::empty().with_parents([]) {
+            Err(vertex::Error::MissingField(field)) => assert_eq!(field, "parents".to_string()),
+            _ => panic!("expected error"),
+        }
         assert_matches!(
             Vertex::empty().with_parents([&p1, &p2, &p2]),
             Err(vertex::Error::DuplicateParents),
@@ -431,10 +436,13 @@ mod test {
         let mut vx = Vertex::default();
         assert_matches!(
             &vx.sanity_checks(),
-            Err(vertex::Error::BadVersion(0, VERSION))
+            Err(vertex::Error::BadVersion(VERSION, 0))
         );
         vx.version = vertex::VERSION;
-        assert_matches!(&vx.sanity_checks(), Err(vertex::Error::NoParents));
+        match vx.sanity_checks() {
+            Err(vertex::Error::MissingField(field)) => assert_eq!(field, "parents".to_string()),
+            _ => panic!("expected error"),
+        }
         vx.parents = vec![VertexHash::default(), VertexHash::default()];
         assert_matches!(&vx.sanity_checks(), Err(vertex::Error::DuplicateParents));
         vx.parents = vec![VertexHash::default()];
