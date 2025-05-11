@@ -10,13 +10,9 @@ use jsonrpsee::{
     IntoResponse, ResponsePayload,
 };
 use serde::Serialize;
-use std::{net::Ipv4Addr, result};
+use std::net::Ipv4Addr;
 use tokio::select;
 use tracing::{error, info};
-
-#[derive(Debug, Clone)]
-pub enum Error {}
-type Result<T> = result::Result<T, Error>;
 
 #[derive(Debug, Clone, Serialize)]
 pub enum RpcError {
@@ -74,7 +70,7 @@ pub struct Config {
 /// Setup a new RPC server and run the process
 pub fn start(config: Config, consensus_api: ConsensusApi, p2p_api: P2pApi) {
     // Spawn a task to run the process
-    let process = Process::new(config, consensus_api, p2p_api).expect("Failed to start RPC server");
+    let process = Process::new(config, consensus_api, p2p_api);
     tokio::spawn(process.task_fn());
 }
 
@@ -89,15 +85,15 @@ pub struct Process {
 }
 
 impl Process {
-    fn new(config: Config, consensus_api: ConsensusApi, p2p_api: P2pApi) -> Result<Process> {
+    fn new(config: Config, consensus_api: ConsensusApi, p2p_api: P2pApi) -> Process {
         // Instantiate the process
-        Ok(Process {
+        Process {
             bind_addr: config.bind_addr,
             bind_port: config.bind_port,
             config,
             consensus_api,
             p2p_api,
-        })
+        }
     }
 
     /// Return the RPC server address
