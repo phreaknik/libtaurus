@@ -4,7 +4,7 @@ mod broadcast;
 pub mod fetcher;
 mod request;
 
-use crate::WireFormat;
+use crate::{vertex, WireFormat};
 pub use api::P2pApi;
 use behaviour::{Behaviour, BehaviourEvent};
 pub use broadcast::{Broadcast, BroadcastData, BroadcastValidationReport};
@@ -21,7 +21,7 @@ use libp2p::{
     swarm::SwarmEvent,
     tcp, yamux, Multiaddr, PeerId, Swarm,
 };
-use std::{io, net::Ipv4Addr, path::PathBuf, time::Duration};
+use std::{net::Ipv4Addr, path::PathBuf, time::Duration};
 use tokio::{
     select,
     sync::{
@@ -38,26 +38,18 @@ const P2P_EVENT_CHAN_CAPACITY: usize = 32;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[error(transparent)]
-    Dial(#[from] libp2p::swarm::DialError),
-    #[error(transparent)]
-    ProstDecode(#[from] prost::DecodeError),
     #[error("broadcast has no data")]
     EmptyBroadcast,
-    #[error(transparent)]
-    ProstEncode(#[from] prost::EncodeError),
-    #[error(transparent)]
-    Heed(#[from] heed::Error),
     #[error("data is not a valid broadcast message")]
-    InvalidBroadast,
+    InvalidBroadcast,
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error("malformed address")]
     MalformedAddress,
     #[error(transparent)]
-    Multiaddr(#[from] libp2p::multiaddr::Error),
+    ProstDecode(#[from] prost::DecodeError),
     #[error(transparent)]
-    Transport(#[from] libp2p::TransportError<io::Error>),
+    ProstEncode(#[from] prost::EncodeError),
     #[error(transparent)]
     Publish(#[from] gossipsub::PublishError),
     #[error(transparent)]
@@ -67,7 +59,7 @@ pub enum Error {
     #[error("unsupported event")]
     UnsupportedEvent,
     #[error(transparent)]
-    Vertex(#[from] crate::consensus::vertex::Error),
+    Vertex(#[from] vertex::Error),
 }
 type Result<T> = result::Result<T, Error>;
 

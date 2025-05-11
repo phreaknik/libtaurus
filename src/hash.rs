@@ -2,7 +2,6 @@ use crate::{
     util::Randomizer,
     wire::{proto, WireFormat},
 };
-use heed::{BytesDecode, BytesEncode};
 use rand::Fill;
 use serde_derive::{Deserialize, Serialize};
 use std::fmt;
@@ -82,27 +81,6 @@ impl Into<blake3::Hash> for &Hash {
 impl Into<blake3::Hash> for Hash {
     fn into(self) -> blake3::Hash {
         blake3::Hash::from(self.0)
-    }
-}
-
-// BytesEncode redundant with WireFormat?
-impl<'a> BytesEncode<'a> for Hash {
-    type EItem = Hash;
-
-    fn bytes_encode(
-        item: &'a Self::EItem,
-    ) -> std::result::Result<std::borrow::Cow<'a, [u8]>, Box<dyn std::error::Error>> {
-        Ok(item.to_wire(false)?.into())
-    }
-}
-
-impl<'a> BytesDecode<'a> for Hash {
-    type DItem = Hash;
-
-    fn bytes_decode(
-        bytes: &'a [u8],
-    ) -> std::result::Result<Self::DItem, Box<dyn std::error::Error>> {
-        Ok(Hash::from_wire(bytes.try_into()?, false)?)
     }
 }
 
