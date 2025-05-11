@@ -95,7 +95,6 @@ impl Handler {
                         Some(
                             dag::Error::BadHeight(_, _)
                             | dag::Error::ConflictingAncestors
-                            | dag::Error::NoParents
                             | dag::Error::SelfReferentialParent,
                         ) => Ok(bcast.reject()),
 
@@ -110,12 +109,7 @@ impl Handler {
                         ) => Ok(bcast.ignore()),
 
                         // Patterns that must have been satisfied in a previous or_else
-                        Some(
-                            dag::Error::Hash(_)
-                            | dag::Error::ProstDecode(_)
-                            | dag::Error::ProstEncode(_)
-                            | dag::Error::Vertex(_),
-                        ) => unreachable!(),
+                        Some(dag::Error::Vertex(_)) => unreachable!(),
 
                         None => Err(err),
                     },

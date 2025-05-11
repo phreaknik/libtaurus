@@ -22,28 +22,20 @@ pub enum Error {
     BadHeight(u64, u64),
     #[error("ancestors conflict")]
     ConflictingAncestors,
-    #[error(transparent)]
-    Hash(#[from] crate::hash::Error),
     #[error("missing parents")]
     MissingParents(Vec<VertexHash>),
-    #[error("no parents")]
-    NoParents,
     #[error("not found")]
     NotFound,
-    #[error(transparent)]
-    ProstDecode(#[from] prost::DecodeError),
-    #[error(transparent)]
-    ProstEncode(#[from] prost::EncodeError),
     #[error("ancestor has been rejected")]
     RejectedAncestor,
     #[error("self referential parent")]
     SelfReferentialParent,
     #[error(transparent)]
     Vertex(#[from] vertex::Error),
-    #[error("waiting on vertex")]
-    WaitingOnVertex,
     #[error("waiting on vertex parents")]
     WaitingOnParents(Vec<VertexHash>),
+    #[error("waiting on vertex")]
+    WaitingOnVertex,
 }
 type Result<T> = result::Result<T, Error>;
 
