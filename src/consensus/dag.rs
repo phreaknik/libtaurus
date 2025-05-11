@@ -344,6 +344,21 @@ impl DAG {
         self.pending_query.insert(vx.hash());
     }
 
+    /// Retry inserting the specified pending vertices
+    pub fn retry_pending<'a, H>(&mut self, hashes: H) -> Result<HashSet<VertexHash>>
+    where
+        H: IntoIterator<Item = &'a VertexHash>,
+    {
+        let vertices: HashMap<VertexHash, Arc<Vertex>> = hashes
+            .into_iter()
+            .filter_map(|&vhash| self.vertex.get(&vhash).cloned().map(|vx| (vhash, vx)))
+            .collect();
+        Ok(vertices
+            .into_iter()
+            .filter_map(|(vhash, vx)| self.try_insert(&vx).map(|_| vhash).ok())
+            .collect())
+    }
+
     /// Insert a vertex into the [`DAG`].  Returns a list of known children waiting to be inserted
     /// after this vertex
     pub fn try_insert(&mut self, vx: &Arc<Vertex>) -> Result<HashSet<VertexHash>> {
@@ -1001,6 +1016,11 @@ mod test {
         assert_eq!(dag.children[&v0.hash()].len(), 1);
         assert_eq!(dag.children[&v1.hash()].len(), 1);
         assert_eq!(dag.children[&v2.hash()].len(), 0);
+    }
+
+    #[test]
+    fn retry_pending() {
+        todo!()
     }
 
     #[test]

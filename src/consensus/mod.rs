@@ -21,7 +21,7 @@ use tokio::{
     sync::mpsc::{self, UnboundedReceiver},
     sync::oneshot,
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use transaction::TxRoot;
 pub use vertex::{Vertex, VertexHash};
 
@@ -168,21 +168,32 @@ impl Process {
             select! {
                 // Handle requested actions
                 Some(action) = self.actions_in.recv() => {
-                        match action{
-                            Action::GetAcceptedFrontier{result_ch} => {
-                                if let Err(_e) = result_ch.send(self.dag.get_frontier()) {
-                                    debug!("failed to respond to GetAcceptedFrontier");
-                                }
-                            },
-                            Action::SubmitVertex{vertex, result_ch} => {
-                                if let Err(_e) = result_ch.send(self.dag.try_insert(&vertex).map_err(Error::from)) {
-                                    debug!("failed to respond to SubmitVertex");
-                                } else {
+                    match action{
+                        Action::GetAcceptedFrontier{result_ch} => {
+                            if let Err(_e) = result_ch.send(self.dag.get_frontier()) {
+                                debug!("failed to respond to GetAcceptedFrontier");
+                            }
+                        },
+                        Action::SubmitVertex{vertex, result_ch} => {
+                            let resp = self.dag.try_insert(&vertex).map_err(Error::from);
+                            match &resp {
+                                Ok(waiting) => {
                                     info!("inserted {}", vertex.hash().to_hex());
-                                }
+                                    if let Ok(successful) = self.dag.retry_pending(waiting) {
+                                        for vhash in successful {
+                                            info!("inserted pending {}", vhash.to_hex());
+                                        }
+                                    }
+                                },
+                                Err(e) => info!("vertex {} not inserted: {e}", vertex.hash()),
+                            };
+                            if let Err(_) = result_ch.send(resp) {
+                                warn!("unable to send response after action");
                             }
                         }
+                    }
                 },
+
                 // Handle internally generated events
                 event = internal_events.recv() => {
                     match event {
