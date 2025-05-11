@@ -11,16 +11,6 @@ use std::{
     result,
 };
 
-#[derive(thiserror::Error, Debug)]
-pub enum Error {
-    #[error(transparent)]
-    ProstDecode(#[from] prost::DecodeError),
-    #[error(transparent)]
-    ProstEncode(#[from] prost::EncodeError),
-    #[error(transparent)]
-    Hash(#[from] crate::hash::Error),
-}
-
 pub trait WireFormat<'a, P>: Sized
 where
     P: prost::Message + Default,

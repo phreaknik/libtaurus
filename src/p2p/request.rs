@@ -24,8 +24,6 @@ pub enum Error {
     ProstEncode(#[from] prost::EncodeError),
     #[error(transparent)]
     Vertex(#[from] crate::vertex::Error),
-    #[error(transparent)]
-    Wire(#[from] crate::wire::Error),
 }
 type Result<T> = result::Result<T, Error>;
 

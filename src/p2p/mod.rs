@@ -68,8 +68,6 @@ pub enum Error {
     UnsupportedEvent,
     #[error(transparent)]
     Vertex(#[from] crate::consensus::vertex::Error),
-    #[error(transparent)]
-    Wire(#[from] crate::wire::Error),
 }
 type Result<T> = result::Result<T, Error>;
 
