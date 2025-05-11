@@ -1,6 +1,7 @@
 pub mod api;
 mod behaviour;
 mod broadcast;
+pub mod fetcher;
 mod request;
 
 use crate::WireFormat;
@@ -8,6 +9,7 @@ pub use api::P2pApi;
 use behaviour::{Behaviour, BehaviourEvent};
 pub use broadcast::{Broadcast, BroadcastData, BroadcastValidationReport};
 use core::result;
+use fetcher::Fetcher;
 use futures::StreamExt;
 use libp2p::{
     gossipsub::{self, Sha256Topic},
@@ -106,6 +108,7 @@ impl TryFrom<BehaviourEvent> for Event {
 pub enum Action {
     BlockPeer(PeerId),
     GetLocalPeerId(oneshot::Sender<PeerId>),
+    GetFetcher(oneshot::Sender<Fetcher>),
     Broadcast(BroadcastData),
     ReportMessageValidity(BroadcastValidationReport),
 }
@@ -306,6 +309,7 @@ impl Process {
                 Some(Action::BlockPeer(peer)) => {
                     self.swarm.behaviour_mut().block_lists.block_peer(peer);
                 },
+                    Some(Action::GetFetcher(resp_ch)) => todo!(),
                 Some(Action::Broadcast(message)) => {
                     if let Err(e) = message.to_wire(true).and_then(|bytes|
                     self.swarm

@@ -1,4 +1,4 @@
-use super::{Action, BroadcastValidationReport, Event};
+use super::{fetcher::Fetcher, Action, BroadcastValidationReport, Event};
 use crate::Vertex;
 use std::{result, sync::Arc};
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -51,6 +51,13 @@ impl P2pApi {
         Ok(self
             .p2p_action_ch
             .send(Action::Broadcast(vx.clone().into()))?)
+    }
+
+    /// Create a fetcher process used to fetch a stream of data from peers
+    pub async fn get_fetcher(&self) -> Result<Fetcher> {
+        let (resp_sender, resp_receiver) = oneshot::channel();
+        self.p2p_action_ch.send(Action::GetFetcher(resp_sender))?;
+        Ok(resp_receiver.await?)
     }
 }
 

@@ -77,6 +77,20 @@ impl Handler {
                 )
                 .or_else(
                     |err| match err.source().and_then(|s| s.downcast_ref::<dag::Error>()) {
+                        // Find missing parents
+                        Some(dag::Error::MissingParents(missing)) => {
+                            // Start a new fetcher for the missing parents
+                            let p2p_api = self.p2p_api.clone();
+                            let consensus_api = self.consensus_api.clone();
+                            let initial = missing.clone();
+                            tokio::spawn(async move {
+                                if let Ok(mut fetcher) = p2p_api.get_fetcher().await {
+                                    fetcher.run(initial, consensus_api).await;
+                                }
+                            });
+                            Ok(bcast.accept())
+                        }
+
                         // Punative errors
                         Some(
                             dag::Error::BadHeight(_, _)
@@ -89,7 +103,6 @@ impl Handler {
                         Some(
                             dag::Error::AlreadyInserted
                             | dag::Error::AlreadyRecorded
-                            | dag::Error::MissingParents(_)
                             | dag::Error::NotFound
                             | dag::Error::RejectedAncestor
                             | dag::Error::WaitingOnVertex
