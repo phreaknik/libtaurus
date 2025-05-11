@@ -185,7 +185,7 @@ impl Process {
                                         }
                                     }
                                 },
-                                Err(e) => info!("vertex {} not inserted: {e}", vertex.hash()),
+                                Err(e) => info!("vertex {} not inserted: {e}", vertex.hash().to_hex()),
                             };
                             if let Err(_) = result_ch.send(resp) {
                                 warn!("unable to send response after action");
