@@ -1,4 +1,8 @@
-use super::{request, BroadcastData};
+use super::{
+    broadcast::{self, BroadcastData},
+    request,
+};
+use crate::vertex;
 use libp2p::{
     allow_block_list,
     gossipsub::{self, MessageAuthenticity, Sha256Topic},
@@ -10,7 +14,7 @@ use libp2p::{
     swarm::NetworkBehaviour,
     upnp, PeerId,
 };
-use std::{iter::once, str, time::Duration};
+use std::{iter::once, result, str, time::Duration};
 use strum::IntoEnumIterator;
 use tracing::debug;
 
@@ -18,6 +22,26 @@ pub const PROTOCOL_NAME: &[u8; 13] = b"/taurus/0.1.0";
 
 /// Kademlia query timeout in seconds
 const DEFAULT_KAD_QUERY_TIMOUT: Duration = Duration::from_secs(60);
+
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error(transparent)]
+    Broadcast(#[from] broadcast::Error),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    ProstDecode(#[from] prost::DecodeError),
+    #[error(transparent)]
+    ProstEncode(#[from] prost::EncodeError),
+    #[error(transparent)]
+    Publish(#[from] gossipsub::PublishError),
+    #[error(transparent)]
+    Subscription(#[from] gossipsub::SubscriptionError),
+    #[error(transparent)]
+    NoKnownPeers(#[from] kad::NoKnownPeers),
+    #[error(transparent)]
+    Vertex(#[from] vertex::Error),
+}
 
 /// Configuration for the [`taurus::Behaviour`](Behaviour).
 #[derive(Clone)]
@@ -77,7 +101,7 @@ pub(super) struct Behaviour {
 }
 
 impl<'a> Behaviour {
-    pub fn new(config: Config) -> super::Result<Self> {
+    pub fn new(config: Config) -> result::Result<Self, Error> {
         let local_peer_id = PeerId::from_public_key(&config.keys.public());
         let mut gossipsub = gossipsub::Behaviour::new(
             MessageAuthenticity::Signed(config.keys),

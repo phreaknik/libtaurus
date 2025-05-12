@@ -50,38 +50,43 @@ impl Handler {
     }
 
     /// Handle a message from the GossipSub router
-    async fn handle_gossipsub(&mut self, bcast: p2p::Broadcast) -> p2p::BroadcastValidationReport {
+    async fn handle_gossipsub(
+        &mut self,
+        bcast: p2p::broadcast::Broadcast,
+    ) -> p2p::broadcast::BroadcastValidationReport {
         match &bcast.data {
-            p2p::BroadcastData::Vertex(vx) => match self.consensus_api.submit_vertex(&vx).await {
-                Ok(_) => bcast.accept(),
+            p2p::broadcast::BroadcastData::Vertex(vx) => {
+                match self.consensus_api.submit_vertex(&vx).await {
+                    Ok(_) => bcast.accept(),
 
-                // Handle missing parents
-                Err(consensus::api::Error::Task(consensus::task::Error::DAG(
-                    dag::Error::MissingParents(missing),
-                ))) => {
-                    // Start a new fetcher for the missing parents
-                    let p2p_api = self.p2p_api.clone();
-                    let consensus_api = self.consensus_api.clone();
-                    let initial = missing.clone();
-                    tokio::spawn(async move {
-                        if let Ok(mut fetcher) = p2p_api.get_fetcher().await {
-                            fetcher.run(initial, consensus_api).await;
-                        }
-                    });
-                    bcast.accept()
+                    // Handle missing parents
+                    Err(consensus::api::Error::Task(consensus::task::Error::DAG(
+                        dag::Error::MissingParents(missing),
+                    ))) => {
+                        // Start a new fetcher for the missing parents
+                        let p2p_api = self.p2p_api.clone();
+                        let consensus_api = self.consensus_api.clone();
+                        let initial = missing.clone();
+                        tokio::spawn(async move {
+                            if let Ok(mut fetcher) = p2p_api.get_fetcher().await {
+                                fetcher.run(initial, consensus_api).await;
+                            }
+                        });
+                        bcast.accept()
+                    }
+
+                    // Punative errors
+                    Err(consensus::api::Error::Task(consensus::task::Error::DAG(
+                        dag::Error::BadHeight(_, _)
+                        | dag::Error::ConflictingAncestors
+                        | dag::Error::SelfReferentialParent
+                        | dag::Error::Vertex(_),
+                    ))) => bcast.reject(),
+
+                    // Non-punative errors
+                    _ => bcast.ignore(),
                 }
-
-                // Punative errors
-                Err(consensus::api::Error::Task(consensus::task::Error::DAG(
-                    dag::Error::BadHeight(_, _)
-                    | dag::Error::ConflictingAncestors
-                    | dag::Error::SelfReferentialParent
-                    | dag::Error::Vertex(_),
-                ))) => bcast.reject(),
-
-                // Non-punative errors
-                _ => bcast.ignore(),
-            },
+            }
         }
     }
 }

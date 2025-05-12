@@ -30,10 +30,10 @@ pub fn app_data_dir(args: &ArgMatches) -> PathBuf {
 }
 
 /// Build P2P [`p2p::Config`] from parsed CLI args
-pub fn build_p2p_cfg(args: &ArgMatches) -> p2p::Config {
+pub fn build_p2p_cfg(args: &ArgMatches) -> p2p::task::Config {
     let datadir = app_data_dir(args).join("p2p/");
     let identity_key = get_peer_identity_key(&datadir);
-    p2p::Config {
+    p2p::task::Config {
         datadir,
         identity_key,
         boot_peers: args

@@ -12,7 +12,7 @@ use util::{build_consensus_cfg, build_p2p_cfg, build_rpc_cfg};
 #[derive(thiserror::Error, Debug)]
 enum Error {
     #[error(transparent)]
-    P2pError(#[from] crate::p2p::Error),
+    P2pError(#[from] crate::p2p::task::Error),
     #[error(transparent)]
     ConsensusError(#[from] crate::consensus::task::Error),
 }
@@ -31,7 +31,7 @@ async fn main() {
     );
 
     // Start the P2P process
-    let p2p_api = p2p::start(build_p2p_cfg(&args));
+    let p2p_api = p2p::task::start(build_p2p_cfg(&args));
 
     // Start the consensus process
     let consensus_api = consensus::task::start(build_consensus_cfg(&args));

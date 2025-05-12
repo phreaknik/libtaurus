@@ -1,4 +1,4 @@
-use super::{fetcher::Fetcher, Action, BroadcastValidationReport, Event};
+use super::{broadcast::BroadcastValidationReport, fetcher::Fetcher, Action, Event};
 use crate::Vertex;
 use std::{result, sync::Arc};
 use tokio::sync::{broadcast, mpsc, oneshot};
