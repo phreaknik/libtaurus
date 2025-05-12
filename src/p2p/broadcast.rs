@@ -14,22 +14,10 @@ use strum_macros::{AsRefStr, EnumIter};
 pub enum Error {
     #[error("broadcast has no data")]
     EmptyBroadcast,
-    #[error("data is not a valid broadcast message")]
-    InvalidBroadcast,
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
-    #[error("malformed address")]
-    MalformedAddress,
     #[error(transparent)]
     ProstDecode(#[from] prost::DecodeError),
     #[error(transparent)]
     ProstEncode(#[from] prost::EncodeError),
-    #[error(transparent)]
-    Publish(#[from] gossipsub::PublishError),
-    #[error(transparent)]
-    Subscription(#[from] gossipsub::SubscriptionError),
-    #[error("unsupported event")]
-    UnsupportedEvent,
     #[error(transparent)]
     Vertex(#[from] vertex::Error),
 }

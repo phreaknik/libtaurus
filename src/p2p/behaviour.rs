@@ -1,8 +1,4 @@
-use super::{
-    broadcast::{self, BroadcastData},
-    request,
-};
-use crate::vertex;
+use super::{broadcast::BroadcastData, request};
 use libp2p::{
     allow_block_list,
     gossipsub::{self, MessageAuthenticity, Sha256Topic},
@@ -26,21 +22,9 @@ const DEFAULT_KAD_QUERY_TIMOUT: Duration = Duration::from_secs(60);
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error(transparent)]
-    Broadcast(#[from] broadcast::Error),
-    #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
-    ProstDecode(#[from] prost::DecodeError),
-    #[error(transparent)]
-    ProstEncode(#[from] prost::EncodeError),
-    #[error(transparent)]
-    Publish(#[from] gossipsub::PublishError),
-    #[error(transparent)]
     Subscription(#[from] gossipsub::SubscriptionError),
-    #[error(transparent)]
-    NoKnownPeers(#[from] kad::NoKnownPeers),
-    #[error(transparent)]
-    Vertex(#[from] vertex::Error),
 }
 
 /// Configuration for the [`taurus::Behaviour`](Behaviour).

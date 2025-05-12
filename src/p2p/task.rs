@@ -4,7 +4,7 @@ use super::{
     broadcast::{self, Broadcast, BroadcastData, BroadcastValidationReport},
     fetcher::Fetcher,
 };
-use crate::{vertex, WireFormat};
+use crate::WireFormat;
 pub use api::P2pApi;
 use futures::StreamExt;
 use libp2p::{
@@ -36,18 +36,8 @@ const P2P_EVENT_CHAN_CAPACITY: usize = 32;
 pub enum Error {
     #[error(transparent)]
     Broadcast(#[from] broadcast::Error),
-    #[error("broadcast has no data")]
-    EmptyBroadcast,
-    #[error("data is not a valid broadcast message")]
-    InvalidBroadcast,
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
     #[error("malformed address")]
     MalformedAddress,
-    #[error(transparent)]
-    ProstDecode(#[from] prost::DecodeError),
-    #[error(transparent)]
-    ProstEncode(#[from] prost::EncodeError),
     #[error(transparent)]
     Publish(#[from] gossipsub::PublishError),
     #[error(transparent)]
@@ -56,8 +46,6 @@ pub enum Error {
     NoKnownPeers(#[from] kad::NoKnownPeers),
     #[error("unsupported event")]
     UnsupportedEvent,
-    #[error(transparent)]
-    Vertex(#[from] vertex::Error),
 }
 type Result<T> = result::Result<T, Error>;
 
