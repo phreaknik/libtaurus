@@ -1,5 +1,5 @@
 use libtaurus::{
-    consensus::{self, api::ConsensusApi, dag},
+    consensus::{self, dag, ConsensusApi},
     p2p::{self, P2pApi},
 };
 use tokio::select;
