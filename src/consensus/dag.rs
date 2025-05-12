@@ -18,7 +18,7 @@ pub enum Error {
     AlreadyInserted,
     #[error("already recorded")]
     AlreadyRecorded,
-    #[error("bad height")]
+    #[error("bad height (expected {0}, found {1})")]
     BadHeight(u64, u64),
     #[error("ancestors conflict")]
     ConflictingAncestors,
@@ -254,7 +254,7 @@ impl DAG {
             .max()
             .unwrap();
         if expected_height != vx.height {
-            return Err(Error::BadHeight(vx.height, expected_height));
+            return Err(Error::BadHeight(expected_height, vx.height));
         }
 
         // Search for constraint conflicts in the ancestry
@@ -959,7 +959,7 @@ mod test {
         let mut x20 = Vertex::empty().with_parents([&v10]).unwrap();
         x20.height = 2; // Should have height 3
         match dag.check_vertex(&Arc::new(x20)) {
-            Err(dag::Error::BadHeight(actual, expected)) => {
+            Err(dag::Error::BadHeight(expected, actual)) => {
                 assert_eq!(actual, 2);
                 assert_eq!(expected, 3);
             }
