@@ -1,10 +1,6 @@
-use std::error::Error;
-
 use libtaurus::{
     consensus::{self, api::ConsensusApi, dag},
-    hash,
     p2p::{self, P2pApi},
-    vertex,
 };
 use tokio::select;
 use tracing::error;
@@ -56,101 +52,36 @@ impl Handler {
     /// Handle a message from the GossipSub router
     async fn handle_gossipsub(&mut self, bcast: p2p::Broadcast) -> p2p::BroadcastValidationReport {
         match &bcast.data {
-            p2p::BroadcastData::Vertex(vx) => self
-                .consensus_api
-                .submit_vertex(&vx)
-                .await
-                .map(|_| bcast.accept())
-                .or_else(
-                    |err| match err.source().and_then(|s| s.downcast_ref::<hash::Error>()) {
-                        // All hash errors are punative errors
-                        Some(_) => Ok(bcast.reject()),
-                        None => Err(err),
-                    },
-                )
-                .or_else(
-                    |err| match err.source().and_then(|s| s.downcast_ref::<vertex::Error>()) {
-                        // All vertex errors are punative errors
-                        Some(_) => Ok(bcast.reject()),
-                        None => Err(err),
-                    },
-                )
-                .or_else(
-                    |err| match err.source().and_then(|s| s.downcast_ref::<dag::Error>()) {
-                        // Find missing parents
-                        Some(dag::Error::MissingParents(missing)) => {
-                            // Start a new fetcher for the missing parents
-                            let p2p_api = self.p2p_api.clone();
-                            let consensus_api = self.consensus_api.clone();
-                            let initial = missing.clone();
-                            tokio::spawn(async move {
-                                if let Ok(mut fetcher) = p2p_api.get_fetcher().await {
-                                    fetcher.run(initial, consensus_api).await;
-                                }
-                            });
-                            Ok(bcast.accept())
+            p2p::BroadcastData::Vertex(vx) => match self.consensus_api.submit_vertex(&vx).await {
+                Ok(_) => bcast.accept(),
+
+                // Handle missing parents
+                Err(consensus::api::Error::Consensus(consensus::Error::DAG(
+                    dag::Error::MissingParents(missing),
+                ))) => {
+                    // Start a new fetcher for the missing parents
+                    let p2p_api = self.p2p_api.clone();
+                    let consensus_api = self.consensus_api.clone();
+                    let initial = missing.clone();
+                    tokio::spawn(async move {
+                        if let Ok(mut fetcher) = p2p_api.get_fetcher().await {
+                            fetcher.run(initial, consensus_api).await;
                         }
+                    });
+                    bcast.accept()
+                }
 
-                        // Punative errors
-                        Some(
-                            dag::Error::BadHeight(_, _)
-                            | dag::Error::ConflictingAncestors
-                            | dag::Error::SelfReferentialParent,
-                        ) => Ok(bcast.reject()),
+                // Punative errors
+                Err(consensus::api::Error::Consensus(consensus::Error::DAG(
+                    dag::Error::BadHeight(_, _)
+                    | dag::Error::ConflictingAncestors
+                    | dag::Error::SelfReferentialParent
+                    | dag::Error::Vertex(_),
+                ))) => bcast.reject(),
 
-                        // Non-punative errors
-                        Some(
-                            dag::Error::AlreadyInserted
-                            | dag::Error::AlreadyRecorded
-                            | dag::Error::NotFound
-                            | dag::Error::RejectedAncestor
-                            | dag::Error::WaitingOnVertex
-                            | dag::Error::WaitingOnParents(_),
-                        ) => Ok(bcast.ignore()),
-
-                        // Patterns that must have been satisfied in a previous or_else
-                        Some(dag::Error::Vertex(_)) => unreachable!(),
-
-                        None => Err(err),
-                    },
-                )
-                .or_else(|err| {
-                    match err
-                        .source()
-                        .and_then(|s| s.downcast_ref::<consensus::Error>())
-                    {
-                        // Non-punative errors
-                        Some(consensus::Error::EventsOutCh(_)) => Ok(bcast.ignore()),
-
-                        // Patterns that must have been satisfied in a previous or_else
-                        Some(consensus::Error::DAG(_)) => {
-                            unreachable!()
-                        }
-
-                        None => Err(err),
-                    }
-                })
-                .or_else(|err| {
-                    match err
-                        .source()
-                        .and_then(|s| s.downcast_ref::<consensus::api::Error>())
-                    {
-                        // Non-punative errors
-                        Some(
-                            consensus::api::Error::ActionSend(_)
-                            | consensus::api::Error::ResponseRecv(_)
-                            | consensus::api::Error::TimerElapsed(_),
-                        ) => Ok(bcast.ignore()),
-
-                        // Patterns that must have been satisfied in a previous or_else
-                        Some(consensus::api::Error::Consensus(_)) => {
-                            unreachable!()
-                        }
-
-                        None => Err(err),
-                    }
-                })
-                .expect("unhandled error type"),
+                // Non-punative errors
+                _ => bcast.ignore(),
+            },
         }
     }
 }
