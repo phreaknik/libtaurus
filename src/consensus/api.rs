@@ -1,5 +1,5 @@
-use super::{Action, Event};
-use crate::{consensus, Vertex, VertexHash, WireFormat};
+use super::task::{self, Action, Event};
+use crate::{Vertex, VertexHash, WireFormat};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, result, sync::Arc, time::Duration};
 use tokio::{
@@ -12,7 +12,7 @@ pub enum Error {
     #[error(transparent)]
     ActionSend(#[from] mpsc::error::SendError<Action>),
     #[error(transparent)]
-    Consensus(#[from] consensus::Error),
+    Task(#[from] task::Error),
     #[error(transparent)]
     TimerElapsed(#[from] tokio::time::error::Elapsed),
     #[error(transparent)]

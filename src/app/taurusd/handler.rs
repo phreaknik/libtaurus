@@ -56,7 +56,7 @@ impl Handler {
                 Ok(_) => bcast.accept(),
 
                 // Handle missing parents
-                Err(consensus::api::Error::Consensus(consensus::Error::DAG(
+                Err(consensus::api::Error::Task(consensus::task::Error::DAG(
                     dag::Error::MissingParents(missing),
                 ))) => {
                     // Start a new fetcher for the missing parents
@@ -72,7 +72,7 @@ impl Handler {
                 }
 
                 // Punative errors
-                Err(consensus::api::Error::Consensus(consensus::Error::DAG(
+                Err(consensus::api::Error::Task(consensus::task::Error::DAG(
                     dag::Error::BadHeight(_, _)
                     | dag::Error::ConflictingAncestors
                     | dag::Error::SelfReferentialParent

@@ -63,7 +63,7 @@ impl Fetcher {
                             .submit_vertex(&vertex)
                             .await {
                             Ok(_) => {},
-                            Err(consensus::api::Error::Consensus(consensus::Error::DAG(dag::Error::MissingParents(parents))))
+                            Err(consensus::api::Error::Task(consensus::task::Error::DAG(dag::Error::MissingParents(parents))))
                             => request_hashes(parents),
                             Err(_) => {},
                         }

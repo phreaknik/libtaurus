@@ -21,7 +21,7 @@ struct Config {
     pub p2p: p2p::Config,
 
     /// Consensus configuration
-    pub consensus: consensus::Config,
+    pub consensus: consensus::task::Config,
 
     /// RPC server configuration
     pub rpc: rpc::Config,
@@ -32,7 +32,7 @@ enum Error {
     #[error(transparent)]
     P2pError(#[from] crate::p2p::Error),
     #[error(transparent)]
-    ConsensusError(#[from] crate::consensus::Error),
+    ConsensusError(#[from] crate::consensus::task::Error),
 }
 
 /// Main taurus daemon
@@ -55,7 +55,7 @@ async fn main() {
     let p2p_api = p2p::start(cfg.p2p);
 
     // Start the consensus process
-    let consensus_api = consensus::start(cfg.consensus);
+    let consensus_api = consensus::task::start(cfg.consensus);
     let mut consensus_events = consensus_api.subscribe_events();
 
     // Start the RPC server
@@ -70,7 +70,7 @@ async fn main() {
             // Handle P2P events
             event = consensus_events.recv() => {
                 match event {
-                    Ok(consensus::Event::Stopped) =>{
+                    Ok(consensus::task::Event::Stopped) =>{
                         error!("Consensus stopped.");
                         error!("Shutting down.");
                         // TODO: clean shutdown of all processes
@@ -207,8 +207,8 @@ fn build_p2p_cfg(args: &ArgMatches) -> p2p::Config {
 }
 
 /// Build consensus [`consensus::Config`] from parsed CLI args
-fn build_consensus_cfg(args: &ArgMatches) -> consensus::Config {
-    consensus::Config {
+fn build_consensus_cfg(args: &ArgMatches) -> consensus::task::Config {
+    consensus::task::Config {
         datadir: app_data_dir(args).join("consensus/"),
         genesis: GenesisConfig {},
         dag: dag::Config::default(),
