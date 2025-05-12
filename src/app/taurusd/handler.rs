@@ -120,12 +120,10 @@ impl Handler {
                         .and_then(|s| s.downcast_ref::<consensus::Error>())
                     {
                         // Non-punative errors
-                        Some(
-                            consensus::Error::EventsOutCh(_) | consensus::Error::P2pActionCh(_),
-                        ) => Ok(bcast.ignore()),
+                        Some(consensus::Error::EventsOutCh(_)) => Ok(bcast.ignore()),
 
                         // Patterns that must have been satisfied in a previous or_else
-                        Some(consensus::Error::DAG(_) | consensus::Error::Vertex(_)) => {
+                        Some(consensus::Error::DAG(_)) => {
                             unreachable!()
                         }
 

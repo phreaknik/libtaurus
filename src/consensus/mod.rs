@@ -4,10 +4,7 @@ pub mod namespace;
 pub mod transaction;
 pub mod vertex;
 
-use crate::{
-    p2p::{self},
-    WireFormat,
-};
+use crate::WireFormat;
 use api::ConsensusApi;
 use chrono::DateTime;
 use namespace::NamespaceId;
@@ -63,10 +60,6 @@ pub enum Error {
     DAG(#[from] dag::Error),
     #[error("consensus event channel error")]
     EventsOutCh(#[from] tokio::sync::broadcast::error::SendError<Event>),
-    #[error("p2p action channel error")]
-    P2pActionCh(#[from] tokio::sync::mpsc::error::SendError<p2p::Action>),
-    #[error(transparent)]
-    Vertex(#[from] vertex::Error),
 }
 type Result<T> = result::Result<T, Error>;
 
