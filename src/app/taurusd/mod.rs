@@ -24,7 +24,7 @@ struct Config {
     pub consensus: consensus::task::Config,
 
     /// RPC server configuration
-    pub rpc: rpc::Config,
+    pub rpc: rpc::task::Config,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -59,7 +59,7 @@ async fn main() {
     let mut consensus_events = consensus_api.subscribe_events();
 
     // Start the RPC server
-    rpc::start(cfg.rpc, consensus_api.clone(), p2p_api.clone());
+    rpc::task::start(cfg.rpc, consensus_api.clone(), p2p_api.clone());
 
     // Start the event handler
     Handler::new(p2p_api, consensus_api).start();
@@ -216,8 +216,8 @@ fn build_consensus_cfg(args: &ArgMatches) -> consensus::task::Config {
 }
 
 /// Build RPC [`rpc::Config`] from parsed CLI args
-fn build_rpc_cfg(args: &ArgMatches) -> rpc::Config {
-    rpc::Config {
+fn build_rpc_cfg(args: &ArgMatches) -> rpc::task::Config {
+    rpc::task::Config {
         bind_addr: *args.get_one("rpcbind").unwrap(),
         bind_port: *args.get_one("rpcport").unwrap(),
         search_port: args.get_flag("rpcportsearch"),
