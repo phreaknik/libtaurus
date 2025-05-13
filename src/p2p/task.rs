@@ -55,7 +55,7 @@ pub enum Event {
     /// New message from the gossip sub network
     GossipsubMessage(Broadcast),
 
-    /// Process has stopped
+    /// task has stopped
     Stopped,
 }
 
@@ -120,8 +120,8 @@ pub fn start(config: Config) -> P2pApi {
     // Spawn the task
     let (action_sender, action_receiver) = mpsc::unbounded_channel();
     let (event_sender, event_receiver) = sync::broadcast::channel(P2P_EVENT_CHAN_CAPACITY);
-    let process = Process::new(config, action_receiver, event_sender.clone());
-    let handle = tokio::spawn(process.task_fn());
+    let task = Task::new(config, action_receiver, event_sender.clone());
+    let handle = tokio::spawn(task.task_fn());
     tokio::spawn(async move {
         if let Err(e) = handle.await {
             error!("Consensus stopped with error: {e}");
@@ -133,20 +133,20 @@ pub fn start(config: Config) -> P2pApi {
     P2pApi::new(action_sender, event_receiver)
 }
 
-pub struct Process {
+pub struct Task {
     config: Config,
     actions_in: UnboundedReceiver<Action>,
     events_out: sync::broadcast::Sender<Event>,
     swarm: Swarm<behaviour::Behaviour>,
 }
 
-impl Process {
-    /// Construct a new P2P process
+impl Task {
+    /// Construct a new P2P task
     pub fn new(
         config: Config,
         actions_in: UnboundedReceiver<Action>,
         events_out: sync::broadcast::Sender<Event>,
-    ) -> Process {
+    ) -> Task {
         // Build the swarm
         let mut swarm = libp2p::SwarmBuilder::with_existing_identity(config.identity_key.clone())
             .with_tokio()
@@ -166,7 +166,7 @@ impl Process {
             .kademlia
             .set_mode(config.kad_mode_override);
 
-        Process {
+        Task {
             config,
             actions_in,
             events_out,

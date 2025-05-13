@@ -6,5 +6,5 @@ pub mod transaction;
 pub mod vertex;
 
 pub use api::ConsensusApi;
-pub use task::GenesisConfig;
+pub use task::{start, GenesisConfig};
 pub use vertex::{Vertex, VertexHash};

@@ -31,14 +31,14 @@ async fn main() {
     );
 
     // Start the P2P process
-    let p2p_api = p2p::task::start(build_p2p_cfg(&args));
+    let p2p_api = p2p::start(build_p2p_cfg(&args));
 
     // Start the consensus process
-    let consensus_api = consensus::task::start(build_consensus_cfg(&args));
+    let consensus_api = consensus::start(build_consensus_cfg(&args));
     let mut consensus_events = consensus_api.subscribe_events();
 
     // Start the RPC server
-    rpc::task::start(build_rpc_cfg(&args), consensus_api.clone(), p2p_api.clone());
+    rpc::start(build_rpc_cfg(&args), consensus_api.clone(), p2p_api.clone());
 
     // Start the event handler
     Handler::new(p2p_api, consensus_api).start();

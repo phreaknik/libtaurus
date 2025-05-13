@@ -6,4 +6,4 @@ pub mod request;
 pub mod task;
 
 pub use api::P2pApi;
-pub use task::{Action, Event};
+pub use task::{start, Action, Event};

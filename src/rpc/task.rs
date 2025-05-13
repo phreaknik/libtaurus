@@ -58,7 +58,7 @@ impl IntoResponse for RpcError {
     }
 }
 
-/// Configuration details for the RPC process.
+/// Configuration details for the RPC task.
 #[derive(Debug, Clone)]
 pub struct Config {
     pub bind_addr: Ipv4Addr,
@@ -66,16 +66,16 @@ pub struct Config {
     pub search_port: bool,
 }
 
-/// Setup a new RPC server and run the process
+/// Setup a new RPC server and run the task
 pub fn start(config: Config, consensus_api: ConsensusApi, p2p_api: P2pApi) {
-    // Spawn a task to run the process
-    let process = Process::new(config, consensus_api, p2p_api);
-    tokio::spawn(process.task_fn());
+    // Spawn a task to run the task
+    let task = Task::new(config, consensus_api, p2p_api);
+    tokio::spawn(task.task_fn());
 }
 
-/// Runtime state for the RPC server process
+/// Runtime state for the RPC server task
 #[derive(Clone)]
-pub struct Process {
+pub struct Task {
     pub config: Config,
     pub bind_addr: Ipv4Addr,
     pub bind_port: u16,
@@ -83,10 +83,10 @@ pub struct Process {
     pub p2p_api: P2pApi,
 }
 
-impl Process {
-    fn new(config: Config, consensus_api: ConsensusApi, p2p_api: P2pApi) -> Process {
-        // Instantiate the process
-        Process {
+impl Task {
+    fn new(config: Config, consensus_api: ConsensusApi, p2p_api: P2pApi) -> Task {
+        // Instantiate the task
+        Task {
             bind_addr: config.bind_addr,
             bind_port: config.bind_port,
             config,

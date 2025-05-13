@@ -19,7 +19,7 @@ use transaction::TxRoot;
 /// [`tokio::sync::broadcast`] for more information.
 pub const CONSENSUS_EVENT_CHAN_CAPACITY: usize = 32;
 
-/// Events produced by the consensus process
+/// Events produced by the consensus task
 #[derive(Debug, Clone)]
 pub enum Event {
     /// The following vertices should be re-inserted. This usually means a missing parent has been
@@ -31,11 +31,11 @@ pub enum Event {
     /// used as parents in a new vertex which extends the graph.
     NewFrontier(Vec<Arc<Vertex>>),
 
-    /// The process has been stopped
+    /// The task has been stopped
     Stopped,
 }
 
-/// Actions that can be performed by the consensus process
+/// Actions that can be performed by the consensus task
 #[derive(Debug)]
 pub enum Action {
     GetAcceptedFrontier {
@@ -56,7 +56,7 @@ pub enum Error {
 }
 type Result<T> = result::Result<T, Error>;
 
-/// Configuration details for the consensus process.
+/// Configuration details for the consensus task.
 #[derive(Debug, Clone)]
 pub struct Config {
     /// Genesis block details
@@ -89,15 +89,14 @@ impl GenesisConfig {
     }
 }
 
-/// Run the consensus process, spawning the task as a new thread. Returns an [`broadcast::Sender`],
+/// Run the consensus task, spawning the task as a new thread. Returns an [`broadcast::Sender`],
 /// which can be subscribed to, to receive consensus events from the task.
 pub fn start(config: Config) -> ConsensusApi {
-    // Spawn a task to run the process
     let (action_sender, action_receiver) = mpsc::unbounded_channel();
     let (event_sender, event_receiver) = broadcast::channel(CONSENSUS_EVENT_CHAN_CAPACITY);
-    let process = Process::new(config, action_receiver, event_sender.clone())
-        .expect("Failed to start consensus process");
-    let handle = tokio::spawn(process.task_fn());
+    let task = Task::new(config, action_receiver, event_sender.clone())
+        .expect("Failed to start consensus task");
+    let handle = tokio::spawn(task.task_fn());
     tokio::spawn(async move {
         if let Err(e) = handle.await {
             error!("Consensus stopped with error: {e}");
@@ -105,32 +104,31 @@ pub fn start(config: Config) -> ConsensusApi {
         event_sender.send(Event::Stopped).unwrap();
     });
 
-    // Return the communication channels
     ConsensusApi::new(action_sender, event_receiver)
 }
 
-/// Runtime state for the consensus process
-pub struct Process {
+/// Runtime state for the consensus task
+pub struct Task {
     _config: Config,
     actions_in: UnboundedReceiver<Action>,
     events_out: broadcast::Sender<Event>,
     dag: dag::DAG,
 }
 
-impl Process {
-    /// Construct a new process
+impl Task {
+    /// Construct a new task
     fn new(
         config: Config,
         actions_in: UnboundedReceiver<Action>,
         events_out: broadcast::Sender<Event>,
-    ) -> Result<Process> {
+    ) -> Result<Task> {
         info!("Starting consensus");
 
         // Construct the DAG, initialized with the genesis vertex
         let dag = dag::DAG::new(config.dag.clone(), &[config.genesis.to_vertex()])?;
 
-        // Instantiate the process
-        Ok(Process {
+        // Instantiate the task
+        Ok(Task {
             _config: config.clone(),
             actions_in,
             events_out,
