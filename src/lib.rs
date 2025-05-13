@@ -8,6 +8,7 @@
 
 pub mod app;
 pub mod consensus;
+pub mod fetcher;
 pub mod hash;
 pub mod p2p;
 pub mod params;

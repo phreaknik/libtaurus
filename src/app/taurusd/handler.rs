@@ -1,5 +1,6 @@
 use libtaurus::{
     consensus::{self, dag, ConsensusApi},
+    fetcher,
     p2p::{self, P2pApi},
 };
 use tokio::select;
@@ -40,6 +41,13 @@ impl Handler {
                                 _ => {},
                             }
                         },
+                        Ok(p2p::Event::RequestMessage{request_id, request}) => {
+                            let response = match request {
+                                p2p::Request::GetVertex(_vhash) => todo!(),
+                                p2p::Request::GetPreference(_vhash) => todo!(),
+                            };
+                            let _ =self.p2p_api.respond(request_id, response);
+                        },
                         Ok(p2p::Event::Stopped) => todo!(),
                         Err(e) => return error!("Stopping due to p2p_events channel error: {e}"),
                     }
@@ -63,15 +71,13 @@ impl Handler {
                     Err(consensus::api::Error::Task(consensus::task::Error::DAG(
                         dag::Error::MissingParents(missing),
                     ))) => {
-                        // Start a new fetcher for the missing parents
-                        let p2p_api = self.p2p_api.clone();
-                        let consensus_api = self.consensus_api.clone();
-                        let initial = missing.clone();
-                        tokio::spawn(async move {
-                            if let Ok(mut fetcher) = p2p_api.get_fetcher().await {
-                                fetcher.run(initial, consensus_api).await;
-                            }
-                        });
+                        // Start a fetcher to request missing ancestors until the graph connects
+                        fetcher::start(
+                            bcast.src,
+                            missing,
+                            self.p2p_api.clone(),
+                            self.consensus_api.clone(),
+                        );
                         bcast.accept()
                     }
 

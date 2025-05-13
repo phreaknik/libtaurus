@@ -22,10 +22,6 @@ pub const CONSENSUS_EVENT_CHAN_CAPACITY: usize = 32;
 /// Events produced by the consensus task
 #[derive(Debug, Clone)]
 pub enum Event {
-    /// The following vertices should be re-inserted. This usually means a missing parent has been
-    /// found and it may now be possible to process these vertices.
-    RetryInsert(HashSet<VertexHash>),
-
     /// The following vertices make up the latest frontier, after a recent graph update. These
     /// vertices are sorted according to the order they were first observed, so that they may be
     /// used as parents in a new vertex which extends the graph.
@@ -181,7 +177,6 @@ impl Task {
                 // Handle internally generated events
                 event = internal_events.recv() => {
                     match event {
-                        Ok(Event::RetryInsert(_)) => {todo!()},
                         Err(e) => return error!("Stopping due to consensus_event channel error: {e}"),
                         Ok(_) => {},
                     }

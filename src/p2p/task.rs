@@ -1,30 +1,29 @@
 use super::{
     api,
     behaviour::{self, Behaviour, BehaviourEvent},
-    broadcast::{self, Broadcast, BroadcastData, BroadcastValidationReport},
-    fetcher::Fetcher,
+    broadcast::{Broadcast, BroadcastData, BroadcastValidationReport},
 };
-use crate::WireFormat;
+use crate::{
+    p2p::{Request, Response},
+    WireFormat,
+};
 pub use api::P2pApi;
 use futures::StreamExt;
 use libp2p::{
     gossipsub::{self, Sha256Topic},
-    identify::{self},
+    identify,
     identity::Keypair,
     kad,
     multiaddr::Protocol,
     noise,
+    request_response::{self, InboundRequestId, OutboundRequestId, ResponseChannel},
     swarm::SwarmEvent,
     tcp, yamux, Multiaddr, PeerId, Swarm,
 };
-use std::{net::Ipv4Addr, path::PathBuf, result, time::Duration};
+use std::{collections::HashMap, net::Ipv4Addr, path::PathBuf, result, time::Duration};
 use tokio::{
     select,
-    sync::{
-        self,
-        mpsc::{self, UnboundedReceiver},
-        oneshot,
-    },
+    sync::{self, broadcast, mpsc, oneshot},
 };
 use tracing::{debug, error, info, trace, warn};
 
@@ -35,7 +34,7 @@ const P2P_EVENT_CHAN_CAPACITY: usize = 32;
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error(transparent)]
-    Broadcast(#[from] broadcast::Error),
+    Broadcast(#[from] super::broadcast::Error),
     #[error("malformed address")]
     MalformedAddress,
     #[error(transparent)]
@@ -54,6 +53,12 @@ type Result<T> = result::Result<T, Error>;
 pub enum Event {
     /// New message from the gossip sub network
     GossipsubMessage(Broadcast),
+
+    /// New request from the request_response router
+    RequestMessage {
+        request_id: InboundRequestId,
+        request: Request,
+    },
 
     /// task has stopped
     Stopped,
@@ -83,10 +88,18 @@ impl TryFrom<BehaviourEvent> for Event {
 #[derive(Debug)]
 pub enum Action {
     BlockPeer(PeerId),
-    GetLocalPeerId(oneshot::Sender<PeerId>),
-    GetFetcher(oneshot::Sender<Fetcher>),
     Broadcast(BroadcastData),
+    GetLocalPeerId(oneshot::Sender<PeerId>),
     ReportMessageValidity(BroadcastValidationReport),
+    Request {
+        request: Request,
+        opt_peer: Option<PeerId>,
+        resp_ch: mpsc::UnboundedSender<Response>,
+    },
+    Respond {
+        request_id: InboundRequestId,
+        response: Response,
+    },
 }
 
 /// Configuration details for [`taurus-p2p`].
@@ -135,17 +148,20 @@ pub fn start(config: Config) -> P2pApi {
 
 pub struct Task {
     config: Config,
-    actions_in: UnboundedReceiver<Action>,
-    events_out: sync::broadcast::Sender<Event>,
+    peer_id: Option<PeerId>,
+    actions_in: mpsc::UnboundedReceiver<Action>,
+    events_out: broadcast::Sender<Event>,
     swarm: Swarm<behaviour::Behaviour>,
+    pending_responses: HashMap<InboundRequestId, ResponseChannel<Response>>,
+    pending_requests: HashMap<OutboundRequestId, mpsc::UnboundedSender<Response>>,
 }
 
 impl Task {
     /// Construct a new P2P task
     pub fn new(
         config: Config,
-        actions_in: UnboundedReceiver<Action>,
-        events_out: sync::broadcast::Sender<Event>,
+        actions_in: mpsc::UnboundedReceiver<Action>,
+        events_out: broadcast::Sender<Event>,
     ) -> Task {
         // Build the swarm
         let mut swarm = libp2p::SwarmBuilder::with_existing_identity(config.identity_key.clone())
@@ -168,9 +184,12 @@ impl Task {
 
         Task {
             config,
+            peer_id: None,
             actions_in,
             events_out,
             swarm,
+            pending_requests: HashMap::new(),
+            pending_responses: HashMap::new(),
         }
     }
 
@@ -232,13 +251,13 @@ impl Task {
         }
 
         // Main event loop
-        let local_peer_id = PeerId::from(self.config.identity_key.public());
+        self.peer_id = Some(PeerId::from(self.config.identity_key.public()));
         loop {
             select! {
                 // Handle swarm events
                 event = self.swarm.select_next_some() => match event {
                     SwarmEvent::NewListenAddr { mut address, .. } => {
-                        address.push(Protocol::P2p(local_peer_id.into()));
+                        address.push(Protocol::P2p(self.peer_id.unwrap().into()));
                         info!("Listening on {address}")
                     },
                     SwarmEvent::ConnectionEstablished { peer_id, .. } => {
@@ -264,7 +283,17 @@ impl Task {
                                 BehaviourEvent::Identify(identify::Event::Received { peer_id, info }) => {
                                     // TODO: filter by protocol name/version
                                     for addr in &info.listen_addrs {
-                                        self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
+                                        self.swarm
+                                            .behaviour_mut()
+                                            .kademlia
+                                            .add_address(&peer_id, addr.clone());
+                                    }
+                                },
+                                BehaviourEvent::Requests(request_response::Event::Message { message, .. }) => {
+                                    if let request_response::Message::Response { request_id, response } = message {
+                                        self.pending_requests
+                                            .remove(&request_id)
+                                            .and_then(|ch| ch.send(response.clone()).ok());
                                     }
                                 },
                                 _=> {},
@@ -281,38 +310,80 @@ impl Task {
                 },
 
                 // Handle requested actions
-                action = self.actions_in.recv() => match action {
-                    Some(Action::BlockPeer(peer)) => {
-                        self.swarm.behaviour_mut().block_lists.block_peer(peer);
-                    },
-                    Some(Action::GetFetcher(resp_ch)) => todo!(),
-                    Some(Action::Broadcast(message)) => {
-                        if let Err(e) = message.to_wire(true).map_err(Error::from).and_then(|bytes|
+                opt_action = self.actions_in.recv() =>{
+                    if let Some(action) = opt_action {
+                        self.handle_inbound_action(action);
+                    } else {
+                            // If we do not receive requests from the consensus module, we cannot
+                            // participate in the P2P network. Shut down the client.
+                            error!("Request channel closed");
+                            break;
+                    }
+                },
+            }
+        }
+    }
+
+    /// Handler for inbound P2P actions
+    fn handle_inbound_action(&mut self, action: Action) {
+        match action {
+            Action::BlockPeer(peer) => {
+                self.swarm.behaviour_mut().block_lists.block_peer(peer);
+            }
+            Action::Broadcast(message) => {
+                if let Err(e) = message
+                    .to_wire(true)
+                    .map_err(Error::from)
+                    .and_then(|bytes| {
                         self.swarm
                             .behaviour_mut()
                             .gossipsub
                             .publish(Sha256Topic::from(&message), bytes)
-                            .map_err(Error::from)) {
-                                error!("Failed to publish p2p message: {e}");
-                        }
-                    },
-                    Some(Action::GetLocalPeerId(resp_ch)) => resp_ch.send(local_peer_id).unwrap(),
-                    Some(Action::ReportMessageValidity(BroadcastValidationReport{msg_id, propagation_source, acceptance})) => {
-                        if let Err(e) = self.swarm.behaviour_mut().gossipsub.report_message_validation_result(
-                            &msg_id,
-                            &propagation_source,
-                            acceptance,
-                        ) {
-                            warn!("Error updating gossipsub message status: {e}");
-                        }
-                    },
-                    None => {
-                        // If we do not receive requests from the consensus module, we cannot
-                        // participate in the P2P network. Shut down the client.
-                        error!("Request channel closed");
-                        break;
-                    }
-                },
+                            .map_err(Error::from)
+                    })
+                {
+                    error!("Failed to publish p2p message: {e}");
+                }
+            }
+            Action::GetLocalPeerId(resp_ch) => resp_ch.send(self.peer_id.unwrap()).unwrap(),
+            Action::ReportMessageValidity(BroadcastValidationReport {
+                msg_id,
+                propagation_source,
+                acceptance,
+            }) => {
+                if let Err(e) = self
+                    .swarm
+                    .behaviour_mut()
+                    .gossipsub
+                    .report_message_validation_result(&msg_id, &propagation_source, acceptance)
+                {
+                    warn!("Error updating gossipsub message status: {e}");
+                }
+            }
+            Action::Request {
+                request,
+                opt_peer,
+                resp_ch,
+            } => {
+                // TODO: make peer selection optional
+                let rid = self
+                    .swarm
+                    .behaviour_mut()
+                    .requests
+                    .send_request(&opt_peer.unwrap(), request);
+                self.pending_requests.insert(rid, resp_ch);
+            }
+            Action::Respond {
+                request_id,
+                response,
+            } => {
+                self.pending_responses.remove(&request_id).and_then(|ch| {
+                    self.swarm
+                        .behaviour_mut()
+                        .requests
+                        .send_response(ch, response)
+                        .ok()
+                });
             }
         }
     }
