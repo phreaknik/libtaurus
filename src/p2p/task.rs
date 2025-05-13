@@ -54,7 +54,7 @@ pub enum Event {
     /// New message from the gossip sub network
     GossipsubMessage(Broadcast),
 
-    /// New request from the request_response router
+    /// New request from the request_response protocol
     RequestMessage {
         request_id: InboundRequestId,
         request: Request,
@@ -62,26 +62,6 @@ pub enum Event {
 
     /// task has stopped
     Stopped,
-}
-
-impl TryFrom<BehaviourEvent> for Event {
-    type Error = Error;
-
-    fn try_from(value: BehaviourEvent) -> result::Result<Self, Self::Error> {
-        match value {
-            BehaviourEvent::Gossipsub(gossipsub::Event::Message {
-                propagation_source,
-                message_id,
-                message,
-            }) => Ok(Event::GossipsubMessage(Broadcast {
-                src: propagation_source,
-                id: message_id,
-                topic: message.topic,
-                data: BroadcastData::from_wire(&message.data, true)?,
-            })),
-            _ => Err(Error::UnsupportedEvent),
-        }
-    }
 }
 
 /// Actions that can be performed by the p2p client
@@ -279,28 +259,16 @@ impl Task {
                         // TODO: remove peer from db? from kademlia?
                     },
                     SwarmEvent::Behaviour(event) => {
-                        match &event {
-                                BehaviourEvent::Identify(identify::Event::Received { peer_id, info }) => {
-                                    // TODO: filter by protocol name/version
-                                    for addr in &info.listen_addrs {
-                                        self.swarm
-                                            .behaviour_mut()
-                                            .kademlia
-                                            .add_address(&peer_id, addr.clone());
-                                    }
-                                },
-                                BehaviourEvent::Requests(request_response::Event::Message { message, .. }) => {
-                                    if let request_response::Message::Response { request_id, response } = message {
-                                        self.pending_requests
-                                            .remove(&request_id)
-                                            .and_then(|ch| ch.send(response.clone()).ok());
-                                    }
-                                },
-                                _=> {},
-                        }
-                        // emit behaviour events to any subscribers
-                        if let Ok(evt) = Event::try_from(event) {
-                            self.events_out.send(evt).expect("Channel closed");
+                        let opt_event = match event {
+                                BehaviourEvent::Gossipsub(evt) => self.handle_gossipsub(evt),
+                                BehaviourEvent::Identify(evt) => self.handle_identify(evt),
+                                BehaviourEvent::Requests(evt) => self.handle_request_response(evt),
+                                _=> None,
+                        };
+
+                        // Emit any generated task event to subscribers
+                        if let Some(out_event) = opt_event {
+                            self.events_out.send(out_event).expect("Channel closed");
                             // TODO: clean shutdown on channel closure
                         }
                     },
@@ -321,6 +289,78 @@ impl Task {
                     }
                 },
             }
+        }
+    }
+
+    /// Handler for events emitted by the RequestResponse protocol
+    fn handle_gossipsub(&mut self, event: gossipsub::Event) -> Option<Event> {
+        match event {
+            gossipsub::Event::Message {
+                propagation_source,
+                message_id,
+                message,
+            } => BroadcastData::from_wire(&message.data, true)
+                .ok()
+                .and_then(|data| {
+                    Some(Event::GossipsubMessage(Broadcast {
+                        id: message_id,
+                        src: propagation_source,
+                        topic: message.topic,
+                        data,
+                    }))
+                }),
+            _ => None,
+        }
+    }
+
+    /// Handler for events emitted by the RequestResponse protocol
+    fn handle_request_response(
+        &mut self,
+        event: request_response::Event<Request, Response>,
+    ) -> Option<Event> {
+        match event {
+            request_response::Event::Message { message, .. } => match message {
+                request_response::Message::Request {
+                    request_id,
+                    request,
+                    channel,
+                } => {
+                    println!(":::: [p2p.task] received request {request_id}");
+                    self.pending_responses.insert(request_id, channel);
+                    Some(Event::RequestMessage {
+                        request_id,
+                        request,
+                    })
+                }
+                request_response::Message::Response {
+                    request_id,
+                    response,
+                } => {
+                    println!(":::: [p2p.task] received response {request_id}");
+                    self.pending_requests
+                        .remove(&request_id)
+                        .and_then(|ch| ch.send(response.clone()).ok());
+                    None
+                }
+            },
+            _ => None,
+        }
+    }
+
+    /// Handler for events emitted by the Identify protocol
+    fn handle_identify(&mut self, event: identify::Event) -> Option<Event> {
+        match event {
+            identify::Event::Received { peer_id, info } => {
+                // TODO: filter by protocol name/version
+                for addr in &info.listen_addrs {
+                    self.swarm
+                        .behaviour_mut()
+                        .kademlia
+                        .add_address(&peer_id, addr.clone());
+                }
+                None
+            }
+            _ => None,
         }
     }
 
@@ -371,19 +411,29 @@ impl Task {
                     .behaviour_mut()
                     .requests
                     .send_request(&opt_peer.unwrap(), request);
+                println!(":::: [p2p.task] sent request {rid}");
                 self.pending_requests.insert(rid, resp_ch);
             }
             Action::Respond {
                 request_id,
                 response,
             } => {
-                self.pending_responses.remove(&request_id).and_then(|ch| {
-                    self.swarm
-                        .behaviour_mut()
-                        .requests
-                        .send_response(ch, response)
-                        .ok()
-                });
+                println!(":::: [p2p.task] need send response {request_id}");
+                if self
+                    .pending_responses
+                    .remove(&request_id)
+                    .and_then(|ch| {
+                        println!(":::: [p2p.task] got response channel {request_id}");
+                        self.swarm
+                            .behaviour_mut()
+                            .requests
+                            .send_response(ch, response)
+                            .ok()
+                    })
+                    .is_some()
+                {
+                    println!(":::: [p2p.task] sent response {request_id}");
+                }
             }
         }
     }

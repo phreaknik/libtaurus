@@ -11,7 +11,8 @@ use tracing::warn;
 
 /// Start a fetcher task in its own thread
 pub fn start(peer: PeerId, initial: Vec<VertexHash>, p2p_api: P2pApi, consensus_api: ConsensusApi) {
-    tokio::spawn(Task::new(peer, initial, p2p_api, consensus_api).run());
+    println!(":::: [fetcher] starting");
+    tokio::spawn(Task::new(peer, initial, p2p_api, consensus_api).task_fn());
 }
 
 /// State for a running fetch process
@@ -50,7 +51,7 @@ impl Task {
     }
 
     /// Run the fetcher process
-    pub async fn run(mut self) {
+    pub async fn task_fn(mut self) {
         // Setup channels
         let (resp_sender, mut resp_receiver) = mpsc::unbounded_channel();
 
@@ -90,6 +91,7 @@ impl Task {
                         }
                     },
 
+                    // Handle error
                     Some(Response::Error(code)) => warn!("error fetching (code = {code})"),
 
                     // Other responses to our request are illegal
