@@ -11,7 +11,6 @@ use tracing::warn;
 
 /// Start a fetcher task in its own thread
 pub fn start(peer: PeerId, initial: Vec<VertexHash>, p2p_api: P2pApi, consensus_api: ConsensusApi) {
-    println!(":::: [fetcher] starting");
     tokio::spawn(Task::new(peer, initial, p2p_api, consensus_api).task_fn());
 }
 

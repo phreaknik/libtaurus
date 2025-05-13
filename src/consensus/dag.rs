@@ -336,19 +336,25 @@ impl DAG {
         self.pending_query.insert(vx.hash());
     }
 
-    /// Retry inserting the specified pending vertices
+    /// Retry inserting the specified pending vertices, as well as any pending vertices which
+    /// depended on these.
     pub fn retry_pending<'a, H>(&mut self, hashes: H) -> Result<HashSet<VertexHash>>
     where
         H: IntoIterator<Item = &'a VertexHash>,
     {
-        let vertices: HashMap<VertexHash, Arc<Vertex>> = hashes
-            .into_iter()
-            .filter_map(|&vhash| self.vertex.get(&vhash).cloned().map(|vx| (vhash, vx)))
-            .collect();
-        Ok(vertices
-            .into_iter()
-            .filter_map(|(vhash, vx)| self.try_insert(&vx).map(|_| vhash).ok())
-            .collect())
+        let mut successes = HashSet::new();
+        let mut queue: Vec<VertexHash> = hashes.into_iter().copied().collect();
+        while let Some(vhash) = queue.pop() {
+            if let Some(vx) = self.vertex.get(&vhash).cloned() {
+                if let Ok(waiting) = self.try_insert(&vx) {
+                    successes.insert(vhash);
+                    for w in waiting {
+                        queue.push(w);
+                    }
+                }
+            }
+        }
+        Ok(successes)
     }
 
     /// Insert a vertex into the [`DAG`].  Returns a list of known children waiting to be inserted

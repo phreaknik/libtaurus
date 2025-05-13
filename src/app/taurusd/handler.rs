@@ -42,7 +42,6 @@ impl Handler {
                             }
                         },
                         Ok(p2p::Event::RequestMessage{request_id, request}) => {
-                            println!(":::: [app.handler] received request: {request_id}");
                             let response = match request {
                                 p2p::Request::GetVertex(vhash) => {
                                     match self.consensus_api.get_vertex(vhash).await {

@@ -325,7 +325,6 @@ impl Task {
                     request,
                     channel,
                 } => {
-                    println!(":::: [p2p.task] received request {request_id}");
                     self.pending_responses.insert(request_id, channel);
                     Some(Event::RequestMessage {
                         request_id,
@@ -336,7 +335,6 @@ impl Task {
                     request_id,
                     response,
                 } => {
-                    println!(":::: [p2p.task] received response {request_id}");
                     self.pending_requests
                         .remove(&request_id)
                         .and_then(|ch| ch.send(response.clone()).ok());
@@ -411,29 +409,19 @@ impl Task {
                     .behaviour_mut()
                     .requests
                     .send_request(&opt_peer.unwrap(), request);
-                println!(":::: [p2p.task] sent request {rid}");
                 self.pending_requests.insert(rid, resp_ch);
             }
             Action::Respond {
                 request_id,
                 response,
             } => {
-                println!(":::: [p2p.task] need send response {request_id}");
-                if self
-                    .pending_responses
-                    .remove(&request_id)
-                    .and_then(|ch| {
-                        println!(":::: [p2p.task] got response channel {request_id}");
-                        self.swarm
-                            .behaviour_mut()
-                            .requests
-                            .send_response(ch, response)
-                            .ok()
-                    })
-                    .is_some()
-                {
-                    println!(":::: [p2p.task] sent response {request_id}");
-                }
+                self.pending_responses.remove(&request_id).and_then(|ch| {
+                    self.swarm
+                        .behaviour_mut()
+                        .requests
+                        .send_response(ch, response)
+                        .ok()
+                });
             }
         }
     }
