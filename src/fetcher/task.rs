@@ -7,6 +7,7 @@ use crate::{
 use libp2p::PeerId;
 use std::collections::HashSet;
 use tokio::{select, sync::mpsc};
+use tracing::warn;
 
 /// Start a fetcher task in its own thread
 pub fn start(peer: PeerId, initial: Vec<VertexHash>, p2p_api: P2pApi, consensus_api: ConsensusApi) {
@@ -78,7 +79,7 @@ impl Task {
                     None => return,
 
                     // Insert each found vertex
-                    Some(Response::Vertex(vertex)) => {
+                    Some(Response::Vertex(Some(vertex))) => {
                         match self.consensus_api
                             .submit_vertex(&vertex)
                             .await {
@@ -88,6 +89,8 @@ impl Task {
                             Err(_) => {},
                         }
                     },
+
+                    Some(Response::Vertex(None)) => warn!("fetching stalled"),
 
                     // Other responses to our request are illegal
                     _ => {
