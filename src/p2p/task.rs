@@ -275,7 +275,7 @@ impl Process {
                             // TODO: clean shutdown on channel closure
                         }
                     },
-                    e => {
+                    e @ _ => {
                         trace!("unhandled p2p event: {e:#?}");
                     }
                 },
@@ -297,9 +297,7 @@ impl Process {
                         }
                     },
                     Some(Action::GetLocalPeerId(resp_ch)) => resp_ch.send(local_peer_id).unwrap(),
-                    Some(Action::ReportMessageValidity(BroadcastValidationReport{
-                        msg_id, propagation_source, acceptance,
-                    })) => {
+                    Some(Action::ReportMessageValidity(BroadcastValidationReport{msg_id, propagation_source, acceptance})) => {
                         if let Err(e) = self.swarm.behaviour_mut().gossipsub.report_message_validation_result(
                             &msg_id,
                             &propagation_source,
