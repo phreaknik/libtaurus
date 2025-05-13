@@ -17,8 +17,14 @@ message Request {
 
 // Response message wrapper
 message Response {
+	enum ErrorCode {
+		UNKNOWN = 0;
+		NOT_FOUND = 1;
+	}
+
 	oneof ResponseData {
-		Vertex vertex = 1;
-		Preference preference = 2;
+		ErrorCode error = 1;
+		Vertex vertex = 2;
+		Preference preference = 3;
 	}
 }

@@ -43,7 +43,13 @@ impl Handler {
                         },
                         Ok(p2p::Event::RequestMessage{request_id, request}) => {
                             let response = match request {
-                                p2p::Request::GetVertex(vhash) => p2p::Response::Vertex(self.consensus_api.get_vertex(vhash).await.ok().flatten()),
+                                p2p::Request::GetVertex(vhash) => {
+                                    match self.consensus_api.get_vertex(vhash).await {
+                                        Ok(Some(vx)) => p2p::Response::Vertex(vx),
+                                        Ok(None) => p2p::Response::Error(p2p::request::ErrorCode::NotFound),
+                                        Err(_) => p2p::Response::Error(p2p::request::ErrorCode::Unknown),
+                                    }
+                                },
                                 p2p::Request::GetPreference(_vhash) => todo!(),
                             };
                             let _ =self.p2p_api.respond(request_id, response);

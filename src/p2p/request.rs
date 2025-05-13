@@ -6,7 +6,7 @@ use futures::prelude::*;
 use libp2p::request_response;
 use std::sync::Arc;
 use std::{io, result};
-use strum::{EnumCount, EnumIter};
+use strum::{Display, EnumCount, EnumIter};
 
 pub const PROTOCOL_NAME: &str = "/taurus_request/0.1.0";
 
@@ -18,6 +18,8 @@ pub enum Error {
     IncompleteResponse,
     #[error("incomplete request")]
     IncompleteRequest,
+    #[error("invalid error code (found {0})")]
+    InvalidErrorCode(i32),
     #[error(transparent)]
     ProstDecode(#[from] prost::DecodeError),
     #[error(transparent)]
@@ -81,10 +83,40 @@ impl fmt::Display for Request {
     }
 }
 
+/// Error codes
+#[derive(Debug, Clone, PartialEq, Eq, EnumIter, Default, Display)]
+pub enum ErrorCode {
+    #[default]
+    Unknown,
+    NotFound,
+}
+
+impl From<&ErrorCode> for i32 {
+    fn from(value: &ErrorCode) -> Self {
+        match value {
+            ErrorCode::Unknown => 0,
+            ErrorCode::NotFound => 1,
+        }
+    }
+}
+
+impl TryFrom<i32> for ErrorCode {
+    type Error = Error;
+
+    fn try_from(value: i32) -> result::Result<Self, Self::Error> {
+        match value {
+            0 => Ok(ErrorCode::Unknown),
+            1 => Ok(ErrorCode::NotFound),
+            _ => Err(Error::InvalidErrorCode(value)),
+        }
+    }
+}
+
 /// Message type defining the peer RPC response messages
 #[derive(Debug, Clone, PartialEq, Eq, EnumIter)]
 pub enum Response {
-    Vertex(Option<Arc<Vertex>>),
+    Error(ErrorCode),
+    Vertex(Arc<Vertex>),
     Preference(VertexHash, bool),
 }
 
@@ -94,16 +126,10 @@ impl<'a> WireFormat<'a, proto::Response> for Response {
     fn to_protobuf(&self, check: bool) -> Result<proto::Response> {
         Ok(proto::Response {
             response_data: match self {
-                Response::Vertex(opt) => {
-                    if let Some(vx) = opt {
-                        Some(proto::response::ResponseData::Vertex(
-                            vx.to_protobuf(check)?,
-                        ))
-                    } else {
-                        // TODO: unable to decode this at other side
-                        None
-                    }
-                }
+                Response::Error(code) => Some(proto::response::ResponseData::Error(code.into())),
+                Response::Vertex(vx) => Some(proto::response::ResponseData::Vertex(
+                    vx.to_protobuf(check)?,
+                )),
                 Response::Preference(hash, preferred) => Some(
                     proto::response::ResponseData::Preference(proto::Preference {
                         hash: Some(hash.to_protobuf(check)?),
@@ -116,9 +142,12 @@ impl<'a> WireFormat<'a, proto::Response> for Response {
 
     fn from_protobuf(resp: &proto::Response, check: bool) -> Result<Self> {
         match &resp.response_data {
-            Some(proto::response::ResponseData::Vertex(v)) => Ok(Response::Vertex(Some(Arc::new(
+            Some(proto::response::ResponseData::Error(code)) => {
+                Ok(Response::Error((*code).try_into()?))
+            }
+            Some(proto::response::ResponseData::Vertex(v)) => Ok(Response::Vertex(Arc::new(
                 Vertex::from_protobuf(&v, check)?,
-            )))),
+            ))),
             Some(proto::response::ResponseData::Preference(h)) => Ok(Response::Preference(
                 VertexHash::from_protobuf(
                     h.hash.as_ref().ok_or(Error::IncompleteResponse)?,

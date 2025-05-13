@@ -79,7 +79,7 @@ impl Task {
                     None => return,
 
                     // Insert each found vertex
-                    Some(Response::Vertex(Some(vertex))) => {
+                    Some(Response::Vertex(vertex)) => {
                         match self.consensus_api
                             .submit_vertex(&vertex)
                             .await {
@@ -90,7 +90,7 @@ impl Task {
                         }
                     },
 
-                    Some(Response::Vertex(None)) => warn!("fetching stalled"),
+                    Some(Response::Error(code)) => warn!("error fetching (code = {code})"),
 
                     // Other responses to our request are illegal
                     _ => {
