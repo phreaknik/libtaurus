@@ -84,7 +84,7 @@ impl fmt::Display for Request {
 /// Message type defining the peer RPC response messages
 #[derive(Debug, Clone, PartialEq, Eq, EnumIter)]
 pub enum Response {
-    Vertex(Arc<Vertex>),
+    Vertex(Option<Arc<Vertex>>),
     Preference(VertexHash, bool),
 }
 
@@ -94,8 +94,15 @@ impl<'a> WireFormat<'a, proto::Response> for Response {
     fn to_protobuf(&self, check: bool) -> Result<proto::Response> {
         Ok(proto::Response {
             response_data: match self {
-                Response::Vertex(v) => {
-                    Some(proto::response::ResponseData::Vertex(v.to_protobuf(check)?))
+                Response::Vertex(opt) => {
+                    if let Some(vx) = opt {
+                        Some(proto::response::ResponseData::Vertex(
+                            vx.to_protobuf(check)?,
+                        ))
+                    } else {
+                        // TODO: unable to decode this at other side
+                        None
+                    }
                 }
                 Response::Preference(hash, preferred) => Some(
                     proto::response::ResponseData::Preference(proto::Preference {
@@ -109,9 +116,9 @@ impl<'a> WireFormat<'a, proto::Response> for Response {
 
     fn from_protobuf(resp: &proto::Response, check: bool) -> Result<Self> {
         match &resp.response_data {
-            Some(proto::response::ResponseData::Vertex(v)) => Ok(Response::Vertex(Arc::new(
+            Some(proto::response::ResponseData::Vertex(v)) => Ok(Response::Vertex(Some(Arc::new(
                 Vertex::from_protobuf(&v, check)?,
-            ))),
+            )))),
             Some(proto::response::ResponseData::Preference(h)) => Ok(Response::Preference(
                 VertexHash::from_protobuf(
                     h.hash.as_ref().ok_or(Error::IncompleteResponse)?,

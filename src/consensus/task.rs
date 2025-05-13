@@ -37,6 +37,10 @@ pub enum Action {
     GetAcceptedFrontier {
         result_ch: oneshot::Sender<Vec<Arc<Vertex>>>,
     },
+    GetVertex {
+        vhash: VertexHash,
+        result_ch: oneshot::Sender<Option<Arc<Vertex>>>,
+    },
     SubmitVertex {
         vertex: Arc<Vertex>,
         result_ch: oneshot::Sender<Result<HashSet<VertexHash>>>,
@@ -152,6 +156,11 @@ impl Task {
                         Action::GetAcceptedFrontier{result_ch} => {
                             if let Err(_e) = result_ch.send(self.dag.get_frontier()) {
                                 debug!("failed to respond to GetAcceptedFrontier");
+                            }
+                        },
+                        Action::GetVertex{vhash, result_ch} => {
+                            if let Err(_e) = result_ch.send(self.dag.get_vertex(&vhash)) {
+                                debug!("failed to respond to GetVertex");
                             }
                         },
                         Action::SubmitVertex{vertex, result_ch} => {

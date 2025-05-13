@@ -592,6 +592,11 @@ impl DAG {
         }
     }
 
+    /// Lookup the specified [`Vertex`]
+    pub fn get_vertex(&mut self, vhash: &VertexHash) -> Option<Arc<Vertex>> {
+        self.vertex.get(vhash).cloned()
+    }
+
     /// Get the latest vertices which have no children, in the order we've observed them. If
     /// frontier vertices exist and different heights, will only return those at the lowest height;
     /// i.e. those which need children in order to stay attached to the [`DAG`].

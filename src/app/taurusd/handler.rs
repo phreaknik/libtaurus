@@ -43,7 +43,7 @@ impl Handler {
                         },
                         Ok(p2p::Event::RequestMessage{request_id, request}) => {
                             let response = match request {
-                                p2p::Request::GetVertex(_vhash) => todo!(),
+                                p2p::Request::GetVertex(vhash) => p2p::Response::Vertex(self.consensus_api.get_vertex(vhash).await.ok()),
                                 p2p::Request::GetPreference(_vhash) => todo!(),
                             };
                             let _ =self.p2p_api.respond(request_id, response);

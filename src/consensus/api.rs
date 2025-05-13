@@ -47,12 +47,23 @@ impl ConsensusApi {
         self.consensus_event_ch.resubscribe()
     }
 
+    /// Look up the specified vertex
+    pub async fn get_vertex(&self, vhash: VertexHash) -> Result<Option<Arc<Vertex>>> {
+        let (resp_sender, resp_receiver) = oneshot::channel();
+        self.consensus_action_ch.send(Action::GetVertex {
+            vhash,
+            result_ch: resp_sender,
+        })?;
+        Ok(timeout(Duration::from_secs(self.timeout), resp_receiver).await??)
+    }
+
     /// Get the accepted frontier of the DAG
     pub async fn get_frontier(&self) -> Result<Vec<Arc<Vertex>>> {
-        let (resp_tx, resp_rx) = oneshot::channel();
-        self.consensus_action_ch
-            .send(Action::GetAcceptedFrontier { result_ch: resp_tx })?;
-        Ok(timeout(Duration::from_secs(self.timeout), resp_rx).await??)
+        let (resp_sender, resp_receiver) = oneshot::channel();
+        self.consensus_action_ch.send(Action::GetAcceptedFrontier {
+            result_ch: resp_sender,
+        })?;
+        Ok(timeout(Duration::from_secs(self.timeout), resp_receiver).await??)
     }
 
     /// Get metadata or the accepted frontier
@@ -67,12 +78,12 @@ impl ConsensusApi {
 
     /// Try to insert the given [`Vertex`] into the [`DAG`]
     pub async fn submit_vertex(&self, vx: &Arc<Vertex>) -> Result<HashSet<VertexHash>> {
-        let (resp_tx, resp_rx) = oneshot::channel();
+        let (resp_sender, resp_receiver) = oneshot::channel();
         self.consensus_action_ch.send(Action::SubmitVertex {
             vertex: vx.clone(),
-            result_ch: resp_tx,
+            result_ch: resp_sender,
         })?;
-        Ok(timeout(Duration::from_secs(self.timeout), resp_rx).await???)
+        Ok(timeout(Duration::from_secs(self.timeout), resp_receiver).await???)
     }
 }
 
