@@ -57,6 +57,8 @@ pub fn build_consensus_cfg(args: &ArgMatches) -> consensus::task::Config {
         datadir: app_data_dir(args).join("consensus/"),
         genesis: GenesisConfig {},
         dag: dag::Config::default(),
+        query_size: *args.get_one("querysize").unwrap(),
+        quorum_size: *args.get_one("quorumsize").unwrap(),
     }
 }
 

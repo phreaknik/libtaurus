@@ -34,7 +34,7 @@ async fn main() {
     let p2p_api = p2p::start(build_p2p_cfg(&args));
 
     // Start the consensus process
-    let consensus_api = consensus::start(build_consensus_cfg(&args));
+    let consensus_api = consensus::start(build_consensus_cfg(&args), p2p_api.clone());
     let mut consensus_events = consensus_api.subscribe_events();
 
     // Start the RPC server
@@ -49,12 +49,6 @@ async fn main() {
             // Handle P2P events
             event = consensus_events.recv() => {
                 match event {
-                    Ok(consensus::task::Event::Stopped) =>{
-                        error!("Consensus stopped.");
-                        error!("Shutting down.");
-                        // TODO: clean shutdown of all processes
-                        return
-                    },
                     Err(e) =>{
                         error!("Consensus error: {e}");
                         error!("Shutting down.");

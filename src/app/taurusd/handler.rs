@@ -1,11 +1,10 @@
 use libtaurus::{
-    consensus::{self, dag, pollster, ConsensusApi},
+    consensus::{self, dag, ConsensusApi},
     fetcher,
     p2p::{self, P2pApi},
-    WireFormat,
 };
 use tokio::select;
-use tracing::{error, info};
+use tracing::error;
 
 /// Event handler for all running processes
 pub struct Handler {
@@ -67,16 +66,7 @@ impl Handler {
                 },
                 event = consensus_events.recv() => {
                     match event {
-                        Ok(consensus::task::Event::NewFrontier(frontier)) => {
-                            for vx in frontier {
-                                pollster::start(vx.hash(),
-                                    self.p2p_api.clone(),
-                                    self.consensus_api.clone(),
-                                    peers_to_poll,
-                                    quorum_size);
-                            }
-                        }
-                        Ok(consensus::task::Event::Stopped) => return info!("Consensus stopped"),
+                        Ok(consensus::task::Event::NewFrontier(_frontier)) => {},
                         Err(e) => return error!("Stopping due to consensus_events channel error: {e}"),
                     }
                 },

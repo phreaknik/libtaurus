@@ -1,10 +1,11 @@
 use super::{api, dag, namespace, pollster, transaction, Vertex, VertexHash};
-use crate::WireFormat;
+use crate::{p2p::P2pApi, WireFormat};
 use api::ConsensusApi;
 use chrono::DateTime;
 use libp2p::PeerId;
 use namespace::NamespaceId;
-use std::{collections::HashSet, path::PathBuf, result, sync::Arc};
+use rand::seq::SliceRandom;
+use std::{cmp, collections::HashSet, path::PathBuf, result, sync::Arc};
 use tokio::{
     select,
     sync::{
@@ -27,9 +28,6 @@ pub enum Event {
     /// vertices are sorted according to the order they were first observed, so that they may be
     /// used as parents in a new vertex which extends the graph.
     NewFrontier(Vec<Arc<Vertex>>),
-
-    /// The task has been stopped
-    Stopped,
 }
 
 /// Actions that can be performed by the consensus task
@@ -62,6 +60,8 @@ pub enum Error {
     DAG(#[from] dag::Error),
     #[error("consensus event channel error")]
     EventsOutCh(#[from] tokio::sync::broadcast::error::SendError<Event>),
+    #[error("not enough validators to reach consensus")]
+    NeedValidators,
 }
 type Result<T> = result::Result<T, Error>;
 
@@ -76,6 +76,12 @@ pub struct Config {
 
     /// DAG configuration
     pub dag: dag::Config,
+
+    /// Number of peers to query in each round
+    pub query_size: usize,
+
+    /// Number of peers to satisfy a quorum for a round of queries
+    pub quorum_size: usize,
 }
 
 /// Genesis configuration
@@ -100,25 +106,17 @@ impl GenesisConfig {
 
 /// Run the consensus task, spawning the task as a new thread. Returns an [`broadcast::Sender`],
 /// which can be subscribed to, to receive consensus events from the task.
-pub fn start(config: Config) -> ConsensusApi {
-    let (action_sender, action_receiver) = mpsc::unbounded_channel();
-    let (event_sender, event_receiver) = broadcast::channel(CONSENSUS_EVENT_CHAN_CAPACITY);
-    let task = Task::new(config, action_receiver, event_sender.clone())
-        .expect("Failed to start consensus task");
-    let handle = tokio::spawn(task.task_fn());
-    tokio::spawn(async move {
-        if let Err(e) = handle.await {
-            error!("Consensus stopped with error: {e}");
-        }
-        event_sender.send(Event::Stopped).unwrap();
-    });
-
-    ConsensusApi::new(action_sender, event_receiver)
+pub fn start(config: Config, p2p_api: P2pApi) -> ConsensusApi {
+    let (task, api) = Task::new(config, p2p_api).expect("Failed to create consensus task");
+    tokio::spawn(task.task_fn());
+    api
 }
 
 /// Runtime state for the consensus task
 pub struct Task {
-    _config: Config,
+    config: Config,
+    consensus_api: ConsensusApi,
+    p2p_api: P2pApi,
     actions_in: UnboundedReceiver<Action>,
     events_out: broadcast::Sender<Event>,
     dag: dag::DAG,
@@ -127,24 +125,32 @@ pub struct Task {
 
 impl Task {
     /// Construct a new task
-    fn new(
-        config: Config,
-        actions_in: UnboundedReceiver<Action>,
-        events_out: broadcast::Sender<Event>,
-    ) -> Result<Task> {
+    fn new(config: Config, p2p_api: P2pApi) -> Result<(Task, ConsensusApi)> {
         info!("Starting consensus");
+
+        // Set up the communication channels
+        let (action_sender, actions_in) = mpsc::unbounded_channel();
+        let (events_out, event_receiver) = broadcast::channel(CONSENSUS_EVENT_CHAN_CAPACITY);
 
         // Construct the DAG, initialized with the genesis vertex
         let dag = dag::DAG::new(config.dag.clone(), &[config.genesis.to_vertex()])?;
 
+        // Construct an API object
+        let api = ConsensusApi::new(action_sender, event_receiver);
+
         // Instantiate the task
-        Ok(Task {
-            _config: config.clone(),
-            actions_in,
-            events_out,
-            dag,
-            validators: Vec::new(),
-        })
+        Ok((
+            Task {
+                config: config.clone(),
+                consensus_api: api.clone(),
+                p2p_api,
+                actions_in,
+                events_out,
+                dag,
+                validators: Vec::new(),
+            },
+            api,
+        ))
     }
 
     /// Run the consensus processing loop
@@ -195,9 +201,23 @@ impl Task {
                                         }
                                     }
 
-                                    // Get the latest frontier
-                                    // TODO: this frontier may not actually be "new"
+                                    // Get the latest frontie and kick off a pollster instance to query peer preferences for each frontier vertex
                                     let frontier = self.dag.get_frontier();
+                                    for vx in &frontier {
+                                        if let Err(e) = self.get_validators_for_query().map(|validators| {
+                                            pollster::start(vx.hash(),
+                                                self.p2p_api.clone(),
+                                                self.consensus_api.clone(),
+                                                validators,
+                                                self.config.quorum_size
+                                            );
+                                        }) {
+                                            warn!("unable to select validators: {e}");
+                                        }
+                                    }
+
+                                    // Emit new frontier event
+                                    // TODO: this frontier may not actually be "new"
                                     self.events_out.send(Event::NewFrontier(frontier)).unwrap();
                                 },
                                 Err(e) => info!("vertex {} not inserted: {e}", vertex.hash().to_hex()),
@@ -217,6 +237,20 @@ impl Task {
                     }
                 }
             }
+        }
+    }
+
+    /// Get a set of validators to query preferences on a new [`Vertex`]
+    fn get_validators_for_query(&self) -> Result<HashSet<PeerId>> {
+        let validators: HashSet<_> = self
+            .validators
+            .choose_multiple(&mut rand::thread_rng(), self.config.query_size)
+            .copied()
+            .collect();
+        match validators.len().cmp(&self.config.query_size) {
+            cmp::Ordering::Less => Err(Error::NeedValidators),
+            cmp::Ordering::Greater => panic!("too many peers were selected"),
+            cmp::Ordering::Equal => Ok(validators),
         }
     }
 }

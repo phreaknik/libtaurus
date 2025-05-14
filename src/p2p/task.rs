@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     p2p::{Request, Response},
-    VertexHash, WireFormat,
+    WireFormat,
 };
 pub use api::P2pApi;
 use futures::StreamExt;
