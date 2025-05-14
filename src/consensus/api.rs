@@ -24,28 +24,32 @@ type Result<T> = result::Result<T, Error>;
 const DEFAULT_TIMEOUT: u64 = 60;
 
 /// API wrapper to communicate with the consensus process
+#[derive(Clone)]
 pub struct ConsensusApi {
     timeout: u64,
     consensus_action_ch: mpsc::UnboundedSender<Action>,
-    consensus_event_ch: broadcast::Receiver<Event>,
+    consensus_event_sender: broadcast::Sender<Event>,
 }
 
 impl ConsensusApi {
-    /// Construct a new instance of the [`ConsensusApi`]
+    /// Construct a new instance of the [`ConsensusApi`]. `consensus_action_ch` is the channel which
+    /// can be used to request an action from the consensus task. `consensus_event_sender` is
+    /// the send handle to the consensus event broadcast channel, but is only used as a handle
+    /// to create new subscribers on demand.
     pub fn new(
         consensus_action_ch: mpsc::UnboundedSender<Action>,
-        consensus_event_ch: broadcast::Receiver<Event>,
+        consensus_event_sender: broadcast::Sender<Event>,
     ) -> ConsensusApi {
         ConsensusApi {
             timeout: DEFAULT_TIMEOUT,
             consensus_action_ch,
-            consensus_event_ch,
+            consensus_event_sender,
         }
     }
 
     /// Get a subscription handler for events
     pub fn subscribe_events(&self) -> broadcast::Receiver<Event> {
-        self.consensus_event_ch.resubscribe()
+        self.consensus_event_sender.subscribe()
     }
 
     /// Add a peer to the validator set
@@ -111,16 +115,6 @@ impl ConsensusApi {
         self.consensus_action_ch
             .send(Action::RecordPeerPreference { vhash, preference })?;
         Ok(())
-    }
-}
-
-impl Clone for ConsensusApi {
-    fn clone(&self) -> Self {
-        ConsensusApi {
-            timeout: self.timeout,
-            consensus_action_ch: self.consensus_action_ch.clone(),
-            consensus_event_ch: self.consensus_event_ch.resubscribe(),
-        }
     }
 }
 

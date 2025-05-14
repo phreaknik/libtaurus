@@ -139,7 +139,7 @@ impl Task {
         let dag = dag::DAG::new(config.dag.clone(), &[config.genesis.to_vertex()])?;
 
         // Construct an API object
-        let api = ConsensusApi::new(action_sender, event_receiver);
+        let api = ConsensusApi::new(action_sender, events_out.clone());
 
         // Instantiate the task
         Ok((
@@ -224,6 +224,7 @@ impl Task {
 
                                     // Emit new frontier event
                                     // TODO: this frontier may not actually be "new"
+                                    warn!(":::: {} consensus events already queued", self.events_out.len());
                                     self.events_out.send(Event::NewFrontier(frontier)).unwrap();
                                 },
                                 Err(e) => info!("vertex {} (height = {}) not inserted: {e}", vertex.hash().to_hex(), vertex.height),
