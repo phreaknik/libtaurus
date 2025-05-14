@@ -7,8 +7,7 @@ message Hash {
 }
 
 message Preference {
-  Hash hash = 1;
-  bool preferred = 2;
+  bool preferred = 1;
 }
 
 message Vertex {

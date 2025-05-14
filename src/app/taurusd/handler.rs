@@ -1,10 +1,11 @@
 use libtaurus::{
-    consensus::{self, dag, ConsensusApi},
+    consensus::{self, dag, pollster, ConsensusApi},
     fetcher,
     p2p::{self, P2pApi},
+    WireFormat,
 };
 use tokio::select;
-use tracing::error;
+use tracing::{error, info};
 
 /// Event handler for all running processes
 pub struct Handler {
@@ -50,7 +51,13 @@ impl Handler {
                                         Err(_) => p2p::Response::Error(p2p::request::ErrorCode::Unknown),
                                     }
                                 },
-                                p2p::Request::GetPreference(_vhash) => todo!(),
+                                p2p::Request::GetPreference(vhash) => {
+                                    match self.consensus_api.get_preference(vhash).await {
+                                        Ok(Some(pref)) => p2p::Response::Preference(pref),
+                                        Ok(None) => p2p::Response::Error(p2p::request::ErrorCode::NotFound),
+                                        Err(_) => p2p::Response::Error(p2p::request::ErrorCode::Unknown),
+                                    }
+                                },
                             };
                             let _ =self.p2p_api.respond(request_id, response);
                         },
@@ -58,7 +65,21 @@ impl Handler {
                         Err(e) => return error!("Stopping due to p2p_events channel error: {e}"),
                     }
                 },
-                _event = consensus_events.recv() => {},
+                event = consensus_events.recv() => {
+                    match event {
+                        Ok(consensus::task::Event::NewFrontier(frontier)) => {
+                            for vx in frontier {
+                                pollster::start(vx.hash(),
+                                    self.p2p_api.clone(),
+                                    self.consensus_api.clone(),
+                                    peers_to_poll,
+                                    quorum_size);
+                            }
+                        }
+                        Ok(consensus::task::Event::Stopped) => return info!("Consensus stopped"),
+                        Err(e) => return error!("Stopping due to consensus_events channel error: {e}"),
+                    }
+                },
             }
         }
     }

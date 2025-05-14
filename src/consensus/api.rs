@@ -76,6 +76,18 @@ impl ConsensusApi {
             .collect())
     }
 
+    /// Get the preference of the specified [`Vertex`]
+    pub async fn get_preference(&self, vhash: VertexHash) -> Result<Option<bool>> {
+        let (resp_sender, resp_receiver) = oneshot::channel();
+        self.consensus_action_ch.send(Action::GetPreference {
+            vhash,
+            result_ch: resp_sender,
+        })?;
+        Ok(timeout(Duration::from_secs(self.timeout), resp_receiver)
+            .await??
+            .map(|(pref, _final)| pref))
+    }
+
     /// Try to insert the given [`Vertex`] into the [`DAG`]
     pub async fn submit_vertex(&self, vx: &Arc<Vertex>) -> Result<HashSet<VertexHash>> {
         let (resp_sender, resp_receiver) = oneshot::channel();
@@ -84,6 +96,13 @@ impl ConsensusApi {
             result_ch: resp_sender,
         })?;
         Ok(timeout(Duration::from_secs(self.timeout), resp_receiver).await???)
+    }
+
+    /// Record the peer preference for the specified vertex
+    pub fn record_peer_preference(&self, vhash: VertexHash, preference: bool) -> Result<()> {
+        self.consensus_action_ch
+            .send(Action::RecordPeerPreference { vhash, preference })?;
+        Ok(())
     }
 }
 

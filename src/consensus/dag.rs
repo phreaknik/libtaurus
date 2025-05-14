@@ -413,6 +413,9 @@ impl DAG {
             set
         }
 
+        // TODO: recording preference should recursively count towards
+        // ancestors which have not yet been recorded
+
         // Helper to mark a constraint and its progeny as rejected
         fn reject_progeny(dag: &mut DAG, c: &Constraint) {
             let children = {

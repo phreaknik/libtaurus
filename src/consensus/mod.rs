@@ -1,6 +1,7 @@
 pub mod api;
 pub mod dag;
 pub mod namespace;
+pub mod pollster;
 pub mod task;
 pub mod transaction;
 pub mod vertex;

@@ -1,7 +1,8 @@
-use super::{api, dag, namespace, transaction, Vertex, VertexHash};
+use super::{api, dag, namespace, pollster, transaction, Vertex, VertexHash};
 use crate::WireFormat;
 use api::ConsensusApi;
 use chrono::DateTime;
+use libp2p::PeerId;
 use namespace::NamespaceId;
 use std::{collections::HashSet, path::PathBuf, result, sync::Arc};
 use tokio::{
@@ -37,9 +38,17 @@ pub enum Action {
     GetAcceptedFrontier {
         result_ch: oneshot::Sender<Vec<Arc<Vertex>>>,
     },
+    GetPreference {
+        vhash: VertexHash,
+        result_ch: oneshot::Sender<Option<(bool, bool)>>,
+    },
     GetVertex {
         vhash: VertexHash,
         result_ch: oneshot::Sender<Option<Arc<Vertex>>>,
+    },
+    RecordPeerPreference {
+        vhash: VertexHash,
+        preference: bool,
     },
     SubmitVertex {
         vertex: Arc<Vertex>,
@@ -113,6 +122,7 @@ pub struct Task {
     actions_in: UnboundedReceiver<Action>,
     events_out: broadcast::Sender<Event>,
     dag: dag::DAG,
+    validators: Vec<PeerId>,
 }
 
 impl Task {
@@ -133,6 +143,7 @@ impl Task {
             actions_in,
             events_out,
             dag,
+            validators: Vec::new(),
         })
     }
 
@@ -158,21 +169,36 @@ impl Task {
                                 debug!("failed to respond to GetAcceptedFrontier");
                             }
                         },
+                        Action::GetPreference{vhash, result_ch} => {
+                            if let Err(_e) = result_ch.send(self.dag.query(&vhash).ok()) {
+                                debug!("failed to respond to GetVertex");
+                            }
+                        },
                         Action::GetVertex{vhash, result_ch} => {
                             if let Err(_e) = result_ch.send(self.dag.get_vertex(&vhash)) {
                                 debug!("failed to respond to GetVertex");
                             }
+                        },
+                        Action::RecordPeerPreference{vhash, preference} => {
+                            let _ = self.dag.record_query_result(&vhash, preference);
                         },
                         Action::SubmitVertex{vertex, result_ch} => {
                             let resp = self.dag.try_insert(&vertex).map_err(Error::from);
                             match &resp {
                                 Ok(waiting) => {
                                     info!("inserted {}", vertex.hash().to_hex());
+
+                                    // Retry any pending vertices which were waiting on this one
                                     if let Ok(successful) = self.dag.retry_pending(waiting) {
                                         for vhash in successful {
                                             info!("inserted pending {}", vhash.to_hex());
                                         }
                                     }
+
+                                    // Get the latest frontier
+                                    // TODO: this frontier may not actually be "new"
+                                    let frontier = self.dag.get_frontier();
+                                    self.events_out.send(Event::NewFrontier(frontier)).unwrap();
                                 },
                                 Err(e) => info!("vertex {} not inserted: {e}", vertex.hash().to_hex()),
                             };

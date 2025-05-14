@@ -1,5 +1,5 @@
 use super::{broadcast::BroadcastValidationReport, Action, Event, Request, Response};
-use crate::Vertex;
+use crate::{Vertex, VertexHash};
 use libp2p::{request_response::InboundRequestId, PeerId};
 use std::{result, sync::Arc};
 use tokio::sync::{broadcast, mpsc, oneshot};

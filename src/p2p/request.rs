@@ -117,7 +117,7 @@ impl TryFrom<i32> for ErrorCode {
 pub enum Response {
     Error(ErrorCode),
     Vertex(Arc<Vertex>),
-    Preference(VertexHash, bool),
+    Preference(bool),
 }
 
 impl<'a> WireFormat<'a, proto::Response> for Response {
@@ -130,12 +130,11 @@ impl<'a> WireFormat<'a, proto::Response> for Response {
                 Response::Vertex(vx) => Some(proto::response::ResponseData::Vertex(
                     vx.to_protobuf(check)?,
                 )),
-                Response::Preference(hash, preferred) => Some(
-                    proto::response::ResponseData::Preference(proto::Preference {
-                        hash: Some(hash.to_protobuf(check)?),
+                Response::Preference(preferred) => Some(proto::response::ResponseData::Preference(
+                    proto::Preference {
                         preferred: *preferred,
-                    }),
-                ),
+                    },
+                )),
             },
         })
     }
@@ -148,13 +147,9 @@ impl<'a> WireFormat<'a, proto::Response> for Response {
             Some(proto::response::ResponseData::Vertex(v)) => Ok(Response::Vertex(Arc::new(
                 Vertex::from_protobuf(&v, check)?,
             ))),
-            Some(proto::response::ResponseData::Preference(h)) => Ok(Response::Preference(
-                VertexHash::from_protobuf(
-                    h.hash.as_ref().ok_or(Error::IncompleteResponse)?,
-                    check,
-                )?,
-                h.preferred,
-            )),
+            Some(proto::response::ResponseData::Preference(h)) => {
+                Ok(Response::Preference(h.preferred))
+            }
             None => Err(Error::IncompleteResponse),
         }
     }
