@@ -68,14 +68,14 @@ pub fn parse_cli_args() -> ArgMatches {
         .arg(
             arg!(--querysize <SIZE> "Number of peers to be queried for each new vertex")
                 .required(false)
-                .default_value("16")
+                .default_value("5")
                 .value_parser(clap::value_parser!(usize)),
         )
         .arg(
             // TODO: move all avalanche params to Clap defaults like this one
             arg!(--quorumsize <SIZE> "Number of peers required to reach quorum on a given vertex")
                 .required(false)
-                .default_value("9")
+                .default_value("3")
                 .value_parser(clap::value_parser!(usize)),
         )
         .get_matches()
