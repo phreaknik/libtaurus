@@ -570,7 +570,9 @@ impl DAG {
         if let Some(decision) = self
             .state
             .get(&unity.conflict_set_key())
-            .and_then(|s| s.decision.get(&unity))
+            .ok_or(Error::NotFound)?
+            .decision
+            .get(&unity)
         {
             Ok(match decision {
                 true => (true, true),   // accepted
@@ -1153,7 +1155,8 @@ mod test {
     }
 
     #[test]
-    fn query_vertex() {
+    fn query() {
+        // TODO: need case: do not panic if vertex does not exist
         let gen = Arc::new(Vertex::empty());
         let v00 = make_rand_vertex([&gen]);
         let v01 = make_rand_vertex([&gen]);

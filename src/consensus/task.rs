@@ -194,7 +194,7 @@ impl Task {
                             let resp = self.dag.try_insert(&vertex).map_err(Error::from);
                             match &resp {
                                 Ok(waiting) => {
-                                    info!("inserted {}", vertex.hash().to_hex());
+                                    info!("inserted {} at height {}", vertex.hash().to_hex(), vertex.height);
 
                                     // Retry any pending vertices which were waiting on this one
                                     if let Ok(successful) = self.dag.retry_pending(waiting) {
@@ -222,7 +222,7 @@ impl Task {
                                     // TODO: this frontier may not actually be "new"
                                     self.events_out.send(Event::NewFrontier(frontier)).unwrap();
                                 },
-                                Err(e) => info!("vertex {} not inserted: {e}", vertex.hash().to_hex()),
+                                Err(e) => info!("vertex {} (height = {}) not inserted: {e}", vertex.hash().to_hex(), vertex.height),
                             };
                             if let Err(_) = result_ch.send(resp) {
                                 warn!("unable to send response after action");
