@@ -2554,6 +2554,7 @@ dependencies = [
  "etcetera",
  "futures",
  "hex",
+ "indexmap",
  "itertools 0.11.0",
  "jsonrpsee",
  "libp2p",

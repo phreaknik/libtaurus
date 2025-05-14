@@ -6,7 +6,7 @@ use crate::{
 use libp2p::PeerId;
 use std::collections::HashSet;
 use tokio::{select, sync::mpsc};
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// Start a new [`Pollster`] instance
 pub fn start(
@@ -48,6 +48,8 @@ impl Pollster {
 
     /// Query peers and collect their preferences for the specified vertex
     pub async fn run(self) {
+        debug!("starting pollster for {}", self.vhash);
+
         // Query each peer for their preference
         let (pref_sender, mut pref_receiver) = mpsc::unbounded_channel();
         for peer in &self.peers_to_poll {
@@ -75,7 +77,7 @@ impl Pollster {
                         if preferred {
                             debug!("peers prefer {}", self.vhash.to_hex());
                         } else {
-                            debug!("peers do not prefer {}", self.vhash.to_hex());
+                            warn!("peers do not prefer {}", self.vhash.to_hex());
                         }
                         let _ = self.consensus_api.record_peer_preference(self.vhash, preferred);
                         return;

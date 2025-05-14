@@ -19,6 +19,7 @@ type Result<T> = result::Result<T, Error>;
 #[derive(Debug, Clone)]
 pub struct Config {
     pub rpc_url: String,
+    pub delay_millis: u64,
 }
 
 /// Run the consensus process, spawning the task as a new thread. Returns an [`broadcast::Sender`],
@@ -55,7 +56,7 @@ impl Sequencer {
             .build(&self.config.rpc_url)
             .await?;
 
-        let mut timer = interval(Duration::from_secs(1));
+        let mut timer = interval(Duration::from_millis(self.config.delay_millis));
         loop {
             select! {
                 // Handle timer event

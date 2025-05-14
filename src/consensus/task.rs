@@ -2,10 +2,12 @@ use super::{api, dag, namespace, pollster, transaction, Vertex, VertexHash};
 use crate::{p2p::P2pApi, WireFormat};
 use api::ConsensusApi;
 use chrono::DateTime;
+use indexmap::IndexSet;
+use itertools::Itertools;
 use libp2p::PeerId;
 use namespace::NamespaceId;
-use rand::seq::SliceRandom;
-use std::{cmp, collections::HashSet, path::PathBuf, result, sync::Arc};
+use rand::Rng;
+use std::{collections::HashSet, iter, path::PathBuf, result, sync::Arc};
 use tokio::{
     select,
     sync::{
@@ -61,7 +63,7 @@ pub enum Error {
     DAG(#[from] dag::Error),
     #[error("consensus event channel error")]
     EventsOutCh(#[from] tokio::sync::broadcast::error::SendError<Event>),
-    #[error("not enough validators (expected {0}, found {1})")]
+    #[error("not enough validators (need >= {0}, have {1})")]
     NeedValidators(usize, usize),
 }
 type Result<T> = result::Result<T, Error>;
@@ -121,7 +123,7 @@ pub struct Task {
     actions_in: UnboundedReceiver<Action>,
     events_out: broadcast::Sender<Event>,
     dag: dag::DAG,
-    validators: Vec<PeerId>,
+    validators: IndexSet<PeerId>,
 }
 
 impl Task {
@@ -148,7 +150,7 @@ impl Task {
                 actions_in,
                 events_out,
                 dag,
-                validators: Vec::new(),
+                validators: IndexSet::new(),
             },
             api,
         ))
@@ -171,7 +173,7 @@ impl Task {
                 // Handle requested actions
                 Some(action) = self.actions_in.recv() => {
                     match action{
-                        Action::AddValidator(validator) => self.validators.push(validator),
+                        Action::AddValidator(validator) => {self.validators.insert(validator);},
                         Action::GetAcceptedFrontier{result_ch} => {
                             if let Err(_e) = result_ch.send(self.dag.get_frontier()) {
                                 debug!("failed to respond to GetAcceptedFrontier");
@@ -207,6 +209,8 @@ impl Task {
                                     let frontier = self.dag.get_frontier();
                                     for vx in &frontier {
                                         if let Err(e) = self.get_validators_for_query().map(|validators| {
+                                            // Kick off a new pollster instance to gather peer
+                                            // prefereences for the given vertex
                                             pollster::start(vx.hash(),
                                                 self.p2p_api.clone(),
                                                 self.consensus_api.clone(),
@@ -244,18 +248,20 @@ impl Task {
 
     /// Get a set of validators to query preferences on a new [`Vertex`]
     fn get_validators_for_query(&self) -> Result<HashSet<PeerId>> {
-        let validators: HashSet<_> = self
-            .validators
-            .choose_multiple(&mut rand::thread_rng(), self.config.query_size)
-            .copied()
-            .collect();
-        match validators.len().cmp(&self.config.query_size) {
-            cmp::Ordering::Less => Err(Error::NeedValidators(
+        if self.validators.len() < self.config.query_size {
+            Err(Error::NeedValidators(
                 self.config.query_size,
-                validators.len(),
-            )),
-            cmp::Ordering::Greater => panic!("too many peers were selected"),
-            cmp::Ordering::Equal => Ok(validators),
+                self.validators.len(),
+            ))
+        } else {
+            let mut rng = rand::thread_rng();
+            Ok(
+                iter::repeat_with(|| rng.gen_range(0..self.validators.len()))
+                    .unique()
+                    .take(self.config.query_size)
+                    .map(|i| *self.validators.get_index(i).unwrap())
+                    .collect(),
+            )
         }
     }
 }

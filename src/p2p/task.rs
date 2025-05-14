@@ -29,7 +29,7 @@ use tracing::{debug, error, info, trace, warn};
 
 /// Event channel capacity. Old events will be dropped if channel exceeds capacity. See
 /// [`tokio::sync::broadcast`] for more information.
-const P2P_EVENT_CHAN_CAPACITY: usize = 32;
+const P2P_EVENT_CHAN_CAPACITY: usize = 128;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -62,9 +62,6 @@ pub enum Event {
         request_id: InboundRequestId,
         request: Request,
     },
-
-    /// task has stopped
-    Stopped,
 }
 
 /// Actions that can be performed by the p2p client
@@ -115,18 +112,12 @@ pub struct Config {
 pub fn start(config: Config) -> P2pApi {
     // Spawn the task
     let (action_sender, action_receiver) = mpsc::unbounded_channel();
-    let (event_sender, event_receiver) = sync::broadcast::channel(P2P_EVENT_CHAN_CAPACITY);
+    let (event_sender, _event_receiver) = sync::broadcast::channel(P2P_EVENT_CHAN_CAPACITY);
     let task = Task::new(config, action_receiver, event_sender.clone());
-    let handle = tokio::spawn(task.task_fn());
-    tokio::spawn(async move {
-        if let Err(e) = handle.await {
-            error!("Consensus stopped with error: {e}");
-        }
-        event_sender.send(Event::Stopped).unwrap();
-    });
+    tokio::spawn(task.task_fn());
 
     // Return the communication channels
-    P2pApi::new(action_sender, event_receiver)
+    P2pApi::new(action_sender, event_sender)
 }
 
 pub struct Task {
@@ -271,6 +262,7 @@ impl Task {
 
                         // Emit any generated task event to subscribers
                         if let Some(out_event) = opt_event {
+                            warn!(":::: {} p2p events already queued", self.events_out.len());
                             self.events_out.send(out_event).expect("Channel closed");
                             // TODO: clean shutdown on channel closure
                         }

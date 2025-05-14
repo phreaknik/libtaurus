@@ -28,6 +28,12 @@ fn parse_cli_args() -> ArgMatches {
         .about("Start taurus sequencer service")
         .arg(arg!(-u --rpchost <URL> "Host address to reach consensus RPC").required(true))
         .arg(
+            arg!(--delay <LEVEL> "Delay (in milliseconds) before producing each new vertex")
+                .required(false)
+                .default_value("1000")
+                .value_parser(clap::value_parser!(u64)),
+        )
+        .arg(
             arg!(--loglevel <LEVEL> "Set log level")
                 .required(false)
                 .default_value("info")
@@ -40,5 +46,6 @@ fn parse_cli_args() -> ArgMatches {
 fn build_cfg(args: &ArgMatches) -> sequencer::Config {
     sequencer::Config {
         rpc_url: args.get_one::<String>("rpchost").unwrap().clone(),
+        delay_millis: *args.get_one("delay").unwrap(),
     }
 }

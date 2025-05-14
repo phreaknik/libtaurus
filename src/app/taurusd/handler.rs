@@ -61,7 +61,6 @@ impl Handler {
                             };
                             let _ =self.p2p_api.respond(request_id, response);
                         },
-                        Ok(p2p::Event::Stopped) => todo!(),
                         Err(e) => return error!("Stopping due to p2p_events channel error: {e}"),
                     }
                 },
