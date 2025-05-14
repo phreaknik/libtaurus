@@ -359,7 +359,7 @@ impl Task {
                         .kademlia
                         .add_address(&peer_id, addr.clone());
                 }
-                None
+                Some(Event::NewPeer(peer_id))
             }
             _ => None,
         }
