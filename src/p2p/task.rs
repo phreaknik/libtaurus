@@ -54,6 +54,9 @@ pub enum Event {
     /// New message from the gossip sub network
     GossipsubMessage(Broadcast),
 
+    /// A new peer has been added to the routing table
+    NewPeer(PeerId),
+
     /// New request from the request_response protocol
     RequestMessage {
         request_id: InboundRequestId,

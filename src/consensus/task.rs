@@ -33,6 +33,7 @@ pub enum Event {
 /// Actions that can be performed by the consensus task
 #[derive(Debug)]
 pub enum Action {
+    AddValidator(PeerId),
     GetAcceptedFrontier {
         result_ch: oneshot::Sender<Vec<Arc<Vertex>>>,
     },
@@ -60,8 +61,8 @@ pub enum Error {
     DAG(#[from] dag::Error),
     #[error("consensus event channel error")]
     EventsOutCh(#[from] tokio::sync::broadcast::error::SendError<Event>),
-    #[error("not enough validators to reach consensus")]
-    NeedValidators,
+    #[error("not enough validators (expected {0}, found {1})")]
+    NeedValidators(usize, usize),
 }
 type Result<T> = result::Result<T, Error>;
 
@@ -170,6 +171,7 @@ impl Task {
                 // Handle requested actions
                 Some(action) = self.actions_in.recv() => {
                     match action{
+                        Action::AddValidator(validator) => self.validators.push(validator),
                         Action::GetAcceptedFrontier{result_ch} => {
                             if let Err(_e) = result_ch.send(self.dag.get_frontier()) {
                                 debug!("failed to respond to GetAcceptedFrontier");
@@ -248,7 +250,10 @@ impl Task {
             .copied()
             .collect();
         match validators.len().cmp(&self.config.query_size) {
-            cmp::Ordering::Less => Err(Error::NeedValidators),
+            cmp::Ordering::Less => Err(Error::NeedValidators(
+                self.config.query_size,
+                validators.len(),
+            )),
             cmp::Ordering::Greater => panic!("too many peers were selected"),
             cmp::Ordering::Equal => Ok(validators),
         }

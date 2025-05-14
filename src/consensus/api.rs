@@ -1,5 +1,6 @@
 use super::task::{self, Action, Event};
 use crate::{Vertex, VertexHash, WireFormat};
+use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, result, sync::Arc, time::Duration};
 use tokio::{
@@ -45,6 +46,13 @@ impl ConsensusApi {
     /// Get a subscription handler for events
     pub fn subscribe_events(&self) -> broadcast::Receiver<Event> {
         self.consensus_event_ch.resubscribe()
+    }
+
+    /// Add a peer to the validator set
+    pub fn add_validator(&self, validator: PeerId) -> Result<()> {
+        self.consensus_action_ch
+            .send(Action::AddValidator(validator))?;
+        Ok(())
     }
 
     /// Look up the specified vertex
