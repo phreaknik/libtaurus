@@ -32,35 +32,40 @@ impl Handler {
         loop {
             select! {
                 // Handle P2P events
-                event = p2p_events.recv() => {
-                    match event {
-                        Ok(p2p::Event::GossipsubMessage(message)) => {
-                            let msg_validity = self.handle_gossipsub(message).await;
-                            match self.p2p_api.report_message_validity(msg_validity) {
-                                Err(p2p::api::Error::ActionSend(e)) => error!("Error sending P2P action: {e}"),
-                                _ => {},
+                event_res = p2p_events.recv() => {
+                    match event_res {
+                        Ok(event) => {
+                            match event {
+                                p2p::Event::GossipsubMessage(message) => {
+                                    let msg_validity = self.handle_gossipsub(message).await;
+                                    match self.p2p_api.report_message_validity(msg_validity) {
+                                        Err(p2p::api::Error::ActionSend(e)) => error!("Error sending P2P action: {e}"),
+                                        _ => {},
+                                    }
+                                },
+                                p2p::Event::NewPeer(peer) => {let _ = self.consensus_api.add_validator(peer);},
+                                p2p::Event::RequestMessage{request_id, request} => {
+                            println!(":::: handling request: {request}");
+                                    let response = match request {
+                                        p2p::Request::GetVertex(vhash) => {
+                                            match self.consensus_api.get_vertex(vhash).await {
+                                                Ok(Some(vx)) => p2p::Response::Vertex(vx),
+                                                Ok(None) => p2p::Response::Error(p2p::request::ErrorCode::NotFound),
+                                                Err(_) => p2p::Response::Error(p2p::request::ErrorCode::Unknown),
+                                            }
+                                        },
+                                        p2p::Request::GetPreference(vhash) => {
+                                            match self.consensus_api.get_preference(vhash).await {
+                                                Ok(Some(pref)) => p2p::Response::Preference(pref),
+                                                Ok(None) => p2p::Response::Error(p2p::request::ErrorCode::NotFound),
+                                                Err(_) => p2p::Response::Error(p2p::request::ErrorCode::Unknown),
+                                            }
+                                        },
+                                    };
+                                    let _ =self.p2p_api.respond(request_id, response);
+                                },
                             }
-                        },
-                        Ok(p2p::Event::NewPeer(peer)) => {let _ = self.consensus_api.add_validator(peer);},
-                        Ok(p2p::Event::RequestMessage{request_id, request}) => {
-                            let response = match request {
-                                p2p::Request::GetVertex(vhash) => {
-                                    match self.consensus_api.get_vertex(vhash).await {
-                                        Ok(Some(vx)) => p2p::Response::Vertex(vx),
-                                        Ok(None) => p2p::Response::Error(p2p::request::ErrorCode::NotFound),
-                                        Err(_) => p2p::Response::Error(p2p::request::ErrorCode::Unknown),
-                                    }
-                                },
-                                p2p::Request::GetPreference(vhash) => {
-                                    match self.consensus_api.get_preference(vhash).await {
-                                        Ok(Some(pref)) => p2p::Response::Preference(pref),
-                                        Ok(None) => p2p::Response::Error(p2p::request::ErrorCode::NotFound),
-                                        Err(_) => p2p::Response::Error(p2p::request::ErrorCode::Unknown),
-                                    }
-                                },
-                            };
-                            let _ =self.p2p_api.respond(request_id, response);
-                        },
+                        }
                         Err(e) => return error!("Stopping due to p2p_events channel error: {e}"),
                     }
                 },

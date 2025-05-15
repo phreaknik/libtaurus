@@ -133,7 +133,7 @@ impl Task {
 
         // Set up the communication channels
         let (action_sender, actions_in) = mpsc::unbounded_channel();
-        let (events_out, event_receiver) = broadcast::channel(CONSENSUS_EVENT_CHAN_CAPACITY);
+        let (events_out, _event_receiver) = broadcast::channel(CONSENSUS_EVENT_CHAN_CAPACITY);
 
         // Construct the DAG, initialized with the genesis vertex
         let dag = dag::DAG::new(config.dag.clone(), &[config.genesis.to_vertex()])?;
