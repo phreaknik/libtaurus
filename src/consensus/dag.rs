@@ -644,8 +644,7 @@ impl DAG {
     // TODO: clean up these docs ^
     pub fn get_frontier(&mut self) -> Vec<Arc<Vertex>> {
         // First, find every vertex in the DAG which is strongly preferred
-        let strong_pref_set: HashMap<_, _> = self
-            .vertex
+        self.frontier
             .iter()
             .filter(|(vhash, _vx)| {
                 self.query(vhash)
@@ -653,10 +652,7 @@ impl DAG {
                     .map(|(preferred, _)| preferred)
                     .unwrap_or(false)
             })
-            .collect();
-        self.frontier
-            .iter()
-            .filter_map(|(vhash, _vx)| strong_pref_set.get(vhash).copied())
+            .map(|(_, vx)| vx)
             .cloned()
             .sorted_by(|a, b| Ord::cmp(&a.timestamp, &b.timestamp))
             .collect()
