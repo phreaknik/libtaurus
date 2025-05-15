@@ -744,16 +744,6 @@ mod test {
     use std::{assert_matches::assert_matches, collections::HashSet, sync::Arc};
 
     #[test]
-    fn default_config() {
-        todo!()
-    }
-
-    #[test]
-    fn new_config() {
-        todo!()
-    }
-
-    #[test]
     fn new_dag() {
         let gen = Arc::new(Vertex::empty());
         let v0 = make_rand_vertex([&gen]);
