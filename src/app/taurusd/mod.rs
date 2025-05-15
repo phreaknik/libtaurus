@@ -34,7 +34,7 @@ async fn main() {
     let p2p_api = p2p::start(build_p2p_cfg(&args));
 
     // Start the consensus process
-    let consensus_api = consensus::start(build_consensus_cfg(&args), p2p_api.clone());
+    let consensus_api = consensus::start(build_consensus_cfg(&args), p2p_api.clone()).unwrap();
     let mut consensus_events = consensus_api.subscribe_events();
 
     // Start the RPC server

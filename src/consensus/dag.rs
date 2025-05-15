@@ -1,5 +1,4 @@
 use crate::{
-    params,
     vertex::{self, ConflictSetKey, Constraint},
     Vertex, VertexHash, WireFormat,
 };
@@ -12,6 +11,9 @@ use std::{
 };
 use tracing::error;
 
+const DFLT_COUNTER_THRESHOLD: usize = 9;
+const DFLT_CONFIDENCE_THRESHOLD: usize = 9;
+
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("already inserted")]
@@ -22,6 +24,8 @@ pub enum Error {
     BadHeight(u64, u64),
     #[error("ancestors conflict")]
     ConflictingAncestors,
+    #[error("config specifies invalid decision thresholds")]
+    InvalidThresholdConfig,
     #[error("missing parents")]
     MissingParents(Vec<VertexHash>),
     #[error("not found")]
@@ -56,9 +60,20 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            genesis: params::DEFAULT_GENESIS_HASH,
-            thresh_accepted: params::AVALANCHE_COUNTER_THRESHOLD,
-            thresh_safe_early_commit: params::AVALANCHE_CONFIDENCE_THRESHOLD,
+            genesis: VertexHash::default(),
+            thresh_accepted: DFLT_COUNTER_THRESHOLD,
+            thresh_safe_early_commit: DFLT_CONFIDENCE_THRESHOLD,
+        }
+    }
+}
+
+impl Config {
+    /// Check the configuration parameters are legal
+    pub fn check(&self) -> Result<()> {
+        if self.thresh_accepted < self.thresh_safe_early_commit {
+            Err(Error::InvalidThresholdConfig)
+        } else {
+            Ok(())
         }
     }
 }
@@ -94,6 +109,10 @@ impl DAG {
     where
         V: IntoIterator<Item = &'a Arc<Vertex>>,
     {
+        // Check the config
+        config.check()?;
+
+        // Create a new dag instance
         let mut dag = DAG {
             config,
             vertex: HashMap::new(),
@@ -718,7 +737,6 @@ mod test {
     use super::{Config, DAG};
     use crate::{
         consensus::dag::{self, ConflictSet},
-        params,
         vertex::{make_rand_vertex, Constraint},
         Vertex, WireFormat,
     };
@@ -727,12 +745,12 @@ mod test {
 
     #[test]
     fn default_config() {
-        let dflt = Config::default();
-        assert_eq!(dflt.thresh_accepted, params::AVALANCHE_COUNTER_THRESHOLD);
-        assert_eq!(
-            dflt.thresh_safe_early_commit,
-            params::AVALANCHE_CONFIDENCE_THRESHOLD
-        );
+        todo!()
+    }
+
+    #[test]
+    fn new_config() {
+        todo!()
     }
 
     #[test]

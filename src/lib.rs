@@ -11,7 +11,6 @@ pub mod consensus;
 pub mod fetcher;
 pub mod hash;
 pub mod p2p;
-pub mod params;
 pub mod rpc;
 pub mod sequencer;
 pub mod util;

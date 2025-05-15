@@ -23,6 +23,9 @@ use transaction::TxRoot;
 /// [`tokio::sync::broadcast`] for more information.
 pub const CONSENSUS_EVENT_CHAN_CAPACITY: usize = 32;
 
+pub const DFLT_QUERY_COUNT: usize = 16;
+pub const DFLT_QUORUM_COUNT: usize = 9;
+
 /// Events produced by the consensus task
 #[derive(Debug, Clone)]
 pub enum Event {
@@ -59,6 +62,8 @@ pub enum Action {
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    #[error("config specifies impossible quorum size")]
+    BadCfgQuorumSize,
     #[error(transparent)]
     DAG(#[from] dag::Error),
     #[error("consensus event channel error")]
@@ -81,14 +86,37 @@ pub struct Config {
     pub dag: dag::Config,
 
     /// Number of peers to query in each round
-    pub query_size: usize,
+    pub query_count: usize,
 
     /// Number of peers to satisfy a quorum for a round of queries
-    pub quorum_size: usize,
+    pub quorum_count: usize,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            genesis: GenesisConfig::default(),
+            datadir: PathBuf::default(),
+            dag: dag::Config::default(),
+            query_count: DFLT_QUERY_COUNT,
+            quorum_count: DFLT_QUORUM_COUNT,
+        }
+    }
+}
+
+impl Config {
+    /// Check the configuration parameters are legal
+    pub fn check(&self) -> Result<()> {
+        if self.query_count < self.quorum_count {
+            Err(Error::BadCfgQuorumSize)
+        } else {
+            Ok(())
+        }
+    }
 }
 
 /// Genesis configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct GenesisConfig {}
 
 impl GenesisConfig {
@@ -109,10 +137,11 @@ impl GenesisConfig {
 
 /// Run the consensus task, spawning the task as a new thread. Returns an [`broadcast::Sender`],
 /// which can be subscribed to, to receive consensus events from the task.
-pub fn start(config: Config, p2p_api: P2pApi) -> ConsensusApi {
+pub fn start(config: Config, p2p_api: P2pApi) -> Result<ConsensusApi> {
+    config.check()?;
     let (task, api) = Task::new(config, p2p_api).expect("Failed to create consensus task");
     tokio::spawn(task.task_fn());
-    api
+    Ok(api)
 }
 
 /// Runtime state for the consensus task
@@ -215,7 +244,7 @@ impl Task {
                                                 self.p2p_api.clone(),
                                                 self.consensus_api.clone(),
                                                 validators,
-                                                self.config.quorum_size
+                                                self.config.quorum_count
                                             );
                                         }) {
                                             warn!("unable to select validators: {e}");
@@ -249,9 +278,9 @@ impl Task {
 
     /// Get a set of validators to query preferences on a new [`Vertex`]
     fn get_validators_for_query(&self) -> Result<HashSet<PeerId>> {
-        if self.validators.len() < self.config.query_size {
+        if self.validators.len() < self.config.query_count {
             Err(Error::NeedValidators(
-                self.config.query_size,
+                self.config.query_count,
                 self.validators.len(),
             ))
         } else {
@@ -259,10 +288,28 @@ impl Task {
             Ok(
                 iter::repeat_with(|| rng.gen_range(0..self.validators.len()))
                     .unique()
-                    .take(self.config.query_size)
+                    .take(self.config.query_count)
                     .map(|i| *self.validators.get_index(i).unwrap())
                     .collect(),
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    #[test]
+    fn config_check() {
+        todo!()
+    }
+
+    #[test]
+    fn new_task() {
+        todo!()
+    }
+
+    #[test]
+    fn get_validators_for_query() {
+        todo!()
     }
 }

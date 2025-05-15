@@ -3,7 +3,7 @@ use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
 use libp2p::{identity::Keypair, kad};
 use libtaurus::{
     consensus::{self, dag, GenesisConfig},
-    p2p, rpc,
+    p2p, rpc, WireFormat,
 };
 use rand::{distributions::Alphanumeric, Rng};
 use std::{char, env, fs, path::PathBuf};
@@ -53,12 +53,16 @@ pub fn build_p2p_cfg(args: &ArgMatches) -> p2p::task::Config {
 
 /// Build consensus [`consensus::Config`] from parsed CLI args
 pub fn build_consensus_cfg(args: &ArgMatches) -> consensus::task::Config {
+    let genesis_cfg = GenesisConfig {};
+    let genesis_hash = genesis_cfg.to_vertex().hash();
     consensus::task::Config {
+        genesis: genesis_cfg,
         datadir: app_data_dir(args).join("consensus/"),
-        genesis: GenesisConfig {},
-        dag: dag::Config::default(),
-        query_size: *args.get_one("querysize").unwrap(),
-        quorum_size: *args.get_one("quorumsize").unwrap(),
+        dag: dag::Config {
+            genesis: genesis_hash,
+            ..dag::Config::default()
+        },
+        ..consensus::task::Config::default()
     }
 }
 

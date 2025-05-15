@@ -5,7 +5,7 @@ use libtaurus::sequencer;
 pub use libtaurus::{
     consensus::{self, GenesisConfig, Vertex, VertexHash},
     hash::Hash,
-    p2p, params,
+    p2p,
 };
 
 fn main() {
