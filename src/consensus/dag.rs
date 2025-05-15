@@ -20,12 +20,12 @@ pub enum Error {
     AlreadyInserted,
     #[error("already recorded")]
     AlreadyRecorded,
+    #[error("config specifies invalid decision thresholds")]
+    BadCfgThreshold,
     #[error("bad height (expected {0}, found {1})")]
     BadHeight(u64, u64),
     #[error("ancestors conflict")]
     ConflictingAncestors,
-    #[error("config specifies invalid decision thresholds")]
-    InvalidThresholdConfig,
     #[error("missing parents")]
     MissingParents(Vec<VertexHash>),
     #[error("not found")]
@@ -71,7 +71,7 @@ impl Config {
     /// Check the configuration parameters are legal
     pub fn check(&self) -> Result<()> {
         if self.thresh_accepted < self.thresh_safe_early_commit {
-            Err(Error::InvalidThresholdConfig)
+            Err(Error::BadCfgThreshold)
         } else {
             Ok(())
         }

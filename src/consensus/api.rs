@@ -24,7 +24,7 @@ type Result<T> = result::Result<T, Error>;
 const DEFAULT_TIMEOUT: u64 = 60;
 
 /// API wrapper to communicate with the consensus process
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ConsensusApi {
     timeout: u64,
     consensus_action_ch: mpsc::UnboundedSender<Action>,

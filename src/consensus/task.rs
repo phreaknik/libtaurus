@@ -63,7 +63,7 @@ pub enum Action {
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("config specifies impossible quorum size")]
-    BadCfgQuorumSize,
+    BadCfgQuorumCount,
     #[error(transparent)]
     DAG(#[from] dag::Error),
     #[error("consensus event channel error")]
@@ -108,7 +108,7 @@ impl Config {
     /// Check the configuration parameters are legal
     pub fn check(&self) -> Result<()> {
         if self.query_count < self.quorum_count {
-            Err(Error::BadCfgQuorumSize)
+            Err(Error::BadCfgQuorumCount)
         } else {
             Ok(())
         }
@@ -138,13 +138,13 @@ impl GenesisConfig {
 /// Run the consensus task, spawning the task as a new thread. Returns an [`broadcast::Sender`],
 /// which can be subscribed to, to receive consensus events from the task.
 pub fn start(config: Config, p2p_api: P2pApi) -> Result<ConsensusApi> {
-    config.check()?;
-    let (task, api) = Task::new(config, p2p_api).expect("Failed to create consensus task");
+    let (task, api) = Task::new(config, p2p_api)?;
     tokio::spawn(task.task_fn());
     Ok(api)
 }
 
 /// Runtime state for the consensus task
+#[derive(Debug)]
 pub struct Task {
     config: Config,
     consensus_api: ConsensusApi,
@@ -159,6 +159,9 @@ impl Task {
     /// Construct a new task
     fn new(config: Config, p2p_api: P2pApi) -> Result<(Task, ConsensusApi)> {
         info!("Starting consensus");
+
+        // Check the config
+        config.check()?;
 
         // Set up the communication channels
         let (action_sender, actions_in) = mpsc::unbounded_channel();
@@ -298,14 +301,56 @@ impl Task {
 
 #[cfg(test)]
 mod test {
-    #[test]
-    fn config_check() {
-        todo!()
-    }
+    use super::{Config, Task};
+    use crate::{consensus, dag, p2p};
+    use std::assert_matches::assert_matches;
+    use tokio::sync::{self, mpsc};
 
     #[test]
     fn new_task() {
-        todo!()
+        let (dummy_action_ch, _) = mpsc::unbounded_channel();
+        let (dummy_event_ch, _) = sync::broadcast::channel(1);
+        let p2p_api = p2p::api::P2pApi::new(dummy_action_ch, dummy_event_ch);
+
+        // Default case
+        assert_matches!(
+            Task::new(
+                Config {
+                    ..Config::default()
+                },
+                p2p_api.clone()
+            ),
+            Ok((_, _))
+        );
+
+        // Invalid task configs
+        assert_matches!(
+            Task::new(
+                Config {
+                    query_count: 10,
+                    quorum_count: 11,
+                    ..Config::default()
+                },
+                p2p_api.clone()
+            ),
+            Err(consensus::task::Error::BadCfgQuorumCount)
+        );
+
+        // Invalid dag configs
+        assert_matches!(
+            Task::new(
+                Config {
+                    dag: dag::Config {
+                        thresh_safe_early_commit: 5,
+                        thresh_accepted: 4,
+                        ..dag::Config::default()
+                    },
+                    ..Config::default()
+                },
+                p2p_api.clone()
+            ),
+            Err(consensus::task::Error::DAG(dag::Error::BadCfgThreshold))
+        );
     }
 
     #[test]

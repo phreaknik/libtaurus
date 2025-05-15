@@ -109,7 +109,7 @@ pub struct Config {
 /// Run the p2p networking client, spawning the client task as a new thread. Returns an
 /// [`UnboundedSender`], which can be used to send actions to the running task. Also returns a
 /// [`broadcast::Sender`], which can be subscribed to, to receive P2P events from the task.
-pub fn start(config: Config) -> P2pApi {
+pub fn start(config: Config) -> Result<P2pApi> {
     // Spawn the task
     let (action_sender, action_receiver) = mpsc::unbounded_channel();
     let (event_sender, _event_receiver) = sync::broadcast::channel(P2P_EVENT_CHAN_CAPACITY);
@@ -117,7 +117,7 @@ pub fn start(config: Config) -> P2pApi {
     tokio::spawn(task.task_fn());
 
     // Return the communication channels
-    P2pApi::new(action_sender, event_sender)
+    Ok(P2pApi::new(action_sender, event_sender))
 }
 
 pub struct Task {

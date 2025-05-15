@@ -31,7 +31,7 @@ async fn main() {
     );
 
     // Start the P2P process
-    let p2p_api = p2p::start(build_p2p_cfg(&args));
+    let p2p_api = p2p::start(build_p2p_cfg(&args)).unwrap();
 
     // Start the consensus process
     let consensus_api = consensus::start(build_consensus_cfg(&args), p2p_api.clone()).unwrap();

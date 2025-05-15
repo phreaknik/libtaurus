@@ -14,7 +14,7 @@ pub enum Error {
 type Result<T> = result::Result<T, Error>;
 
 /// API wrapper to communicate with the P2P process
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct P2pApi {
     p2p_action_ch: mpsc::UnboundedSender<Action>,
     p2p_event_sender: broadcast::Sender<Event>,
