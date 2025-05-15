@@ -101,6 +101,10 @@ pub struct DAG {
 
     /// Map of each ordering constraint to its corresponding Avalanche state variables
     state: HashMap<ConflictSetKey, ConflictSet>,
+
+    /// A collection of all vertices without children. This list may include vertices which are not
+    /// strongly preferred.
+    frontier: HashMap<VertexHash, Arc<Vertex>>,
 }
 
 impl DAG {
@@ -120,6 +124,7 @@ impl DAG {
             pending_query: HashSet::new(),
             children: HashMap::new(),
             state: HashMap::new(),
+            frontier: HashMap::new(),
         };
 
         // Add each vertex to the graph, and finalize each constraint in the constraint graph
@@ -353,6 +358,12 @@ impl DAG {
         // Register this vertex as part of the graph and waiting for query results
         self.graph.insert(vx.hash());
         self.pending_query.insert(vx.hash());
+
+        // Update the frontier
+        for parent in &vx.parents {
+            self.frontier.remove(parent);
+        }
+        self.frontier.insert(vx.hash(), vx.clone());
     }
 
     /// Retry inserting the specified pending vertices, as well as any pending vertices which
@@ -636,37 +647,19 @@ impl DAG {
         let strong_pref_set: HashMap<_, _> = self
             .vertex
             .iter()
-            .filter(|(vhash, _vx)| self.query(vhash).unwrap().0)
-            .collect();
-        let mut frontier = strong_pref_set
-            .iter()
-            .filter_map(|(vhash, &vx)| {
-                if self.children[vhash]
-                    .iter()
-                    .any(|child| strong_pref_set.contains_key(child))
-                {
-                    None
-                } else {
-                    Some(vx.clone())
-                }
+            .filter(|(vhash, _vx)| {
+                self.query(vhash)
+                    .ok()
+                    .map(|(preferred, _)| preferred)
+                    .unwrap_or(false)
             })
-            .fold(
-                Vec::with_capacity(strong_pref_set.len()),
-                |mut frontier: Vec<Arc<Vertex>>, vx: Arc<Vertex>| {
-                    let frontier_height = frontier.first().map(|vx| vx.height).unwrap_or(u64::MAX);
-                    if vx.height < frontier_height {
-                        frontier.clear();
-                    }
-                    if frontier.is_empty() || vx.height == frontier_height {
-                        frontier.push(vx);
-                    }
-                    frontier
-                },
-            );
-        frontier.sort_by(|a, b| Ord::cmp(&a.timestamp, &b.timestamp));
-        frontier
-        // TODO: should only return vertices which are strongly preferred
-        // TODO: needs tests
+            .collect();
+        self.frontier
+            .iter()
+            .filter_map(|(vhash, _vx)| strong_pref_set.get(vhash).copied())
+            .cloned()
+            .sorted_by(|a, b| Ord::cmp(&a.timestamp, &b.timestamp))
+            .collect()
     }
 
     /// Get the known children of the specified [`Vertex`]
@@ -1097,6 +1090,7 @@ mod test {
             e @ _ => panic!("unexpected result: {e:?}"),
         }
         assert_eq!(dag.try_insert(&v0).unwrap(), [v2.hash()].into());
+        assert!(dag.get_frontier().iter().eq([&v0]));
         assert!(dag.is_preferred(&v0.hash()).unwrap());
         match dag.try_insert(&v2) {
             Err(dag::Error::MissingParents(missing)) => {
@@ -1110,7 +1104,9 @@ mod test {
             }
             e @ _ => panic!("unexpected result: {e:?}"),
         }
+        assert!(dag.get_frontier().iter().eq([&v0]));
         assert_eq!(dag.try_insert(&v1).unwrap(), [v2.hash(), x2.hash(),].into());
+        assert!(dag.get_frontier().iter().eq([&v0, &v1]));
         assert!(dag.is_preferred(&v1.hash()).unwrap());
         match dag.try_insert(&v3) {
             Err(dag::Error::WaitingOnParents(waiting)) => {
@@ -1118,11 +1114,15 @@ mod test {
             }
             e @ _ => panic!("unexpected result: {e:?}"),
         }
+        assert!(dag.get_frontier().iter().eq([&v0, &v1]));
         assert_eq!(dag.try_insert(&v2).unwrap(), [v3.hash()].into());
+        assert!(dag.get_frontier().iter().eq([&v2]));
         assert!(dag.is_preferred(&v2.hash()).unwrap());
         assert_eq!(dag.try_insert(&v3).unwrap(), [].into());
+        assert!(dag.get_frontier().iter().eq([&v3]));
         assert!(dag.is_preferred(&v3.hash()).unwrap());
         assert_eq!(dag.try_insert(&x2).unwrap(), [].into());
+        assert!(dag.get_frontier().iter().eq([&v3]));
         // x2 should not be preferred, due to conflict
         assert!(dag.is_preferred(&x2.hash()).unwrap() == false);
         // b3 should fail due to illegal parent combination
