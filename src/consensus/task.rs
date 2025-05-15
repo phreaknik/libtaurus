@@ -89,7 +89,7 @@ pub struct Config {
     pub query_count: usize,
 
     /// Number of peers to satisfy a quorum for a round of queries
-    pub quorum_count: usize,
+    pub quorum_size: usize,
 }
 
 impl Default for Config {
@@ -99,7 +99,7 @@ impl Default for Config {
             datadir: PathBuf::default(),
             dag: dag::Config::default(),
             query_count: DFLT_QUERY_COUNT,
-            quorum_count: DFLT_QUORUM_COUNT,
+            quorum_size: DFLT_QUORUM_COUNT,
         }
     }
 }
@@ -107,7 +107,7 @@ impl Default for Config {
 impl Config {
     /// Check the configuration parameters are legal
     pub fn check(&self) -> Result<()> {
-        if self.query_count < self.quorum_count {
+        if self.query_count < self.quorum_size {
             Err(Error::BadCfgQuorumCount)
         } else {
             Ok(())
@@ -247,7 +247,7 @@ impl Task {
                                                 self.p2p_api.clone(),
                                                 self.consensus_api.clone(),
                                                 validators,
-                                                self.config.quorum_count
+                                                self.config.quorum_size
                                             );
                                         }) {
                                             warn!("unable to select validators: {e}");
@@ -303,7 +303,8 @@ impl Task {
 mod test {
     use super::{Config, Task};
     use crate::{consensus, dag, p2p};
-    use std::assert_matches::assert_matches;
+    use libp2p::PeerId;
+    use std::{assert_matches::assert_matches, str::FromStr};
     use tokio::sync::{self, mpsc};
 
     #[test]
@@ -328,7 +329,7 @@ mod test {
             Task::new(
                 Config {
                     query_count: 10,
-                    quorum_count: 11,
+                    quorum_size: 11,
                     ..Config::default()
                 },
                 p2p_api.clone()
@@ -355,6 +356,37 @@ mod test {
 
     #[test]
     fn get_validators_for_query() {
-        todo!()
+        let (dummy_action_ch, _) = mpsc::unbounded_channel();
+        let (dummy_event_ch, _) = sync::broadcast::channel(1);
+        let p2p_api = p2p::api::P2pApi::new(dummy_action_ch, dummy_event_ch);
+        let (mut task, _) = Task::new(
+            Config {
+                query_count: 2,
+                quorum_size: 1,
+                ..Config::default()
+            },
+            p2p_api,
+        )
+        .unwrap();
+
+        assert_matches!(
+            task.get_validators_for_query(),
+            Err(consensus::task::Error::NeedValidators(2, 0)),
+        );
+        task.validators.insert(
+            PeerId::from_str("12D3KooWNNNsXcxFeHuM4FNCG8pBKCXMgQ6UH35S7dseLiwFkukF").unwrap(),
+        );
+        assert_matches!(
+            task.get_validators_for_query(),
+            Err(consensus::task::Error::NeedValidators(2, 1)),
+        );
+        task.validators.insert(
+            PeerId::from_str("12D3KooWCXboa8yR8vGyhgfWzv3peUUJ8qz5jRGXiPiZ8EeWPVmE").unwrap(),
+        );
+        assert_matches!(task.get_validators_for_query(), Ok(_));
+        task.validators.insert(
+            PeerId::from_str("12D3KooWJieUiwMjNbn2m2yu1KhzfaU6trWAL951d5XMBWqZ13EE").unwrap(),
+        );
+        assert_matches!(task.get_validators_for_query(), Ok(_));
     }
 }
