@@ -752,6 +752,18 @@ mod test {
         let v3 = make_rand_vertex([&v1, &v2]);
         let v4 = make_rand_vertex([&v3]);
 
+        assert_matches!(
+            DAG::new(
+                Config {
+                    thresh_safe_early_commit: 5,
+                    thresh_accepted: 4,
+                    ..Config::default()
+                },
+                [&gen],
+            ),
+            Err(dag::Error::BadCfgThreshold)
+        );
+
         // Basic test -- genesis vertex should be accepted
         let dag = DAG::new(Config::default(), [&gen]).unwrap();
         assert!(dag.pending_query.is_empty());
@@ -1036,7 +1048,34 @@ mod test {
 
     #[test]
     fn retry_pending() {
-        todo!()
+        let gen = Arc::new(Vertex::empty());
+        let v0 = make_rand_vertex([&gen]);
+        let v1 = make_rand_vertex([&gen]);
+        let v2 = make_rand_vertex([&v0, &v1]);
+        let v3 = make_rand_vertex([&v2]);
+        let mut dag = DAG::new(Config::default(), [&gen]).unwrap();
+
+        // Skip v1, but attempt to insert everything else
+        dag.try_insert(&v0).unwrap();
+        match dag.try_insert(&v2) {
+            Err(dag::Error::MissingParents(missing)) => {
+                assert_eq!(missing, [v1.hash()])
+            }
+            e @ _ => panic!("unexpected result: {e:?}"),
+        }
+        match dag.try_insert(&v3) {
+            Err(dag::Error::WaitingOnParents(missing)) => {
+                assert_eq!(missing, [v2.hash()])
+            }
+            e @ _ => panic!("unexpected result: {e:?}"),
+        }
+
+        // Insert v1, and then confirm that all vertices successfully append on retry
+        let waiting = dag.try_insert(&v1).unwrap();
+        let successes = dag.retry_pending(&waiting).unwrap();
+        assert!(successes.contains(&v2.hash()));
+        assert!(successes.contains(&v3.hash()));
+        assert_eq!(dag.get_frontier(), [v3]);
     }
 
     #[test]
