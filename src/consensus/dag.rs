@@ -38,8 +38,8 @@ pub enum Error {
     Vertex(#[from] vertex::Error),
     #[error("waiting on vertex parents")]
     WaitingOnParents(Vec<VertexHash>),
-    #[error("waiting on vertex")]
-    WaitingOnVertex,
+    #[error("waiting on vertex to be inserted")]
+    WaitingOnInsert,
 }
 type Result<T> = result::Result<T, Error>;
 
@@ -91,10 +91,10 @@ pub struct DAG {
     vertex: HashMap<VertexHash, Arc<Vertex>>,
 
     /// Set of vertices which are in the active region of the graph
-    graph: HashSet<VertexHash>,
+    graph: HashMap<VertexHash, Arc<Vertex>>,
 
     /// Set of vertices which are waiting for the results of a query
-    pending_query: HashSet<VertexHash>,
+    pending_query: HashMap<VertexHash, Arc<Vertex>>,
 
     /// Map of known children for each vertex in the graph
     children: HashMap<VertexHash, HashSet<VertexHash>>,
@@ -120,8 +120,8 @@ impl DAG {
         let mut dag = DAG {
             config,
             vertex: HashMap::new(),
-            graph: HashSet::new(),
-            pending_query: HashSet::new(),
+            graph: HashMap::new(),
+            pending_query: HashMap::new(),
             children: HashMap::new(),
             state: HashMap::new(),
             frontier: HashMap::new(),
@@ -248,7 +248,7 @@ impl DAG {
         vx.sanity_checks()?;
 
         // Check the child map to make sure this vertex doesn't already exist
-        if self.graph.contains(&vx.hash()) {
+        if self.graph.contains_key(&vx.hash()) {
             return Err(Error::AlreadyInserted);
         }
 
@@ -259,7 +259,7 @@ impl DAG {
         for vhash in &vx.parents {
             if !self.vertex.contains_key(vhash) {
                 missing.push(*vhash);
-            } else if !self.graph.contains(vhash) {
+            } else if !self.graph.contains_key(vhash) {
                 waiting.push(*vhash);
             }
         }
@@ -356,8 +356,8 @@ impl DAG {
         self.map_child(&vx.hash(), &vx.parents);
 
         // Register this vertex as part of the graph and waiting for query results
-        self.graph.insert(vx.hash());
-        self.pending_query.insert(vx.hash());
+        self.graph.insert(vx.hash(), vx.clone());
+        self.pending_query.insert(vx.hash(), vx.clone());
 
         // Update the frontier
         for parent in &vx.parents {
@@ -394,12 +394,9 @@ impl DAG {
         // Check if the vertex may be inserted
         self.check_vertex(vx).map_err(|e| {
             // Add vertex as known child, even if we are missing some of its parents
-            if let Error::MissingParents(waiting) | Error::WaitingOnParents(waiting) = &e {
+            if let Error::MissingParents(_) | Error::WaitingOnParents(_) = &e {
                 self.map_child(&vx.hash(), &vx.parents);
                 self.vertex.insert(vx.hash(), vx.clone());
-                for vhash in waiting {
-                    self.pending_query.insert(*vhash);
-                }
             }
             e
         })?;
@@ -411,7 +408,7 @@ impl DAG {
         Ok(self
             .get_known_children(&vx.hash())?
             .into_iter()
-            .filter(|vhash| !self.graph.contains(vhash))
+            .filter(|vhash| !self.graph.contains_key(vhash))
             .collect())
     }
 
@@ -459,108 +456,103 @@ impl DAG {
         }
 
         // Check that we have the vertex, and that we are able to record a query for it.
-        if let Some(vx) = self.vertex.get(vhash).cloned() {
-            if vx.parents.iter().any(|v| self.pending_query.contains(v)) {
-                Err(Error::WaitingOnParents(
-                    vx.parents
-                        .iter()
-                        .filter(|v| self.pending_query.contains(v))
-                        .copied()
-                        .collect::<Vec<_>>(),
+        if let Some(vx) = self.pending_query.remove(vhash) {
+            // Award a chit to the unity constraint representing this vertex
+            let unity = Constraint(*vhash, *vhash);
+            self.state
+                .get_mut(&unity.conflict_set_key())
+                .expect(&format!(
+                    "state does not exist for unity constraint of {vhash}"
                 ))
-            } else if !self.graph.contains(vhash) {
-                Err(Error::WaitingOnVertex)
-            } else if self.pending_query.take(vhash).is_none() {
-                Err(Error::AlreadyRecorded)
-            } else {
-                // Award a chit to the unity constraint representing this vertex
-                let unity = Constraint(*vhash, *vhash);
-                self.state
-                    .get_mut(&unity.conflict_set_key())
-                    .expect(&format!(
-                        "state does not exist for unity constraint of {vhash}"
-                    ))
-                    .chit
-                    .insert(unity, true);
+                .chit
+                .insert(unity, true);
 
-                // Update the state of this vertex's unity constraint as well as all of its
-                // ancestors
-                for c in self
-                    .get_active_ancestor_constraints(&vx)
-                    .unwrap()
-                    .into_iter()
-                    .chain(once(unity))
-                {
-                    if strongly_preferred {
-                        // Compute the confidence of this constraint and its conflict (if any)
-                        let c_conf = progeny_with_chits(self, &c).into_iter().unique().count();
-                        let has_conflict = c
-                            .conflict()
-                            .map(|opp| self.state.contains_key(&opp.conflict_set_key()))
-                            .unwrap_or(false);
-                        let opp_conf = c
-                            .conflict()
-                            .map(|opp| progeny_with_chits(self, &opp).into_iter().unique().count())
-                            .unwrap_or(0);
+            // Update the state of all undecided constraints in the ancestry
+            for c in self
+                .get_active_ancestor_constraints(&vx)
+                .unwrap()
+                .into_iter()
+                .chain(once(unity))
+            {
+                if strongly_preferred {
+                    // Compute the confidence of this constraint and its conflict (if any)
+                    let c_conf = progeny_with_chits(self, &c).into_iter().unique().count();
+                    println!(":::: confidence = {c_conf}");
+                    let has_conflict = c
+                        .conflict()
+                        .map(|opp| self.state.contains_key(&opp.conflict_set_key()))
+                        .unwrap_or(false);
+                    let opp_conf = c
+                        .conflict()
+                        .map(|opp| progeny_with_chits(self, &opp).into_iter().unique().count())
+                        .unwrap_or(0);
 
-                        // Update state variables
-                        let (c_count, c_parents) = {
-                            let c_state = self.state.get_mut(&c.conflict_set_key()).unwrap();
+                    // Update state variables
+                    let (c_count, c_parents) = {
+                        let c_state = self.state.get_mut(&c.conflict_set_key()).unwrap();
 
-                            // If any parent constraints were rejected, yet our peers prefer this
-                            // vertex, then we are in permanent conflict with our peers. i.e.
-                            // hard-fork. Check that no ancester constraint has been rejected.
-                            debug_assert!(c_state.decision.get(&c).unwrap_or(&true));
-
-                            // Update the confidence score
-                            c_state.confidence.insert(c, c_conf);
-
-                            // Set this constraint as preferred if it has the higher confidence
-                            if c_conf > opp_conf {
-                                c_state.preferred = c;
-                            }
-
-                            // Increment the counter, if this vote is the same as the previous vote
-                            // in this conflict set.
-                            if c_state.last != c {
-                                c_state.last = c;
-                                c_state.count.insert(c, 1);
-                            } else {
-                                *c_state.count.get_mut(&c).unwrap() += 1;
-                            }
-
-                            (c_state.count[&c], c_state.parents[&c].clone())
-                        };
-
-                        // See if a decision can be made. A decision can be made if the vote count
-                        // reaches the acceptance threshold, or if the "safe early committment"
-                        // criteria are met: parents accepted, and no conflicts, and the count
-                        // reaches the safe early committment threshold
-                        if c_count >= self.config.thresh_accepted
-                            || (c_parents.iter().all(|p| {
-                                self.state[&p.conflict_set_key()].decision.get(p) == Some(&true)
-                            }) && !has_conflict
-                                && c_count >= self.config.thresh_safe_early_commit)
-                        {
-                            let c_state = self.state.get_mut(&c.conflict_set_key()).unwrap();
-                            c_state.decision.insert(c, true); // accepted the constraint
-                            c_state.preferred = c;
-                            if let Some(opp) = c.conflict() {
-                                reject_progeny(self, &opp);
-                            }
+                        // If any parent constraints were rejected, yet our peers prefer this
+                        // vertex, then we are in permanent conflict with our peers. i.e.
+                        // hard-fork. Check that no ancester constraint has been rejected.
+                        if let Some(false) = c_state.decision.get(&c) {
+                            error!("hardfork detected!");
+                            error!("we rejected constraint {c}, but our peers prefer it");
                         }
-                    } else {
-                        // If not strongly preferred, reset the counters for the entire ancestry
-                        self.state
-                            .get_mut(&c.conflict_set_key())
-                            .expect(&format!("state does not exist for ancestor constraint {c}"))
-                            .count
-                            .insert(c, 0);
-                    }
-                }
 
-                Ok(())
+                        // Update the confidence score
+                        c_state.confidence.insert(c, c_conf);
+
+                        // Set this constraint as preferred if it has the higher confidence
+                        if c_conf > opp_conf {
+                            c_state.preferred = c;
+                        }
+
+                        // Increment the counter, if this vote is the same as the previous vote
+                        // in this conflict set.
+                        if c_state.last != c {
+                            c_state.last = c;
+                            c_state.count.insert(c, 1);
+                        } else {
+                            *c_state.count.get_mut(&c).unwrap() += 1;
+                            let c_count = *c_state.count.get_mut(&c).unwrap();
+                            println!(":::: count = {c_count}");
+                        }
+
+                        (c_state.count[&c], c_state.parents[&c].clone())
+                    };
+
+                    // See if a decision can be made. A decision can be made if the vote count
+                    // reaches the acceptance threshold, or if the "safe early committment"
+                    // criteria are met: parents accepted, and no conflicts, and the count
+                    // reaches the safe early committment threshold
+                    if c_count >= self.config.thresh_accepted
+                        || (c_parents.iter().all(|p| {
+                            self.state[&p.conflict_set_key()].decision.get(p) == Some(&true)
+                        }) && !has_conflict
+                            && c_count >= self.config.thresh_safe_early_commit)
+                    {
+                        let c_state = self.state.get_mut(&c.conflict_set_key()).unwrap();
+                        c_state.decision.insert(c, true); // accepted the constraint
+                        c_state.preferred = c;
+                        if let Some(opp) = c.conflict() {
+                            reject_progeny(self, &opp);
+                        }
+                    }
+                } else {
+                    // If not strongly preferred, reset the counters for the entire ancestry
+                    self.state
+                        .get_mut(&c.conflict_set_key())
+                        .expect(&format!("state does not exist for ancestor constraint {c}"))
+                        .count
+                        .insert(c, 0);
+                }
             }
+
+            Ok(())
+        } else if self.graph.contains_key(vhash) {
+            Err(Error::AlreadyRecorded)
+        } else if self.vertex.contains_key(vhash) {
+            Err(Error::WaitingOnInsert)
         } else {
             Err(Error::NotFound)
         }
@@ -575,7 +567,7 @@ impl DAG {
             .and_then(|vx| {
                 self.graph
                     .get(vhash)
-                    .ok_or(Error::WaitingOnVertex)
+                    .ok_or(Error::WaitingOnInsert)
                     .map(|_| vx)
             })?
             .parent_constraints()
@@ -594,42 +586,48 @@ impl DAG {
     ///   (true, false)  | strongly-preferred, not decided
     ///   (true, true)   | strongly-preferred, decided (accepted)
     pub fn query(&self, vhash: &VertexHash) -> Result<(bool, bool)> {
-        // Check if there has been a decision on the unity constraint corresponding to this
-        // vertex. If not, look up all ancestors and confirm their preference.
-        let unity = Constraint(*vhash, *vhash);
-        if let Some(decision) = self
-            .state
-            .get(&unity.conflict_set_key())
-            .ok_or(Error::NotFound)?
-            .decision
-            .get(&unity)
-        {
-            Ok(match decision {
-                true => (true, true),   // accepted
-                false => (false, true), // rejected
-            })
+        if let Some(vx) = self.graph.get(vhash) {
+            // Check if there has been a decision on the unity constraint corresponding to this
+            // vertex. If not, look up all ancestors and confirm their preference.
+            let unity = Constraint(*vhash, *vhash);
+            if let Some(decision) = self.state[&unity.conflict_set_key()].decision.get(&unity) {
+                let counter = self.state[&unity.conflict_set_key()].count[&unity];
+                let confidence = self.state[&unity.conflict_set_key()].confidence[&unity];
+                println!(":::: has decision; counter={counter}, confidence={confidence}");
+                Ok(match decision {
+                    true => (true, true),   // accepted
+                    false => (false, true), // rejected
+                })
+            } else {
+                let counter = self.state[&unity.conflict_set_key()].count[&unity];
+                let confidence = self.state[&unity.conflict_set_key()].confidence[&unity];
+                println!(":::: no decision; counter={counter}, confidence={confidence}");
+                let states = self
+                    .get_active_ancestor_constraints(vx)?
+                    .into_iter()
+                    .map(|c| {
+                        let c_state = self.state.get(&c.conflict_set_key()).unwrap();
+                        match c_state.decision.get(&c) {
+                            Some(true) => (true, true),   // accepted
+                            Some(false) => (false, true), // rejected
+                            None => (c_state.preferred == c, false),
+                        }
+                    })
+                    .inspect(|s| {
+                        // It should be impossible for a rejected ancestor constraint to make it
+                        // here if the queried vertex is not rejected
+                        debug_assert!(
+                            s.0 || !s.1, // only assert if rejected
+                            "found non-rejected vertex with rejected ancestors"
+                        );
+                    })
+                    .collect::<Vec<_>>();
+                Ok((states.into_iter().all(|s| s.0), false))
+            }
+        } else if self.vertex.contains_key(vhash) {
+            Err(Error::WaitingOnInsert)
         } else {
-            let states = self
-                .get_active_ancestor_constraints(self.vertex.get(vhash).ok_or(Error::NotFound)?)?
-                .into_iter()
-                .map(|c| {
-                    let c_state = self.state.get(&c.conflict_set_key()).unwrap();
-                    match c_state.decision.get(&c) {
-                        Some(true) => (true, true),   // accepted
-                        Some(false) => (false, true), // rejected
-                        None => (c_state.preferred == c, false),
-                    }
-                })
-                .inspect(|s| {
-                    // It should be impossible for a rejected ancestor constraint to make it here if
-                    // the queried vertex is not rejected
-                    debug_assert!(
-                        s.0 || !s.1, // only assert if rejected
-                        "found non-rejected vertex with rejected ancestors"
-                    );
-                })
-                .collect::<Vec<_>>();
-            Ok((states.into_iter().all(|s| s.0), false))
+            Err(Error::NotFound)
         }
     }
 
@@ -1127,6 +1125,22 @@ mod test {
 
     #[test]
     fn record_query_result() {
+        // TODO: need to check counters and confidences in addition to chits
+        fn check_chits<'a, P>(dag: &DAG, pairs: P)
+        where
+            P: IntoIterator<Item = (&'a Arc<Vertex>, Option<bool>)>,
+        {
+            for (vx, expected) in pairs {
+                let vhash = vx.hash();
+                let unity = Constraint(vhash, vhash);
+                let chit = dag
+                    .state
+                    .get(&unity.conflict_set_key())
+                    .and_then(|s| s.chit.get(&unity));
+                assert_eq!(chit, expected.as_ref());
+            }
+        }
+
         let gen = Arc::new(Vertex::empty());
         let v0 = make_rand_vertex([&gen]);
         let v1 = make_rand_vertex([&gen]);
@@ -1139,6 +1153,15 @@ mod test {
         // Basic success
         dag.record_query_result(&v0.hash(), true).unwrap();
         dag.record_query_result(&v1.hash(), false).unwrap();
+        check_chits(
+            &dag,
+            [
+                (&v0, Some(true)),
+                (&v1, Some(false)),
+                (&v2, None),
+                (&v3, None),
+            ],
+        );
 
         // Error cases
         assert_matches!(
@@ -1149,26 +1172,75 @@ mod test {
             dag.record_query_result(&v3.hash(), true),
             Err(dag::Error::NotFound)
         );
+        check_chits(
+            &dag,
+            [
+                (&v0, Some(true)),
+                (&v1, Some(false)),
+                (&v2, None),
+                (&v3, None),
+            ],
+        );
+
         // will fail, but makes v3 known
         dag.try_insert(&v3).unwrap_err();
         // v2 still has not been inserted
         assert_matches!(
             dag.record_query_result(&v3.hash(), true),
-            Err(dag::Error::WaitingOnParents(_))
+            Err(dag::Error::WaitingOnInsert)
         );
+        check_chits(
+            &dag,
+            [
+                (&v0, Some(true)),
+                (&v1, Some(false)),
+                (&v2, None),
+                (&v3, None),
+            ],
+        );
+
         dag.try_insert(&v2).unwrap();
         // v2 still has not been queried
         assert_matches!(
             dag.record_query_result(&v3.hash(), true),
-            Err(dag::Error::WaitingOnParents(_))
+            Err(dag::Error::WaitingOnInsert)
         );
-        dag.record_query_result(&v2.hash(), true).unwrap();
-        assert_matches!(
-            dag.record_query_result(&v3.hash(), true),
-            Err(dag::Error::WaitingOnVertex)
+        check_chits(
+            &dag,
+            [
+                (&v0, Some(true)),
+                (&v1, Some(false)),
+                (&v2, Some(false)),
+                (&v3, None),
+            ],
         );
+
+        // Insert v3. V2 has also been inserted, but still not queried
         dag.try_insert(&v3).unwrap();
+
+        // Should succeed, even though queried out of order
         dag.record_query_result(&v3.hash(), true).unwrap();
+        check_chits(
+            &dag,
+            [
+                (&v0, Some(true)),
+                (&v1, Some(false)),
+                (&v2, Some(false)),
+                (&v3, Some(true)),
+            ],
+        );
+
+        // Should succeed even though recorded out of order
+        dag.record_query_result(&v2.hash(), true).unwrap();
+        check_chits(
+            &dag,
+            [
+                (&v0, Some(true)),
+                (&v1, Some(false)),
+                (&v2, Some(true)),
+                (&v3, Some(true)),
+            ],
+        );
     }
 
     #[test]
@@ -1184,7 +1256,7 @@ mod test {
         let _ = dag.try_insert(&v2); // V2 is known now, but still waiting on parents to process
         assert_matches!(
             dag.is_preferred(&v2.hash()),
-            Err(dag::Error::WaitingOnVertex)
+            Err(dag::Error::WaitingOnInsert)
         );
 
         // Insert all parents of v2 and x2, so they will insert successfully now

@@ -257,7 +257,7 @@ impl Task {
 
                                     // Emit new frontier event
                                     // TODO: this frontier may not actually be "new"
-                                    warn!(":::: {} consensus events already queued", self.events_out.len());
+                                    println!(":::: {} consensus events already queued", self.events_out.len());
                                     self.events_out.send(Event::NewFrontier(frontier)).unwrap();
                                 },
                                 Err(e) => info!("vertex {} (height = {}) not inserted: {e}", vertex.hash().to_hex(), vertex.height),
