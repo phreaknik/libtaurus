@@ -237,14 +237,13 @@ fn small_chain_with_conflicts() {
         ("a90", NO_PREF),
     ]);
     tg.check_frontier(["b10"]);
-    tg.record_query("a20", true).unwrap(); // succeed, even though still not queried a10
+    assert!(tg.record_query("a20", false).is_err()); // waiting on a10
+    tg.record_query("a10", false).unwrap();
     tg.check_state_with_updates(vec![]); // should not change state
     tg.check_frontier(["b10"]);
 
-    tg.record_query("a10", true).unwrap(); // a10 should now become preferred over b10
+    tg.record_query("a20", true).unwrap(); // vote for a20 supports a10 in lieu of b10
     tg.check_state_with_updates(vec![
-        ("v00", ACCEPTED), // v00 accepted due to >4 consecutive approvals
-        ("v01", ACCEPTED), // v01 accepted due to 4 consecutive approvals
         ("a10", STRONG_PREF),
         ("b10", NO_PREF),
         ("a20", STRONG_PREF),
