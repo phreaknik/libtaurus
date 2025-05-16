@@ -237,11 +237,11 @@ fn small_chain_with_conflicts() {
         ("a90", NO_PREF),
     ]);
     tg.check_frontier(["b10"]);
-    tg.record_query("a20", true).unwrap(); // succeed, even though still not queried a10
+    tg.record_query("a10", false).unwrap();
     tg.check_state_with_updates(vec![]); // should not change state
     tg.check_frontier(["b10"]);
 
-    tg.record_query("a10", true).unwrap(); // a10 should now become preferred over b10
+    tg.record_query("a20", true).unwrap(); // vote for a20 supports a10 in lieu of b10
     tg.check_state_with_updates(vec![
         ("a10", STRONG_PREF),
         ("b10", NO_PREF),
@@ -257,13 +257,13 @@ fn small_chain_with_conflicts() {
     tg.check_frontier(["a90"]);
 
     // Vertices v00 & v01 should become accepted at safe early committment criteria
-    tg.record_query("a30", true).unwrap();
+    tg.record_query("a50", true).unwrap(); // out of order query should work
     tg.check_state_with_updates(vec![]);
     tg.check_frontier(["a90"]);
     tg.record_query("a40", true).unwrap();
     tg.check_state_with_updates(vec![]);
     tg.check_frontier(["a90"]);
-    tg.record_query("a50", true).unwrap();
+    tg.record_query("a30", true).unwrap();
 
     // v00 & v01 should have reached safe early committment
     tg.check_state_with_updates(vec![("v00", ACCEPTED), ("v01", ACCEPTED)]);
