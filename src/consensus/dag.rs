@@ -459,13 +459,15 @@ impl DAG {
         if let Some(vx) = self.pending_query.remove(vhash) {
             // Award a chit to the unity constraint representing this vertex
             let unity = Constraint(*vhash, *vhash);
-            self.state
-                .get_mut(&unity.conflict_set_key())
-                .expect(&format!(
-                    "state does not exist for unity constraint of {vhash}"
-                ))
-                .chit
-                .insert(unity, true);
+            if strongly_preferred {
+                self.state
+                    .get_mut(&unity.conflict_set_key())
+                    .expect(&format!(
+                        "state does not exist for unity constraint of {vhash}"
+                    ))
+                    .chit
+                    .insert(unity, true);
+            }
 
             // Update the state of all undecided constraints in the ancestry
             for c in self
@@ -538,6 +540,7 @@ impl DAG {
                         }
                     }
                 } else {
+                    println!(":::: resetting that shit -- {c}");
                     // If not strongly preferred, reset the counters for the entire ancestry
                     self.state
                         .get_mut(&c.conflict_set_key())
