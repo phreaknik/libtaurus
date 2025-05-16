@@ -479,7 +479,6 @@ impl DAG {
                 if strongly_preferred {
                     // Compute the confidence of this constraint and its conflict (if any)
                     let c_conf = progeny_with_chits(self, &c).into_iter().unique().count();
-                    println!(":::: confidence = {c_conf}");
                     let has_conflict = c
                         .conflict()
                         .map(|opp| self.state.contains_key(&opp.conflict_set_key()))
@@ -520,7 +519,6 @@ impl DAG {
 
                         (c_state.count[&c], c_state.parents[&c].clone())
                     };
-                    println!(":::: count = {c_count}");
 
                     // See if a decision can be made. A decision can be made if the vote count
                     // reaches the acceptance threshold, or if the "safe early committment"
@@ -540,7 +538,6 @@ impl DAG {
                         }
                     }
                 } else {
-                    println!(":::: resetting that shit -- {c}");
                     // If not strongly preferred, reset the counters for the entire ancestry
                     self.state
                         .get_mut(&c.conflict_set_key())
@@ -593,17 +590,11 @@ impl DAG {
             // vertex. If not, look up all ancestors and confirm their preference.
             let unity = Constraint(*vhash, *vhash);
             if let Some(decision) = self.state[&unity.conflict_set_key()].decision.get(&unity) {
-                let counter = self.state[&unity.conflict_set_key()].count[&unity];
-                let confidence = self.state[&unity.conflict_set_key()].confidence[&unity];
-                println!(":::: has decision; counter={counter}, confidence={confidence}");
                 Ok(match decision {
                     true => (true, true),   // accepted
                     false => (false, true), // rejected
                 })
             } else {
-                let counter = self.state[&unity.conflict_set_key()].count[&unity];
-                let confidence = self.state[&unity.conflict_set_key()].confidence[&unity];
-                println!(":::: no decision; counter={counter}, confidence={confidence}");
                 let states = self
                     .get_active_ancestor_constraints(vx)?
                     .into_iter()

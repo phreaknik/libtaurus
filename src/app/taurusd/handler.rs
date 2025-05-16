@@ -45,7 +45,6 @@ impl Handler {
                                 },
                                 p2p::Event::NewPeer(peer) => {let _ = self.consensus_api.add_validator(peer);},
                                 p2p::Event::RequestMessage{request_id, request} => {
-                            println!(":::: handling request: {request}");
                                     let response = match request {
                                         p2p::Request::GetVertex(vhash) => {
                                             match self.consensus_api.get_vertex(vhash).await {
