@@ -262,8 +262,7 @@ impl Task {
 
                         // Emit any generated task event to subscribers
                         if let Some(out_event) = opt_event {
-                            println!(":::: {} p2p events already queued", self.events_out.len());
-                            assert!(self.events_out.len() < 100);
+                            // TODO: need to handle case of p2p channel becoming full
                             self.events_out.send(out_event).expect("Channel closed");
                             // TODO: clean shutdown on channel closure
                         }
