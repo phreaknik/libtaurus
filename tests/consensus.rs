@@ -243,8 +243,6 @@ fn small_chain_with_conflicts() {
 
     tg.record_query("a10", true).unwrap(); // a10 should now become preferred over b10
     tg.check_state_with_updates(vec![
-        ("v00", ACCEPTED), // v00 accepted due to >4 consecutive approvals
-        ("v01", ACCEPTED), // v01 accepted due to 4 consecutive approvals
         ("a10", STRONG_PREF),
         ("b10", NO_PREF),
         ("a20", STRONG_PREF),

@@ -514,12 +514,11 @@ impl DAG {
                             c_state.count.insert(c, 1);
                         } else {
                             *c_state.count.get_mut(&c).unwrap() += 1;
-                            let c_count = *c_state.count.get_mut(&c).unwrap();
-                            println!(":::: count = {c_count}");
                         }
 
                         (c_state.count[&c], c_state.parents[&c].clone())
                     };
+                    println!(":::: count = {c_count}");
 
                     // See if a decision can be made. A decision can be made if the vote count
                     // reaches the acceptance threshold, or if the "safe early committment"
@@ -616,9 +615,9 @@ impl DAG {
                     .inspect(|s| {
                         // It should be impossible for a rejected ancestor constraint to make it
                         // here if the queried vertex is not rejected
-                        debug_assert!(
+                        assert!(
                             s.0 || !s.1, // only assert if rejected
-                            "found non-rejected vertex with rejected ancestors"
+                            "found rejected vertex in ancestry"
                         );
                     })
                     .collect::<Vec<_>>();
