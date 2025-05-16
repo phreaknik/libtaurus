@@ -11,8 +11,8 @@ use std::{
 };
 use tracing::error;
 
-const DFLT_COUNTER_THRESHOLD: usize = 9;
-const DFLT_CONFIDENCE_THRESHOLD: usize = 9;
+const DFLT_ACCEPTANCE_THRESHOLD: usize = 9;
+const DFLT_SAFE_EARLY_COMMIT_THRESHOLD: usize = 6;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -61,8 +61,8 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             genesis: VertexHash::default(),
-            thresh_accepted: DFLT_COUNTER_THRESHOLD,
-            thresh_safe_early_commit: DFLT_CONFIDENCE_THRESHOLD,
+            thresh_accepted: DFLT_ACCEPTANCE_THRESHOLD,
+            thresh_safe_early_commit: DFLT_SAFE_EARLY_COMMIT_THRESHOLD,
         }
     }
 }

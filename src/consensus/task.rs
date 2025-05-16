@@ -23,8 +23,9 @@ use transaction::TxRoot;
 /// [`tokio::sync::broadcast`] for more information.
 pub const CONSENSUS_EVENT_CHAN_CAPACITY: usize = 32;
 
-pub const DFLT_QUERY_COUNT: usize = 16;
-pub const DFLT_QUORUM_COUNT: usize = 9;
+pub const DFLT_QUERY_COUNT: usize = 5;
+pub const DFLT_QUORUM_COUNT: usize = 3;
+// TODO: pick real values here
 
 /// Events produced by the consensus task
 #[derive(Debug, Clone)]
