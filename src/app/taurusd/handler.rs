@@ -1,3 +1,4 @@
+use chrono::Utc;
 use libtaurus::{
     consensus::{self, dag, ConsensusApi},
     fetcher,
@@ -33,6 +34,7 @@ impl Handler {
             select! {
                 // Handle P2P events
                 event_res = p2p_events.recv() => {
+                    let t_start = Utc::now();
                     match event_res {
                         Ok(event) => {
                             match event {
@@ -64,6 +66,11 @@ impl Handler {
                                     let _ =self.p2p_api.respond(request_id, response);
                                 },
                             }
+                            let duration = Utc::now() - t_start;
+                            println!(":::: handled p2p event in {:0>3}.{:0>3}ms",
+                                duration.num_milliseconds(),
+                                duration.num_microseconds().unwrap()
+                            );
                         }
                         Err(e) => return error!("Stopping due to p2p_events channel error: {e}"),
                     }
