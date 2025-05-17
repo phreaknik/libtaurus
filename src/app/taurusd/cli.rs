@@ -7,6 +7,12 @@ pub fn parse_cli_args() -> ArgMatches {
     command!() // initialize CLI with details from cargo.toml
         .about("Start taurusd network client")
         .arg(
+            arg!(--bind <ADDR> "Address to bind for P2P connections")
+                .required(false)
+                .default_value("0.0.0.0")
+                .value_parser(clap::value_parser!(Ipv4Addr)),
+        )
+        .arg(
             arg!(--bootpeer <MULTIADDR> "Specify a boot peer to connect to")
                 .required(false)
                 .value_parser(clap::value_parser!(Multiaddr)),
@@ -18,15 +24,15 @@ pub fn parse_cli_args() -> ArgMatches {
                 .value_parser(clap::value_parser!(PathBuf)),
         )
         .arg(
-            arg!(--tmpdir "Use a temporary data directory. Useful for testing.")
-                .conflicts_with("datadir")
-                .required(false),
+            arg!(--dhtmode <MODE> "Set Kademlia DHT mode")
+                .required(false)
+                .value_parser(["client", "server"]),
         )
         .arg(
-            arg!(--bind <ADDR> "Address to bind for P2P connections")
+            arg!(--loglevel <LEVEL> "Set log level")
                 .required(false)
-                .default_value("0.0.0.0")
-                .value_parser(clap::value_parser!(Ipv4Addr)),
+                .default_value("info")
+                .value_parser(["info", "debug", "trace"]),
         )
         .arg(
             arg!(--port <PORT> "Port number to accept P2P connections")
@@ -55,15 +61,9 @@ pub fn parse_cli_args() -> ArgMatches {
                 .required(false),
         )
         .arg(
-            arg!(--dhtmode <MODE> "Set Kademlia DHT mode")
-                .required(false)
-                .value_parser(["client", "server"]),
-        )
-        .arg(
-            arg!(--loglevel <LEVEL> "Set log level")
-                .required(false)
-                .default_value("info")
-                .value_parser(["info", "debug", "trace"]),
+            arg!(--tmpdir "Use a temporary data directory. Useful for testing.")
+                .conflicts_with("datadir")
+                .required(false),
         )
         .get_matches()
 }

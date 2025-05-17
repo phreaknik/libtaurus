@@ -3,11 +3,10 @@ mod handler;
 mod util;
 
 use cli::parse_cli_args;
-use handler::Handler;
 use libtaurus::{consensus, p2p, rpc};
 use tokio::select;
 use tracing::{error, info};
-use util::{build_consensus_cfg, build_p2p_cfg, build_rpc_cfg};
+use util::{build_consensus_cfg, build_handler_cfg, build_p2p_cfg, build_rpc_cfg};
 
 #[derive(thiserror::Error, Debug)]
 enum Error {
@@ -41,7 +40,7 @@ async fn main() {
     rpc::start(build_rpc_cfg(&args), consensus_api.clone(), p2p_api.clone());
 
     // Start the event handler
-    Handler::new(p2p_api, consensus_api).start();
+    handler::Handler::new(build_handler_cfg(&args), p2p_api, consensus_api).start();
 
     // Handle events
     loop {

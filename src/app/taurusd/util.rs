@@ -1,3 +1,4 @@
+use super::handler;
 use clap::ArgMatches;
 use etcetera::{base_strategy::choose_native_strategy, BaseStrategy};
 use libp2p::{identity::Keypair, kad};
@@ -63,6 +64,13 @@ pub fn build_consensus_cfg(args: &ArgMatches) -> consensus::task::Config {
             ..dag::Config::default()
         },
         ..consensus::task::Config::default()
+    }
+}
+
+/// Build handler [`handler::Config`] from parsed CLI args
+pub fn build_handler_cfg(_args: &ArgMatches) -> handler::Config {
+    handler::Config {
+        ..handler::Config::default()
     }
 }
 
