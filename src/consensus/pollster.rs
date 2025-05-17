@@ -6,7 +6,7 @@ use crate::{
 use libp2p::PeerId;
 use std::collections::HashSet;
 use tokio::{select, sync::mpsc};
-use tracing::{debug, warn};
+use tracing::debug;
 
 /// Start a new [`Pollster`] instance
 pub fn start(
@@ -67,23 +67,20 @@ impl Pollster {
         // Collect query results, exiting early once quorum has been reached
         let mut count_for = 0;
         let mut count_against = 0;
-        loop {
+        while count_for < self.quorum_size && count_against < self.quorum_size {
             select! {
-                Some(p2p::Response::Preference(pref)) = pref_receiver.recv() => {
-                    if pref { count_for += 1} else { count_against += 1}
-                    let done = count_against >= self.quorum_size || count_against >= self.quorum_size || count_against + count_for >= self.peers_to_poll.len();
-                    if done {
-                        let preferred = count_for >= self.quorum_size;
-                        if preferred {
-                            debug!("peers prefer {}", self.vhash.to_hex());
-                        } else {
-                            warn!("peers do not prefer {}", self.vhash.to_hex());
-                        }
-                        let _ = self.consensus_api.record_peer_preference(self.vhash, preferred);
-                        return;
-                    }
-                },
+                opt = pref_receiver.recv() => match opt {
+                    Some(p2p::Response::Preference(pref)) => if pref { count_for += 1} else { count_against += 1},
+                    Some(p2p::Response::Error(_)) => count_against += 1,
+                    Some(_) => todo!("punish peer for incorrect response"),
+                    None => break,
+                }
             }
         }
+
+        // Record the result
+        let _ = self
+            .consensus_api
+            .record_peer_preference(self.vhash, count_for >= self.quorum_size);
     }
 }

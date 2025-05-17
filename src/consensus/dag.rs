@@ -11,7 +11,7 @@ use std::{
     result,
     sync::Arc,
 };
-use tracing::error;
+use tracing::{debug, error, warn};
 
 const DFLT_ACCEPTANCE_THRESHOLD: usize = 9;
 const DFLT_SAFE_EARLY_COMMIT_THRESHOLD: usize = 6;
@@ -422,6 +422,12 @@ impl DAG {
         vhash: &VertexHash,
         strongly_preferred: bool,
     ) -> Result<()> {
+        if strongly_preferred {
+            debug!("peers prefer {vhash}");
+        } else {
+            warn!("peers do not prefer {vhash}");
+        }
+
         // Helper to lookup every constraint which has a chit in the progeny of the given
         // constraint. Warning: may contain duplicate entries.
         fn progeny_with_chits(dag: &mut DAG, c: &Constraint) -> Vec<Constraint> {
