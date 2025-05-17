@@ -159,6 +159,8 @@ pub struct Task {
 impl Task {
     /// Construct a new task
     fn new(config: Config, p2p_api: P2pApi) -> Result<(Task, ConsensusApi)> {
+        info!("Starting consensus");
+
         // Check the config
         config.check()?;
 
@@ -189,9 +191,7 @@ impl Task {
 
     /// Run the consensus processing loop
     async fn task_fn(mut self) {
-        info!("Starting consensus");
-
-        // Wait until the events channel has listeners
+        // Wait until the events channel has listeners, before initializing the DAG
         while self.events_out.receiver_count() == 0 {}
 
         // Emit event for initial frontier
