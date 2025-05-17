@@ -177,12 +177,12 @@ impl DAG {
             let vx = &dag.vertex[vhash];
             if vx.height > to_height {
                 vx.parents
-                    .iter()
+                    .par_iter()
                     .copied()
                     .chain(
                         vx.parents
-                            .iter()
-                            .flat_map(|p| gather_ancestors(dag, &p, to_height).into_iter()),
+                            .par_iter()
+                            .flat_map(|p| gather_ancestors(dag, &p, to_height).into_par_iter()),
                     )
                     .collect()
             } else {
