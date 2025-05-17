@@ -215,6 +215,9 @@ impl Task {
     async fn task_fn(mut self) {
         info!("Starting p2p client");
 
+        // Wait until the events channel has listeners
+        while self.events_out.receiver_count() == 0 {}
+
         // Listen for inbound connections
         self.start_listener(false); // Start TCP listener
         self.start_listener(true); // Start UDP QuicV1 listener
@@ -263,7 +266,7 @@ impl Task {
                         // Emit any generated task event to subscribers
                         if let Some(out_event) = opt_event {
                             // TODO: need to handle case of p2p channel becoming full
-                            self.events_out.send(out_event).expect("Channel closed");
+                            self.events_out.send(out_event).unwrap();
                             // TODO: clean shutdown on channel closure
                         }
                     },
