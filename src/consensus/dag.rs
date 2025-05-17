@@ -3,7 +3,9 @@ use crate::{
     Vertex, VertexHash, WireFormat,
 };
 use itertools::Itertools;
+use rayon::prelude::*;
 use std::{
+    cmp,
     collections::{HashMap, HashSet},
     iter::once,
     result,
@@ -162,14 +164,11 @@ impl DAG {
 
                 // Otherwise, branch out to each parent and find the minimum decided_height of
                 // their ancestors
-                None => {
-                    let heights: Vec<_> = dag.vertex[vhash]
-                        .parents
-                        .iter()
-                        .map(|p| decided_height(dag, p))
-                        .try_collect()?;
-                    Ok(itertools::min(heights).unwrap())
-                }
+                None => dag.vertex[vhash]
+                    .parents
+                    .par_iter() // TODO: make Rayon parallelism optional
+                    .map(|p| decided_height(dag, p))
+                    .try_reduce(|| u64::MAX, |a, b| Ok(cmp::min(a, b))),
             }
         }
 
