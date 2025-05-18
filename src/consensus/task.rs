@@ -200,6 +200,8 @@ impl Task {
             .expect("Failed to send initial frontier event");
 
         // Handle consensus events
+        // TODO: consider spawning this handler loop in a number of parallel workers, to allow
+        // simultaneous handling of read-only events. tracingMutex to get read/write locks
         let mut internal_events = self.events_out.subscribe();
         loop {
             select! {
